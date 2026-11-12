@@ -6,11 +6,11 @@
 import * as THREE from 'three';
 import { createDefaultRegistry, T } from '../core/WorldRegistry';
 import { hash3 } from '../core/rng';
-import { BALANCE } from '../core/balance';
+import { BALANCE, CHASSIS_MK1 } from '../core/balance';
 import { CameraRig } from '../render/CameraRig';
 import { PostFx } from '../render/PostFx';
 import { RoverAnimator, type RoverPose } from '../render/RoverRig';
-import { TileLighting } from '../render/TileLighting';
+import { radarFront, TileLighting } from '../render/TileLighting';
 import { FxOverlay } from '../render/FxOverlay';
 import { buildRoverRig, drawFogTile, drawTileVec, FillBatch, indicatorHex, LineBatch, LIGHT_HEX } from '../render/VectorFactory';
 
@@ -155,8 +155,9 @@ for (let i = 0; i < 3; i++)
   button(`@IND${i + 1}`, `Indicator ${i + 1}`, () => ['OFF', 'RED', 'GREEN', 'BLUE', 'AMBER'][state.ind[i]], () => (state.ind[i] = (state.ind[i] + 1) % 5));
 button('CPU', 'vMCU state', () => CPU[state.cpu].toUpperCase(), () => (state.cpu = (state.cpu + 1) % 4));
 button('HEALTH', 'Damaged dish/solar', () => state.damaged, () => (state.damaged = !state.damaged));
-button('SCAN', 'Scan pulse', () => false, () => {
+button('SCAN', 'Scan pulse + radar wave', () => false, () => {
   const [dx, dy] = DIRV[state.facing];
+  radarAt = performance.now();
   fx.scan(Math.round(state.x), Math.round(state.y), [0, 1, 2, 3][state.facing], 4, dx === 1 && dy === 0 ? 0xff5a4a : 0x3affc8, performance.now());
 });
 button('@TX_DATA', 'Uplink', () => false, () => fx.uplink(Math.round(state.x), Math.round(state.y), true, 40, performance.now(), true));
@@ -176,6 +177,8 @@ window.addEventListener('keydown', (e) => {
 rig.onUserPan = () => (state.follow = false);
 renderer.domElement.addEventListener('dblclick', () => (state.follow = true));
 
+// Radar wave of the last SCAN (?radar=0.4 freezes it at 0.4 s for screenshots).
+let radarAt = -Infinity;
 // Query-string presets for screenshots: ?sun=0&headlight=1&solar=1&dist=4&pitch=1&yaw=-0.5&drill=1
 const q = new URLSearchParams(location.search);
 const num = (k: string, d: number) => (q.has(k) ? +q.get(k)! : d);
@@ -296,6 +299,9 @@ function frame(now: number): void {
   u.uLights.value[0].set(Math.round(px) + 0.5 - fxp, -(Math.round(py) + 0.5 - fyp), sensor, 0);
   const hl = state.headlight && state.cpu !== 3;
   u.uBeams.value[0].set(DIRV[state.facing][0], -DIRV[state.facing][1], hl && light <= 0 ? 1 : 0, 0);
+  const radarAge = q.has('radar') ? num('radar', 0) : (now - radarAt) / 1000;
+  const front = radarFront(radarAge, CHASSIS_MK1.sensorRange);
+  u.uPulses.value[0].set(Math.round(px) + 0.5 - fxp, -(Math.round(py) + 0.5 - fyp), front, front < 0 ? 0 : CHASSIS_MK1.sensorRange);
   const bg = NIGHT_BG.clone().lerp(DAY_BG, day);
   scene.background = bg;
   const fog = scene.fog as THREE.Fog;

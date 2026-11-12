@@ -99,6 +99,9 @@ The rover and the player "see" differently:
 
 * So at night a player cannot look at unexplored ground and type `STEP NORTH 5`: they need
   the headlight pointed that way, already-mapped terrain, or firmware that uses `SCAN`.
+* Each `SCAN` also sends a brief red **radar wave** around the rover out to the radar
+  range: tiles flash as the front passes, then fade. It is a glimpse for the player only;
+  it maps nothing. (`SCAN` still returns just the first hit along `dir`.)
 * The rover faces `@HEADING`. `STEP` and directional tools (`ACT TOOL_n dir`) turn it;
   writing `@HEADING` turns it in place (5 energy, value wraps mod 4, so `ADD @HEADING 1`
   turns right). Use it to aim the headlight.

@@ -42,6 +42,9 @@ night the player cannot just look and type `STEP NORTH 5`. SPEC §3.1.1.
       firmware, save round trip.
 - [x] `TileLighting` cone numbers injected from `HEADLIGHT_CONE`; preview and the old
       renderer's ring show the operator view.
+- [x] **Radar wave** (preview, awaiting screenshot approval): each `SCAN` sends a red wave
+      out to the radar range; tiles flash as the front passes and fade over ~4 tiles. Visual
+      only, maps nothing (`TileLighting.uPulses`, `radarFront`; preview `?radar=0.45`).
 - No save format change (heading was already saved; the reveal key is derived).
 
 ## M8 — Visual overhaul (detailed plan)
@@ -63,6 +66,9 @@ ore mounds (new `mound` shape), buried silicon crystals; **indicator lamps** `@I
 Remaining:
 - [ ] **Switch the game renderer** to the v2 assets (`drawTileVec`, `buildRoverRig`,
       `TileLighting`, `CameraRig`, `PostFx`); compass must rotate with camera yaw.
+      Drive `uPulses` from `SCAN_PULSE` + `engine.sensorRange(u)`. The radar wave must
+      also briefly show **unmapped** tiles, so chunks need (hidden) geometry for them that
+      only the wave makes visible.
 
 
 Everything lives in `src/render/` (the renderer only reads the simulation), so gameplay
@@ -117,7 +123,8 @@ tests must stay untouched. Do it in small PRs, checking frame time at each step.
    limits what the **player** sees at night. `@HEADING` aims the headlight (5 energy).
 5. Explorer firmware toggles `@HEADLIGHT` 0→1 every loop at night (mapping can miss the
    cone on a tick boundary). Harmless now; fix when Flash allows.
-6. Should a radar `SCAN` hit mark the hit tile on the map (as a blip, not full terrain)?
+6. ~~Radar blips~~ → every `SCAN` shows a brief red radar wave around the rover (visual
+   only). Turn cost 5 energy stays until playtests.
 
 ## Backlog / ideas
 
