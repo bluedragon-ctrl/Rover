@@ -6,7 +6,9 @@ import { EventDirector } from './EventDirector';
 import { hash3 } from './rng';
 import {
   BootReason,
+  encodeCpuDump,
   encodeLog,
+  encodeStackDump,
   GALLERY_KEEP,
   productFrameBytes,
   RECEIVED_KEEP,
@@ -40,6 +42,10 @@ export interface SupplyDrop {
   landTick: number;
   landed: boolean;
 }
+
+/** Console commands sent over the uplink (SPEC §3.8.4). */
+export type UplinkCommand = 'DUMP' | 'DUMP_STACKS' | 'CONTINUE';
+export const UPLINK_COMMAND_NAMES: Record<UplinkCommand, string> = { DUMP: 'Dump', DUMP_STACKS: 'Dump stacks', CONTINUE: 'Continue' };
 
 export interface UploadResult extends CompileResult {
   /** Energy charged for the upload (0 if rejected or free). */
@@ -201,6 +207,35 @@ export class SimulationEngine {
     return Math.ceil((base * 100) / Math.max(BALANCE.uploadSignalFloor, this.signalOf(u)));
   }
 
+  /** Energy for an uplinked console command (Dump, Dump stacks, Continue). */
+  commandCost(u: Unit): number {
+    if (this.cheats.freeUpload) return 0;
+    return Math.ceil((BALANCE.dumpEnergy * 100) / Math.max(BALANCE.uploadSignalFloor, this.signalOf(u)));
+  }
+
+  /**
+   * Uplink a console command. Dumps snapshot the CPU now and queue the reply ahead of the
+   * log; Continue ends a BRK halt (a running rover just ignores it). Returns why it was
+   * rejected, or null. Mission control learns the CPU state only from the reply.
+   */
+  command(u: Unit, cmd: UplinkCommand): string | null {
+    if (!u.powered) return `rover is ${u.vm.state}: it cannot receive commands`;
+    const isDump = cmd !== 'CONTINUE';
+    if (isDump && u.link.sys.length >= BALANCE.dumpQueueMax) return `${BALANCE.dumpQueueMax} dumps are already waiting for the downlink`;
+    const cost = this.commandCost(u);
+    if (u.energy <= cost) return `needs ${(cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(u)}`;
+    u.energy -= cost;
+    const vm = u.vm;
+    if (cmd === 'DUMP') {
+      const bytes = encodeCpuDump({ ip: vm.nextIp, status: vm.status, state: vm.state, regs: vm.regs, dsDepth: vm.dataStack.length, csDepth: vm.callStack.length });
+      u.link.sys.push({ bytes, taken: this.tick });
+    } else if (cmd === 'DUMP_STACKS') u.link.sys.push({ bytes: encodeStackDump(vm.dataStack, vm.callStack), taken: this.tick });
+    else vm.resume();
+    const costMsg = cost ? ` (${(cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(u)})` : '';
+    this.log(u, 'info', `Uplink: ${UPLINK_COMMAND_NAMES[cmd]} sent${costMsg}.`);
+    return null;
+  }
+
   /**
    * Compile and flash new firmware over the uplink; hard reboot on success.
    * `factory` installs firmware for free (new rovers, admin tools).
@@ -264,7 +299,7 @@ export class SimulationEngine {
       // Finish this tick for everyone else, then start a new one.
       for (const u of this.units) if (u !== unit) this.runCpu(u, Infinity);
       this.beginTick();
-      if (!unit.powered || unit.vm.state === CpuState.FAULT) return false;
+      if (!unit.powered || unit.vm.state === CpuState.FAULT || unit.vm.state === CpuState.HALTED) return false;
     }
     return false;
   }
@@ -621,9 +656,14 @@ export class SimulationEngine {
 
   /** Transmit this tick's bytes; completed frames and products reach mission control. */
   private updateLink(u: Unit): void {
-    const { sent, done, delivered, partial } = u.link.pump(this.signalOf(u), BALANCE.linkMinSignal, BALANCE.linkBytesPerTick);
+    const { sent, sysDone, done, delivered, partial } = u.link.pump(this.signalOf(u), BALANCE.linkMinSignal, BALANCE.linkBytesPerTick);
     if (!sent) return;
     this.drain(u, BALANCE.linkEnergyPerTick);
+    for (const f of sysDone) {
+      const r: ReceivedFrame = { unitId: u.id, tick: this.tick, bytes: f.bytes, gap: 0, taken: f.taken };
+      this.received.push(r);
+      this.events.emit('DOWNLINK_FRAME', r);
+    }
     for (const f of done) {
       const r: ReceivedFrame = { unitId: u.id, tick: this.tick, bytes: f.bytes, gap: f.gap };
       this.received.push(r);
@@ -639,7 +679,7 @@ export class SimulationEngine {
       this.events.emit('SCIENCE_DELIVERED', g);
     }
     if (partial) this.galleryEntry(u, partial).received = u.link.recSent;
-    if (done.length || delivered.length) this.events.emit('UPLINK_PULSE', { unitId: u.id, x: u.x, y: u.y, science: delivered.length > 0 });
+    if (sysDone.length || done.length || delivered.length) this.events.emit('UPLINK_PULSE', { unitId: u.id, x: u.x, y: u.y, science: delivered.length > 0 });
     if (this.received.length > RECEIVED_KEEP) this.received.splice(0, this.received.length - RECEIVED_KEEP);
     if (this.gallery.length > GALLERY_KEEP) this.gallery.splice(0, this.gallery.length - GALLERY_KEEP);
   }

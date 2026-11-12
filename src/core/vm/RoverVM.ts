@@ -71,6 +71,16 @@ export class RoverVM {
     if (this.state === CpuState.BLOCKED) this.state = CpuState.RUNNING;
   }
 
+  /** BRK: stop until mission control sends Continue (or an upload reboots). */
+  halt(): void {
+    this.state = CpuState.HALTED;
+  }
+
+  /** Continue command: leave HALTED. */
+  resume(): void {
+    if (this.state === CpuState.HALTED) this.state = CpuState.RUNNING;
+  }
+
   fault(reason: string, watchdogTicks: number): void {
     this.state = CpuState.FAULT;
     this.faultReason = reason;
@@ -198,6 +208,10 @@ export class RoverVM {
       case 'LOG':
         host.log?.((a[0] as { v: number }).v, a.length > 1 ? val(a[1]) : null);
         break;
+      case 'BRK':
+        this.ip = next;
+        this.halt();
+        return 'endTick';
       case 'PEEK': {
         // Cargo is [later]; route through host so it can implement it without VM changes.
         const out = host.hardware(ins, [val(a[0])]) ?? [];

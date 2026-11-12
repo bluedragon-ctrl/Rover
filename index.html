@@ -58,7 +58,10 @@
             <span id="upload-cost"></span>
           </div>
           <div id="editor"></div>
-          <div id="debugger"></div>
+          <div id="debugger-wrap" hidden>
+            <div class="admin-banner small">ADMIN · live debugger: shows what mission control cannot know. Players use the Console (log, dumps).</div>
+            <div id="debugger"></div>
+          </div>
         </div>
         <div class="tabpane" id="tab-console"><div id="console"></div></div>
         <div class="tabpane" id="tab-gallery"><div id="gallery"></div></div>
@@ -86,6 +89,7 @@
             <button id="adm-event-go">Start event</button>
             <button id="adm-credits">+50 credits</button>
           </div>
+          <label class="small"><input type="checkbox" id="adm-debugger" /> Live debugger (registers, stacks, ports, current line, single-step)</label>
           <label class="small"><input type="checkbox" id="adm-invuln" /> Invulnerable (no hull or system damage)</label>
           <label class="small"><input type="checkbox" id="adm-free" /> Free uploads (ignore signal &amp; battery cost)</label>
           <label class="small"><input type="checkbox" id="adm-reveal" /> Reveal map (disable fog of war)</label>

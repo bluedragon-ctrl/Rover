@@ -53,7 +53,10 @@ const debuggerPanel = new DebuggerPanel($('#debugger'), engine);
 if (import.meta.env.DEV) Object.assign(window, { __rover: { engine, scene, rover } });
 const compass = new CompassHud($<HTMLCanvasElement>('#compass'), engine);
 const goalsPanel = new GoalsPanel($('#goals'), engine);
-const consolePanel = new ConsolePanel($('#console'), engine, () => rover);
+const consolePanel = new ConsolePanel($('#console'), engine, () => rover, (cmd) => {
+  const err = engine.command(rover, cmd);
+  if (err) log('warn', `Uplink rejected: ${err}.`);
+});
 const galleryPanel = new GalleryPanel($('#gallery'), engine);
 const upgradesPanel = new UpgradesPanel($('#upgrades'), engine, () => rover, (err, id) => {
   if (err) log('warn', `Cannot buy ${UPGRADE_BY_ID[id]?.title}: ${err}.`);
@@ -183,7 +186,32 @@ let lastSpeed = 1;
 speedButtons.forEach((b) => b.addEventListener('click', () => setSpeed(Number(b.dataset.speed))));
 setSpeed(1);
 
+// Admin: the omniscient live debugger (SPEC §3.8.4). A UI preference, not saved with the world.
+const ADMIN_DEBUGGER_KEY = 'rover.adminDebugger';
+let adminDebugger = false;
+try {
+  adminDebugger = localStorage.getItem(ADMIN_DEBUGGER_KEY) === '1';
+} catch {
+  /* storage disabled */
+}
+const admDebugger = $<HTMLInputElement>('#adm-debugger');
+function setAdminDebugger(on: boolean): void {
+  adminDebugger = on;
+  admDebugger.checked = on;
+  $('#debugger-wrap').hidden = !on;
+  $('#btn-step').hidden = !on;
+  if (!on) editor.setExecLine(0);
+  try {
+    localStorage.setItem(ADMIN_DEBUGGER_KEY, on ? '1' : '0');
+  } catch {
+    /* storage disabled: the toggle still works for this page */
+  }
+}
+admDebugger.addEventListener('change', () => setAdminDebugger(admDebugger.checked));
+setAdminDebugger(adminDebugger);
+
 function stepInstruction(): void {
+  if (!adminDebugger) return;
   setSpeed(0);
   if (!engine.stepInstruction(rover)) log('warn', `Cannot step: CPU is ${rover.vm.state}.`);
 }
@@ -280,9 +308,12 @@ function frame(now: number): void {
   uiTimer += dt;
   if (uiTimer > 66) {
     uiTimer = 0;
-    debuggerPanel.update(rover);
-    const running = rover.vm.state === CpuState.RUNNING || rover.vm.state === CpuState.BLOCKED;
-    editor.setExecLine(running || rover.vm.state === CpuState.FAULT ? rover.vm.nextLine : 0);
+    if (adminDebugger) {
+      debuggerPanel.update(rover);
+      const st = rover.vm.state;
+      const live = st === CpuState.RUNNING || st === CpuState.BLOCKED || st === CpuState.HALTED || st === CpuState.FAULT;
+      editor.setExecLine(live ? rover.vm.nextLine : 0);
+    }
     const sun = engine.sun;
     clockEl.textContent = `sol ${engine.env.dayNumber(engine.tick)} · ${sun.elevation > 0 ? '☀ day' : '☾ night'} · tick ${engine.tick}`;
     compass.update(rover, scene.yaw);

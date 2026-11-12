@@ -1,6 +1,7 @@
 /**
  * The rover's downlink (docs/SPEC.md §3.8.1–3.8.3): one byte-based transmitter fed by a
- * lossy log FIFO. Headless and integer-only.
+ * lossy log FIFO, a reliable science recorder and (top priority) memory-dump replies.
+ * Headless and integer-only.
  *
  * Frame header: bit 7 kind (0 log, 1 science), bits 6..3 tag, bits 2..1 size code
  * (0 → 0 B, 1 → 1 B, 2 → 2 B, 3 → 4 B payload), bit 0 = 0.
@@ -113,6 +114,8 @@ export interface ReceivedFrame {
   tick: number;
   bytes: number[];
   gap: number;
+  /** Dump replies: tick the snapshot was taken (mission control knows when it asked). */
+  taken?: number;
 }
 
 /** A product as mission control holds it: complete, or partly received. */
@@ -142,6 +145,10 @@ export class Downlink {
   recSent = 0;
   /** Sequence number for the next product (0–255, wraps). */
   seq = 0;
+  /** Dump replies waiting to be sent (highest priority); the head may be partly sent. */
+  sys: SysFrame[] = [];
+  /** Bytes of sys[0] already transmitted. */
+  sysSent = 0;
 
   /** Bytes the recorder holds (a product's space is freed only when its last byte is sent). */
   get recUsed(): number {
@@ -187,32 +194,38 @@ export class Downlink {
   }
 
   get idle(): boolean {
-    return this.fifo.length === 0 && this.products.length === 0;
+    return this.sys.length === 0 && this.fifo.length === 0 && this.products.length === 0;
   }
 
   /**
-   * One tick of transmission: log FIFO first, then the recorder. Returns the log frames and
-   * products completed this tick, the head product if it advanced without completing, and
+   * One tick of transmission: pending dumps first, then the log FIFO, then the recorder.
+   * Returns the dumps, log frames and products completed this tick, the head product if it advanced without completing, and
    * how many bytes went out. Nothing is sent below `minSignal`; an idle link keeps no budget.
    */
   pump(
     signal: number,
     minSignal: number,
     bytesPerTick: number,
-  ): { sent: number; done: QueuedFrame[]; delivered: ProductDesc[]; partial: ProductDesc | null } {
+  ): { sent: number; sysDone: SysFrame[]; done: QueuedFrame[]; delivered: ProductDesc[]; partial: ProductDesc | null } {
+    const sysDone: SysFrame[] = [];
     const done: QueuedFrame[] = [];
     const delivered: ProductDesc[] = [];
     let sent = 0;
     let recBytes = 0;
     if (signal < minSignal || this.idle) {
       this.acc = 0;
-      return { sent, done, delivered, partial: null };
+      return { sent, sysDone, done, delivered, partial: null };
     }
     this.acc += bytesPerTick * signal;
     while (this.acc >= 100 && !this.idle) {
       this.acc -= 100;
       sent++;
-      if (this.fifo.length) {
+      if (this.sys.length) {
+        if (++this.sysSent >= this.sys[0].bytes.length) {
+          sysDone.push(this.sys.shift()!);
+          this.sysSent = 0;
+        }
+      } else if (this.fifo.length) {
         if (++this.headSent >= this.fifo[0].bytes.length) {
           done.push(this.fifo.shift()!);
           this.headSent = 0;
@@ -227,8 +240,80 @@ export class Downlink {
       }
     }
     if (this.idle) this.acc = 0;
-    return { sent, done, delivered, partial: recBytes > 0 ? this.products[0] : null };
+    return { sent, sysDone, done, delivered, partial: recBytes > 0 ? this.products[0] : null };
   }
+}
+
+// ---------------------------------------------------------------- memory dumps (§3.8.4)
+
+/** Dump frame header: kind 1 (sized frame), tag 15 (system). Followed by dump kind, length, payload. */
+export const DUMP_HEADER = 0x80 | (SYSTEM_TAG << 3);
+export const DumpKind = { CPU: 1, STACKS: 2 } as const;
+/** CPU state byte in a dump. */
+export const CPU_STATE_CODES: readonly string[] = ['RUNNING', 'BLOCKED', 'HALTED', 'FAULT'];
+
+/** A dump reply waiting for the downlink (it goes before the log FIFO). */
+export interface SysFrame {
+  bytes: number[];
+  /** Tick the snapshot was taken (= when mission control sent the command). */
+  taken: number;
+}
+
+const be = (v: number, n: number): number[] => {
+  const out: number[] = [];
+  for (let i = n - 1; i >= 0; i--) out.push(((v | 0) >> (i * 8)) & 0xff);
+  return out;
+};
+const rd = (b: readonly number[], at: number, n: number, signed: boolean): number => {
+  let v = 0;
+  for (let i = 0; i < n; i++) v = v * 256 + (b[at + i] ?? 0);
+  if (signed && n < 4 && v >= 2 ** (8 * n - 1)) v -= 2 ** (8 * n);
+  return n === 4 && signed ? v | 0 : v;
+};
+const dumpFrame = (kind: number, payload: number[]): number[] => [DUMP_HEADER, kind, payload.length, ...payload];
+
+/** CPU dump: IP 2 B, @STATUS 1 B, state 1 B, each register 4 B, data/call stack depth 1 B each. */
+export function encodeCpuDump(d: { ip: number; status: number; state: string; regs: ArrayLike<number>; dsDepth: number; csDepth: number }): number[] {
+  const code = CPU_STATE_CODES.indexOf(d.state);
+  const p = [...be(d.ip, 2), d.status & 255, code < 0 ? 255 : code];
+  for (let i = 0; i < d.regs.length; i++) p.push(...be(d.regs[i], 4));
+  p.push(d.dsDepth & 255, d.csDepth & 255);
+  return dumpFrame(DumpKind.CPU, p);
+}
+
+/** Stack dump: data depth 1 B + 4 B per entry, call depth 1 B + 2 B (return IP) per entry. */
+export function encodeStackDump(ds: readonly number[], cs: readonly number[]): number[] {
+  const p = [ds.length & 255];
+  for (const v of ds) p.push(...be(v, 4));
+  p.push(cs.length & 255);
+  for (const v of cs) p.push(...be(v, 2));
+  return dumpFrame(DumpKind.STACKS, p);
+}
+
+export type DecodedDump =
+  | { kind: 1; ip: number; status: number; state: string; regs: number[]; dsDepth: number; csDepth: number }
+  | { kind: 2; dataStack: number[]; callStack: number[] };
+
+/** Decode a dump frame as received, or null if it is not one. */
+export function decodeDump(b: readonly number[]): DecodedDump | null {
+  if (b[0] !== DUMP_HEADER) return null;
+  const end = 3 + (b[2] ?? 0);
+  if (b[1] === DumpKind.CPU) {
+    const regs: number[] = [];
+    for (let at = 7; at + 4 <= end - 2; at += 4) regs.push(rd(b, at, 4, true));
+    return { kind: 1, ip: rd(b, 3, 2, false), status: b[5] ?? 0, state: CPU_STATE_CODES[b[6] ?? 255] ?? '?', regs, dsDepth: b[end - 2] ?? 0, csDepth: b[end - 1] ?? 0 };
+  }
+  if (b[1] === DumpKind.STACKS) {
+    const dataStack: number[] = [];
+    const callStack: number[] = [];
+    let at = 3;
+    const nd = b[at++] ?? 0;
+    for (let i = 0; i < nd; i++, at += 4) dataStack.push(rd(b, at, 4, true));
+    const nc = b[at++] ?? 0;
+    for (let i = 0; i < nc; i++, at += 2) callStack.push(rd(b, at, 2, false));
+    return { kind: 2, dataStack, callStack };
+  }
+  return null;
 }
 
 /** Hex dump, e.g. "2C FE D4". */

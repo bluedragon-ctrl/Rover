@@ -56,6 +56,8 @@ export enum Layer {
 export enum CpuState {
   RUNNING = 'RUNNING',
   BLOCKED = 'BLOCKED',
+  /** Stopped by BRK until Continue or an upload (M9). No watchdog. */
+  HALTED = 'HALTED',
   FAULT = 'FAULT',
   POWER_OFF = 'POWER_OFF',
   DESTROYED = 'DESTROYED',
