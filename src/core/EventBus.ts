@@ -1,13 +1,14 @@
 import type { CpuState, Status } from './types';
 import type { WorldEventType } from './EventDirector';
-import type { ReceivedFrame } from './downlink';
+import type { ReceivedFrame, ReceivedProduct } from './downlink';
 
 export interface SimEvents {
   TICK: { tick: number };
   UNIT_MOVED: { unitId: number; fromX: number; fromY: number; toX: number; toY: number; startTick: number; endTick: number };
   TILE_CHANGED: { x: number; y: number; layer: number; id: number };
   SCAN_PULSE: { unitId: number; x: number; y: number; dir: number; dist: number; hit: number };
-  UPLINK_PULSE: { unitId: number; x: number; y: number; value: number; ok: boolean; science: boolean };
+  /** A downlink frame or science product finished arriving (renderer pulse). */
+  UPLINK_PULSE: { unitId: number; x: number; y: number; science: boolean };
   TOOL_USED: { unitId: number; tool: string; x: number; y: number; targetX: number | null; targetY: number | null; ticks: number };
   TOOL_DONE: { unitId: number; tool: string; status: number };
   GOAL_COMPLETED: { id: string; title: string; reward: number };
@@ -16,6 +17,7 @@ export interface SimEvents {
   UNIT_STATE: { unitId: number; state: CpuState };
   UNIT_STATUS: { unitId: number; status: Status };
   DOWNLINK_FRAME: ReceivedFrame;
+  SCIENCE_DELIVERED: ReceivedProduct;
   LOG: { unitId: number; level: 'info' | 'warn' | 'error'; message: string };
 }
 

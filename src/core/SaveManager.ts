@@ -1,13 +1,13 @@
 import { CHASSIS_MK1 } from './balance';
 import { CHUNK_AREA, WorldChunk } from './ChunkedWorld';
 import type { DirectorState } from './EventDirector';
-import type { QueuedFrame, ReceivedFrame } from './downlink';
+import type { ProductDesc, QueuedFrame, ReceivedFrame, ReceivedProduct } from './downlink';
 import { SimulationEngine, type SupplyDrop } from './SimulationEngine';
 import { UPGRADE_BY_ID } from './upgrades';
 import { CpuState, type Status } from './types';
 import type { Unit, UnitAction, UnitMotion } from './Unit';
 
-export const SAVE_VERSION = 4;
+export const SAVE_VERSION = 5;
 
 interface UnitSave {
   id: number;
@@ -21,12 +21,9 @@ interface UnitSave {
   solarHealth: number;
   antennaHealth: number;
   cargo: number[];
-  scienceReady: number;
   lights: [number, number, number];
   solar: [open: number, deploy: number, angle: number, target: number];
   antenna: [angle: number, target: number];
-  packetsSent: number;
-  lastTx: Unit['lastTx'];
   sourceCode: string;
   /** v2 */
   upgrades: string[];
@@ -34,7 +31,7 @@ interface UnitSave {
   /** v3 */
   indicators: number[];
   /** v4: downlink transmitter */
-  link: { fifo: QueuedFrame[]; headSent: number; acc: number; lost: number; gap: number };
+  link: { fifo: QueuedFrame[]; headSent: number; acc: number; lost: number; gap: number; products: ProductDesc[]; recSent: number; seq: number };
   action: UnitAction | null;
   motion: UnitMotion | null;
   cyclesLeft: number;
@@ -76,6 +73,8 @@ export interface SaveSnapshot {
   nextDropId: number;
   /** v4: frames received by mission control */
   received: ReceivedFrame[];
+  /** v5: science products received (or being received) by mission control */
+  gallery: ReceivedProduct[];
   units: UnitSave[];
   chunks: ChunkSave[];
 }
@@ -132,6 +131,7 @@ export function serialize(e: SimulationEngine): SaveSnapshot {
     drops: e.drops.map((d) => ({ ...d })),
     nextDropId: e.nextDropId,
     received: e.received.map((f) => ({ ...f, bytes: [...f.bytes] })),
+    gallery: e.gallery.map((g) => ({ ...g })),
     units: e.units.map(saveUnit),
     chunks,
   };
@@ -151,7 +151,6 @@ function saveUnit(u: Unit): UnitSave {
     solarHealth: u.solarHealth,
     antennaHealth: u.antennaHealth,
     cargo: [...u.cargo],
-    scienceReady: u.scienceReady,
     lights: [u.lightColor, u.lightBlink, u.headlight],
     indicators: [...u.indicators],
     link: {
@@ -160,11 +159,12 @@ function saveUnit(u: Unit): UnitSave {
       acc: u.link.acc,
       lost: u.link.lost,
       gap: u.link.gap,
+      products: u.link.products.map((p) => ({ ...p })),
+      recSent: u.link.recSent,
+      seq: u.link.seq,
     },
     solar: [u.solarOpen, u.solarDeploy, u.solarAngle, u.solarTarget],
     antenna: [u.antennaAngle, u.antennaTarget],
-    packetsSent: u.packetsSent,
-    lastTx: u.lastTx ? { ...u.lastTx } : null,
     sourceCode: u.sourceCode,
     upgrades: [...u.upgrades],
     seismic: [u.seismicType, u.seismicDist],
@@ -212,8 +212,27 @@ export function migrate(raw: unknown): SaveSnapshot {
   if (v === 3) {
     // v3 -> v4: byte downlink (M9). Empty FIFO, nothing received yet.
     out.received = [];
-    for (const u of out.units) u.link = { fifo: [], headSent: 0, acc: 0, lost: 0, gap: 0 };
+    for (const u of out.units) u.link = { fifo: [], headSent: 0, acc: 0, lost: 0, gap: 0 } as unknown as UnitSave['link'];
     v = 4;
+  }
+  if (v === 4) {
+    // v4 -> v5: science recorder (M9 slice 2). Old science packets still waiting are
+    // credited now (they have no spectrum); TX packet counters are gone.
+    const units = out.units as (UnitSave & { scienceReady?: number; packetsSent?: number; lastTx?: unknown })[];
+    const stats = out.stats as SaveSnapshot['stats'] & { packetsSent?: number };
+    for (const u of units) {
+      const waiting = u.scienceReady ?? 0;
+      out.credits += waiting;
+      stats.scienceDelivered += waiting;
+      delete u.scienceReady;
+      delete u.packetsSent;
+      delete u.lastTx;
+      Object.assign(u.link, { products: [], recSent: 0, seq: 0 });
+    }
+    stats.framesReceived = (stats.packetsSent ?? 0) + out.received.length;
+    delete stats.packetsSent;
+    out.gallery = [];
+    v = 5;
   }
   if (v !== SAVE_VERSION) throw new SaveError(`Unsupported save version ${s.version}.`);
   out.version = v;
@@ -235,6 +254,7 @@ export function deserialize(raw: unknown): SimulationEngine {
   e.drops = s.drops.map((d) => ({ ...d }));
   e.nextDropId = s.nextDropId;
   e.received = s.received.map((f) => ({ ...f, bytes: [...f.bytes] }));
+  e.gallery = s.gallery.map((g) => ({ ...g }));
 
   for (const cs of s.chunks) {
     const c = e.world.getChunk(cs.cx, cs.cy);
@@ -261,6 +281,9 @@ export function deserialize(raw: unknown): SimulationEngine {
       acc: us.link.acc,
       lost: us.link.lost,
       gap: us.link.gap,
+      products: us.link.products.map((p) => ({ ...p })),
+      recSent: us.link.recSent,
+      seq: us.link.seq,
     });
     u.seismicType = us.seismic[0];
     u.seismicDist = us.seismic[1];
@@ -273,7 +296,6 @@ export function deserialize(raw: unknown): SimulationEngine {
       solarHealth: us.solarHealth,
       antennaHealth: us.antennaHealth,
       cargo: [...us.cargo],
-      scienceReady: us.scienceReady,
       lightColor: us.lights[0],
       lightBlink: us.lights[1],
       headlight: us.lights[2],
@@ -284,8 +306,6 @@ export function deserialize(raw: unknown): SimulationEngine {
       solarTarget: us.solar[3],
       antennaAngle: us.antenna[0],
       antennaTarget: us.antenna[1],
-      packetsSent: us.packetsSent,
-      lastTx: us.lastTx,
       action: us.action,
       motion: us.motion,
       cyclesLeft: us.cyclesLeft,

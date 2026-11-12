@@ -49,7 +49,8 @@ export const PORTS: PortDef[] = [
     read: (u, c) => c.registry.get(c.world.getTile(u.x, u.y, 0))?.hazardLevel ?? 0,
   },
   { name: 'CARGO_FREE', description: 'Number of empty cargo slots', read: (u) => u.cargo.filter((c) => c === 0).length },
-  { name: 'SCIENCE_READY', description: 'Analyzed science packets waiting for uplink', read: (u) => u.scienceReady },
+  { name: 'SCIENCE_READY', description: 'Science products in the recorder waiting for the downlink', read: (u) => u.link.products.length },
+  { name: 'REC_FREE', description: 'Free bytes in the science recorder (a spectrum needs 18)', read: (u) => u.link.recFree(u.chassis.recorderBytes) },
   { name: 'ALERT', description: 'Announced/active world event: ALERT_NONE, ALERT_ECLIPSE, ALERT_SQUALL', read: (_u, c) => c.alert().type },
   { name: 'ALERT_ETA', description: 'Ticks until the alerted event starts (0 = active or none)', read: (_u, c) => c.alert().eta },
   { name: 'SEISMIC_TYPE', description: 'Ore found by the last seismic scan (TOOL_3), 0 = none', read: (u) => u.seismicType },
@@ -99,7 +100,7 @@ export const PORTS: PortDef[] = [
     write: (u, v) => (u.antennaTarget = v),
   },
   { name: 'SIGNAL_STR', description: 'Uplink quality 0–100 (dish alignment × dish health)', read: (u, c) => Math.floor((signalStrength(u.antennaAngle, c.orbitAzimuth) * u.antennaHealth) / 100) },
-  { name: 'TX_DATA', description: `Write to transmit a packet (needs @SIGNAL_STR >= ${BALANCE.txMinSignal}; sets @STATUS). Carries 1 science packet if @SCIENCE_READY > 0`, write: (u, v, c) => c.transmit(u, v) },
+  { name: 'TX_DATA', description: 'Old shorthand for LOG 0 value: queues a log frame; sets @STATUS (OK, ERR_FULL if the FIFO had no room)', write: (u, v, c) => c.transmit(u, v) },
   {
     name: 'LOG_FREE',
     description: 'Free bytes in the log FIFO (LOG frames wait here for the downlink)',

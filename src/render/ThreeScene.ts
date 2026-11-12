@@ -129,7 +129,14 @@ export class ThreeScene {
       const v = this.rovers.get(e.unitId);
       if (v) v.radarAt = performance.now();
     });
-    engine.events.on('UPLINK_PULSE', (e) => this.fx.uplink(e.x, e.y, e.ok, engine.orbitAzimuth, performance.now(), e.science));
+    // Frames can finish every tick: at most one pulse per 400 ms unless science arrives.
+    let lastPulse = -Infinity;
+    engine.events.on('UPLINK_PULSE', (e) => {
+      const now = performance.now();
+      if (!e.science && now - lastPulse < 400) return;
+      lastPulse = now;
+      this.fx.uplink(e.x, e.y, true, engine.orbitAzimuth, now, e.science);
+    });
     const toolColor: Record<string, number> = { DRILL: 0xff8a3a, GRABBER: 0x3affc8, SPECTROMETER: 0xd4a0ff, USE_ITEM: 0xffffff };
     engine.events.on('TOOL_USED', (e) => {
       // Real-time length of the action at the current speed, so the effect lasts as long as the tool.

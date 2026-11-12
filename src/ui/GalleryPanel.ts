@@ -1,0 +1,76 @@
+import { hex, PRODUCT_NAMES, productFrameBytes, ProductType, type ReceivedProduct } from '../core/downlink';
+import { bandNm, productFrame, SPECTRUM_BANDS } from '../core/imaging';
+import type { SimulationEngine } from '../core/SimulationEngine';
+
+/** Bar colour for a wavelength: visible bands roughly in their colour, near-IR grey. */
+function bandColor(nm: number): string {
+  if (nm >= 720) return '#8a8f99';
+  const hue = Math.round(270 - ((nm - 400) / 300) * 270); // 400 nm violet .. 700 nm red
+  return `hsl(${Math.max(0, hue)} 80% 60%)`;
+}
+
+/** Inline SVG bar chart of a (possibly partial) spectrum; missing bands are hatched. */
+export function spectrumSvg(payload: number[], received: number): string {
+  const w = 192;
+  const h = 64;
+  const bw = w / SPECTRUM_BANDS;
+  let bars = '';
+  for (let i = 0; i < SPECTRUM_BANDS; i++) {
+    const x = (i * bw).toFixed(1);
+    if (i < received) {
+      const bh = ((payload[i] ?? 0) / 255) * (h - 2);
+      bars += `<rect x="${x}" y="${(h - bh).toFixed(1)}" width="${(bw - 1).toFixed(1)}" height="${bh.toFixed(1)}" fill="${bandColor(bandNm(i))}"><title>${bandNm(i)} nm: ${payload[i]}</title></rect>`;
+    } else bars += `<rect x="${x}" y="0" width="${(bw - 1).toFixed(1)}" height="${h}" fill="url(#hatch)" />`;
+  }
+  return `<svg class="spectrum" viewBox="0 0 ${w} ${h + 12}" width="${w}" height="${h + 12}">
+    <defs><pattern id="hatch" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="4" stroke="#2a3446" stroke-width="2" /></pattern></defs>
+    ${bars}
+    <text x="0" y="${h + 10}">400</text><text x="${(7.5 * bw).toFixed(1)}" y="${h + 10}" text-anchor="middle">700</text><text x="${w}" y="${h + 10}" text-anchor="end">1000 nm</text>
+  </svg>`;
+}
+
+/** Mission control gallery: science products received over the downlink (SPEC §3.8.5). */
+export class GalleryPanel {
+  private lastKey = '';
+  private list: HTMLElement;
+  private status: HTMLElement;
+
+  constructor(el: HTMLElement, private engine: SimulationEngine) {
+    el.innerHTML = `<div class="toolbar small"><span class="dim" id="gallery-status"></span></div>
+      <div id="gallery-list"></div>
+      <p class="small dim">The spectrometer (<code>ACT TOOL_2 slot</code>) records a 16-band spectrum (18 B) in the science
+      recorder. The downlink sends it after the log FIFO is empty; credits are paid when the last byte arrives.</p>`;
+    this.list = el.querySelector('#gallery-list')!;
+    this.status = el.querySelector('#gallery-status')!;
+  }
+
+  private card(g: ReceivedProduct): string {
+    const size = productFrameBytes(g.type);
+    const frame = productFrame(this.engine.seed, g).slice(0, g.received);
+    const done = g.received >= size;
+    const multi = this.engine.units.length > 1 ? ` · ${this.engine.getUnit(g.unitId)?.name ?? `#${g.unitId}`}` : '';
+    const body = g.type === ProductType.SPECTRUM ? spectrumSvg(frame.slice(2), Math.max(0, g.received - 2)) : '';
+    return `<div class="product${done ? '' : ' partial'}">
+      <b>${PRODUCT_NAMES[g.type] ?? `type ${g.type}`} #${g.seq}<span>${done ? `+${g.credits} cr` : `${g.received}/${size} B`}</span></b>
+      ${body}
+      <div class="small dim">recorded t${g.tick} at (${g.x}, ${g.y}) · ${done ? `arrived t${g.arrived}` : `receiving… t${g.arrived}`} · ${size} B${multi}</div>
+      <div class="hex small">${hex(frame)}</div>
+    </div>`;
+  }
+
+  update(): void {
+    const units = this.engine.units;
+    const waiting = units.reduce((n, u) => n + u.link.products.length, 0);
+    const used = units.reduce((n, u) => n + u.link.recUsed, 0);
+    const cap = units.reduce((n, u) => n + u.chassis.recorderBytes, 0);
+    this.status.textContent = `recorder ${used}/${cap} B · ${waiting} waiting · ${this.engine.stats.scienceDelivered} delivered`;
+    const gl = this.engine.gallery;
+    const last = gl.at(-1);
+    const key = `${gl.length}:${last?.seq ?? -1}:${last?.received ?? 0}`;
+    if (key === this.lastKey) return;
+    this.lastKey = key;
+    this.list.innerHTML = gl.length
+      ? [...gl].reverse().map((g) => this.card(g)).join('')
+      : '<div class="dim">No science received yet.</div>';
+  }
+}

@@ -3,10 +3,11 @@
 /** Pre-installed on every new rover: stationary self-management. */
 export const FACTORY_IDLE = `; FACTORY FIRMWARE: stationary self-management.
 ; Keeps the solar array on the sun (stowed during squalls), keeps the
-; dish on the relay orbiter and sends a battery heartbeat.
+; dish on the relay orbiter and logs a battery heartbeat.
 ; Replace it with your own code!
 
 CONST BEAT_TICKS 50         ; ticks between heartbeats
+CONST T_BAT 1               ; log tag: the Console shows "T_BAT = 97"
 
 loop:   MOV @SOLAR_OPEN 1
         JNE @ALERT ALERT_SQUALL aim
@@ -17,8 +18,8 @@ aim:    MOV @SOLAR_ANGLE @SUN_AZIMUTH      ; motors slew toward targets
         JGT @SUN_ELEV 0 beat
         MOV @LIGHT_COLOR BLUE              ; blue: night, waiting for dawn
 beat:   MOV @LIGHT_BLINK 0
-        JLT @SIGNAL_STR 50 wait            ; no uplink yet
-        MOV @TX_DATA @BAT                  ; heartbeat packet
+        JLT @SIGNAL_STR 20 wait            ; dish not on the orbiter yet
+        LOG T_BAT @BAT                     ; heartbeat frame
         MOV @LIGHT_BLINK 1
 wait:   SLEEP BEAT_TICKS
 `;
@@ -64,9 +65,10 @@ aim:    MOV @SOLAR_ANGLE @SUN_AZIMUTH
                                   ; falls off the end -> wraps to boot: stow & go
 `;
 
-/** Template: mine ore, grab samples, analyze them and beam the science home. */
+/** Template: mine ore, grab samples, analyze them; the downlink sends the spectra home. */
 export const PROSPECTOR = `; PROSPECTOR: wander; mine ore and grab samples found next to
-; the rover, analyze cargo, and beam science to the orbiter.
+; the rover and analyze them. Each spectrum waits in the recorder
+; until the downlink has sent it: keep the dish on the orbiter.
 
 ALIAS r0 dir
 ALIAS r1 seen
@@ -76,10 +78,7 @@ ALIAS r3 slot
 boot:   MOV @SOLAR_OPEN 0
         SLEEP 20
 loop:   JLT @BAT 30 charge
-        MOV @ANTENNA_ANGLE @ORBIT_AZIMUTH ; keep the dish on the orbiter
-        JEQ @SCIENCE_READY 0 look
-        JLT @SIGNAL_STR 50 look
-        MOV @TX_DATA @SCIENCE_READY       ; each packet carries 1 science
+        MOV @ANTENNA_ANGLE @ORBIT_AZIMUTH ; spectra go home by themselves
 look:   SCAN dir -> seen dist
         JGT dist 1 go                     ; target not adjacent yet
         JEQ seen IRON_ORE mine

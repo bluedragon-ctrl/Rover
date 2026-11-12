@@ -35,12 +35,10 @@ export const BALANCE = {
   turnEnergy: 5, // @HEADING write: turn in place
 
   // Comms
-  txEnergy: 30,
-  txMinSignal: 50,
   uploadBase: 500,
   uploadPerByte: 12, // ~50 per average instruction
   uploadSignalFloor: 10,
-  // Downlink (docs/SPEC.md §3.8.1): byte-based, shared by the log FIFO (and later the recorder)
+  // Downlink (docs/SPEC.md §3.8.1): byte-based, shared by the log FIFO and the science recorder
   linkBytesPerTick: 2, // at @SIGNAL_STR 100, proportional to signal
   linkMinSignal: 20, // nothing is sent below this
   linkEnergyPerTick: 2, // per tick in which at least one byte is sent
@@ -85,6 +83,8 @@ export interface ChassisDef {
   cyclesPerTick: number;
   /** Log FIFO size in bytes (downlink, §3.8.3). */
   logFifoBytes: number;
+  /** Science recorder size in bytes (§3.8.5). */
+  recorderBytes: number;
   sensorRange: number;
   cargoSlots: number;
   /** Tool mounted in each hardpoint TOOL_0..TOOL_3 (null = empty). */
@@ -105,6 +105,7 @@ export const CHASSIS_MK1: ChassisDef = {
   callStack: 8,
   cyclesPerTick: 4,
   logFifoBytes: 32,
+  recorderBytes: 1024,
   sensorRange: 6,
   cargoSlots: 4,
   tools: ['DRILL', 'GRABBER', 'SPECTROMETER', null],

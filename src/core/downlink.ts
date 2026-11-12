@@ -4,6 +4,11 @@
  *
  * Frame header: bit 7 kind (0 log, 1 science), bits 6..3 tag, bits 2..1 size code
  * (0 → 0 B, 1 → 1 B, 2 → 2 B, 3 → 4 B payload), bit 0 = 0.
+ *
+ * Science products (§3.8.5) wait in the reliable recorder as descriptors; their bytes are
+ * generated (src/core/imaging.ts) when mission control has received them. Log and recorder
+ * are separate virtual channels on the same link: the log has priority and may preempt a
+ * product between bytes; the product resumes where it stopped.
  */
 
 /** Tag reserved for system frames (boot, dumps). `LOG 15` is a compile error. */
@@ -21,8 +26,41 @@ export const BOOT_REASON_NAMES: Record<number, string> = { 1: 'code upload', 2: 
 
 /** Received frames mission control keeps (console history, saved). */
 export const RECEIVED_KEEP = 200;
+/** Science products mission control keeps (gallery, saved). */
+export const GALLERY_KEEP = 100;
 
 const SIZE_BYTES = [0, 1, 2, 4];
+
+/** Science product types (frame tag of a science frame). */
+export const ProductType = {
+  SPECTRUM: 0,
+} as const;
+export const PRODUCT_NAMES: Record<number, string> = { 0: 'spectrum' };
+/** Payload bytes per product type. */
+export const PRODUCT_PAYLOAD: Record<number, number> = { 0: 16 };
+/** On-air size: header + sequence byte + payload. */
+export const productFrameBytes = (type: number): number => 2 + (PRODUCT_PAYLOAD[type] ?? 0);
+
+/** Science frame header byte for a product type. */
+export const scienceHeader = (type: number): number => 0x80 | ((type & 15) << 3);
+
+/**
+ * A science product in the recorder. Its bytes are a pure function of the world seed and
+ * this descriptor (imaging.ts), so saves store only the descriptor.
+ */
+export interface ProductDesc {
+  type: number;
+  /** Sequence number 0–255 (wraps), per rover. */
+  seq: number;
+  /** Subject: tile id analyzed / photographed. */
+  subject: number;
+  x: number;
+  y: number;
+  /** Tick it was recorded. */
+  tick: number;
+  /** Science credits paid on full delivery. */
+  credits: number;
+}
 
 /** Payload size code for a signed 32-bit value: smallest of 1/2/4 bytes that holds it. */
 function sizeCode(v: number): number {
@@ -77,6 +115,15 @@ export interface ReceivedFrame {
   gap: number;
 }
 
+/** A product as mission control holds it: complete, or partly received. */
+export interface ReceivedProduct extends ProductDesc {
+  unitId: number;
+  /** Tick its last byte arrived (or the latest byte so far, while partial). */
+  arrived: number;
+  /** Bytes received so far, out of productFrameBytes(type). */
+  received: number;
+}
+
 /** Per-rover transmitter state (saved). */
 export class Downlink {
   /** Log FIFO, oldest first; the head may be partly sent. */
@@ -89,6 +136,32 @@ export class Downlink {
   lost = 0;
   /** Drops since the last queued frame (attached to the next frame as its gap). */
   gap = 0;
+  /** Science recorder, oldest first; the head may be partly sent. */
+  products: ProductDesc[] = [];
+  /** Bytes of products[0] already transmitted. */
+  recSent = 0;
+  /** Sequence number for the next product (0–255, wraps). */
+  seq = 0;
+
+  /** Bytes the recorder holds (a product's space is freed only when its last byte is sent). */
+  get recUsed(): number {
+    let n = 0;
+    for (const p of this.products) n += productFrameBytes(p.type);
+    return n;
+  }
+
+  recFree(capacity: number): number {
+    return Math.max(0, capacity - this.recUsed);
+  }
+
+  /** Record a product if it fits; assigns its sequence number. */
+  record(p: Omit<ProductDesc, 'seq'>, capacity: number): ProductDesc | null {
+    if (productFrameBytes(p.type) > this.recFree(capacity)) return null;
+    const d = { ...p, seq: this.seq };
+    this.seq = (this.seq + 1) & 255;
+    this.products.push(d);
+    return d;
+  }
 
   /** Bytes waiting in the FIFO (the unsent part of the head counts). */
   get used(): number {
@@ -113,28 +186,48 @@ export class Downlink {
     return true;
   }
 
+  get idle(): boolean {
+    return this.fifo.length === 0 && this.products.length === 0;
+  }
+
   /**
-   * One tick of transmission. Returns the frames completed this tick and how many bytes
-   * went out. Nothing is sent below `minSignal`; an idle link keeps no byte budget.
+   * One tick of transmission: log FIFO first, then the recorder. Returns the log frames and
+   * products completed this tick, the head product if it advanced without completing, and
+   * how many bytes went out. Nothing is sent below `minSignal`; an idle link keeps no budget.
    */
-  pump(signal: number, minSignal: number, bytesPerTick: number): { sent: number; done: QueuedFrame[] } {
+  pump(
+    signal: number,
+    minSignal: number,
+    bytesPerTick: number,
+  ): { sent: number; done: QueuedFrame[]; delivered: ProductDesc[]; partial: ProductDesc | null } {
     const done: QueuedFrame[] = [];
+    const delivered: ProductDesc[] = [];
     let sent = 0;
-    if (signal < minSignal || this.fifo.length === 0) {
+    let recBytes = 0;
+    if (signal < minSignal || this.idle) {
       this.acc = 0;
-      return { sent, done };
+      return { sent, done, delivered, partial: null };
     }
     this.acc += bytesPerTick * signal;
-    while (this.acc >= 100 && this.fifo.length) {
+    while (this.acc >= 100 && !this.idle) {
       this.acc -= 100;
       sent++;
-      if (++this.headSent >= this.fifo[0].bytes.length) {
-        done.push(this.fifo.shift()!);
-        this.headSent = 0;
+      if (this.fifo.length) {
+        if (++this.headSent >= this.fifo[0].bytes.length) {
+          done.push(this.fifo.shift()!);
+          this.headSent = 0;
+        }
+      } else {
+        recBytes++;
+        if (++this.recSent >= productFrameBytes(this.products[0].type)) {
+          delivered.push(this.products.shift()!);
+          this.recSent = 0;
+          recBytes = 0;
+        }
       }
     }
-    if (this.fifo.length === 0) this.acc = 0;
-    return { sent, done };
+    if (this.idle) this.acc = 0;
+    return { sent, done, delivered, partial: recBytes > 0 ? this.products[0] : null };
   }
 }
 

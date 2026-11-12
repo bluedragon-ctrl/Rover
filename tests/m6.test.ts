@@ -174,7 +174,7 @@ describe('save / load', () => {
     run(b, total - split);
 
     expect(serialize(b)).toEqual(serialize(a));
-    expect(a.stats.oreMined + a.stats.packetsSent).toBeGreaterThan(0);
+    expect(a.stats.oreMined + a.stats.framesReceived).toBeGreaterThan(0);
     console.log(`save size at tick ${split}: ${(json.length / 1024).toFixed(1)} KB, ${JSON.parse(json).chunks.length} chunks`);
   });
 
