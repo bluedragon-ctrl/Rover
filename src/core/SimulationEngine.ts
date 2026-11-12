@@ -4,7 +4,17 @@ import { EventBus } from './EventBus';
 import { MapGenerator } from './MapGenerator';
 import { EventDirector } from './EventDirector';
 import { hash3 } from './rng';
-import { BootReason, encodeLog, RECEIVED_KEEP, SYSTEM_TAG, type ReceivedFrame } from './downlink';
+import {
+  BootReason,
+  encodeLog,
+  GALLERY_KEEP,
+  productFrameBytes,
+  RECEIVED_KEEP,
+  SYSTEM_TAG,
+  type ProductDesc,
+  type ReceivedFrame,
+  type ReceivedProduct,
+} from './downlink';
 import { UPGRADE_BY_ID } from './upgrades';
 import type { SquallDamage } from './events';
 import { TOOLS, type ToolDef } from './tools';
@@ -52,7 +62,9 @@ export class SimulationEngine {
   readonly director: EventDirector;
   /** World-wide counters used by goals and the UI. */
   readonly stats = {
-    packetsSent: 0,
+    /** Firmware frames received by mission control: LOG frames (not system tag 15) and science products. */
+    framesReceived: 0,
+    /** Science products delivered completely. */
     scienceDelivered: 0,
     oreMined: 0,
     itemsCollected: 0,
@@ -75,6 +87,8 @@ export class SimulationEngine {
   nextUnitId = 1;
   /** Mission control: frames received over the downlink (newest last, last RECEIVED_KEEP). */
   received: ReceivedFrame[] = [];
+  /** Mission control: science products received or being received (newest last, last GALLERY_KEEP). */
+  gallery: ReceivedProduct[] = [];
   readonly portCtx: PortContext;
 
   constructor(readonly opts: EngineOptions) {
@@ -356,27 +370,15 @@ export class SimulationEngine {
     if (d.antennaEvery && t % d.antennaEvery === 0) u.antennaHealth = Math.max(0, u.antennaHealth - 1);
   }
 
+  /** `@TX_DATA` write: old shorthand for `LOG 0 value` that also sets @STATUS. */
   private transmit(u: Unit, value: number): void {
-    const signal = this.signalOf(u);
-    let status = Status.OK;
-    if (signal < BALANCE.txMinSignal) status = Status.ERR_NO_SIGNAL;
-    else if (u.energy < BALANCE.txEnergy) status = Status.ERR_LOW_POWER;
-    const ok = status === Status.OK;
-    let science = false;
-    if (ok) {
-      this.drain(u, BALANCE.txEnergy);
-      u.packetsSent++;
-      this.stats.packetsSent++;
-      if (u.scienceReady > 0) {
-        u.scienceReady--;
-        this.stats.scienceDelivered++;
-        this.credits++;
-        science = true;
-      }
-    }
-    u.lastTx = { tick: this.tick, value, ok };
-    this.setStatus(u, status);
-    this.events.emit('UPLINK_PULSE', { unitId: u.id, x: u.x, y: u.y, value, ok, science });
+    const ok = u.link.enqueue(encodeLog(0, value), u.chassis.logFifoBytes);
+    this.setStatus(u, ok ? Status.OK : Status.ERR_FULL);
+  }
+
+  /** Record a science product in the rover's recorder (null if it does not fit). */
+  recordProduct(u: Unit, p: Omit<ProductDesc, 'seq' | 'tick'>): ProductDesc | null {
+    return u.link.record({ ...p, tick: this.tick }, u.chassis.recorderBytes);
   }
 
   private updateUnitPhysics(u: Unit): void {
@@ -617,17 +619,43 @@ export class SimulationEngine {
     u.link.enqueue(encodeLog(SYSTEM_TAG, reason), u.chassis.logFifoBytes);
   }
 
-  /** Transmit this tick's bytes; completed frames reach mission control. */
+  /** Transmit this tick's bytes; completed frames and products reach mission control. */
   private updateLink(u: Unit): void {
-    const { sent, done } = u.link.pump(this.signalOf(u), BALANCE.linkMinSignal, BALANCE.linkBytesPerTick);
+    const { sent, done, delivered, partial } = u.link.pump(this.signalOf(u), BALANCE.linkMinSignal, BALANCE.linkBytesPerTick);
     if (!sent) return;
     this.drain(u, BALANCE.linkEnergyPerTick);
     for (const f of done) {
       const r: ReceivedFrame = { unitId: u.id, tick: this.tick, bytes: f.bytes, gap: f.gap };
       this.received.push(r);
+      if ((f.bytes[0] >> 3) !== SYSTEM_TAG) this.stats.framesReceived++;
       this.events.emit('DOWNLINK_FRAME', r);
     }
+    for (const p of delivered) {
+      const g = this.galleryEntry(u, p);
+      g.received = productFrameBytes(p.type);
+      this.stats.framesReceived++;
+      this.stats.scienceDelivered++;
+      this.credits += p.credits;
+      this.events.emit('SCIENCE_DELIVERED', g);
+    }
+    if (partial) this.galleryEntry(u, partial).received = u.link.recSent;
+    if (done.length || delivered.length) this.events.emit('UPLINK_PULSE', { unitId: u.id, x: u.x, y: u.y, science: delivered.length > 0 });
     if (this.received.length > RECEIVED_KEEP) this.received.splice(0, this.received.length - RECEIVED_KEEP);
+    if (this.gallery.length > GALLERY_KEEP) this.gallery.splice(0, this.gallery.length - GALLERY_KEEP);
+  }
+
+  /** Mission control's record of a product, created when its first byte arrives. */
+  private galleryEntry(u: Unit, p: ProductDesc): ReceivedProduct {
+    for (let i = this.gallery.length - 1; i >= 0; i--) {
+      const g = this.gallery[i];
+      if (g.unitId === u.id && g.seq === p.seq && g.tick === p.tick) {
+        g.arrived = this.tick;
+        return g;
+      }
+    }
+    const g: ReceivedProduct = { ...p, unitId: u.id, arrived: this.tick, received: 0 };
+    this.gallery.push(g);
+    return g;
   }
 
   private hardware(u: Unit, ins: Instr, v: number[]): number[] | void {

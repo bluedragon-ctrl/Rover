@@ -63,6 +63,14 @@ main { display: flex; height: calc(100% - 44px); }
 #console-list { font-family: var(--mono); font-size: 11px; max-height: 60vh; overflow: auto; border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; margin: 6px 0; }
 #console-list .hex { color: #5d7a9a; }
 #console-list .warn { color: var(--warn); }
+#gallery-list { max-height: 65vh; overflow: auto; margin: 6px 0; }
+.product { border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; margin-bottom: 6px; }
+.product.partial { border-style: dashed; }
+.product b { display: flex; justify-content: space-between; text-transform: capitalize; }
+.product b span { color: #ffd23a; font-weight: 400; font-family: var(--mono); font-size: 11px; text-transform: none; }
+.product .hex { font-family: var(--mono); color: #5d7a9a; word-break: break-all; }
+.product svg.spectrum { display: block; margin: 4px 0; }
+.product svg.spectrum text { fill: #5d7a9a; font: 8px var(--mono); }
 #compass { position: absolute; top: 8px; right: 8px; pointer-events: auto; }
 select { background: #131a26; color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; font: inherit; }
 input[type=checkbox] { width: auto; }

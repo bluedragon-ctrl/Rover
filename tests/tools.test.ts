@@ -45,19 +45,23 @@ describe('drill (TOOL_0)', () => {
 });
 
 describe('grabber, spectrometer, USE', () => {
-  it('grabs a sample, analyzes it and transmits the science', () => {
+  it('grabs a sample, analyzes it and the downlink delivers the spectrum', () => {
     const { eng, u } = setup(
-      'ACT TOOL_1 WEST\nACT TOOL_2 0\nMOV r0 @SCIENCE_READY\nMOV @ANTENNA_ANGLE @ORBIT_AZIMUTH\nSLEEP 80\nMOV @TX_DATA 1\nMOV r1 @SCIENCE_READY\nSLEEP 1000',
+      'ACT TOOL_1 WEST\nACT TOOL_2 0\nMOV r0 @SCIENCE_READY\nMOV r2 @REC_FREE\nMOV @ANTENNA_ANGLE @ORBIT_AZIMUTH\nSLEEP 80\nMOV r1 @SCIENCE_READY\nSLEEP 1000',
       (e) => e.world.setTile(-1, 0, Layer.ITEM, T.SAMPLE),
     );
     run(eng, 40);
     expect(eng.world.getTile(-1, 0, Layer.ITEM)).toBe(0);
     expect(u.cargo[0]).toBe(0);
-    expect(u.vm.regs[0]).toBe(3);
+    expect(u.vm.regs[0]).toBe(1); // one product waiting
+    expect(u.vm.regs[2]).toBe(1024 - 18);
+    const credits = eng.credits;
     run(eng, 100);
-    expect(u.vm.regs[1]).toBe(2);
+    expect(u.vm.regs[1]).toBe(0);
     expect(eng.stats.scienceDelivered).toBe(1);
-    expect(eng.credits).toBeGreaterThanOrEqual(1);
+    expect(eng.credits - credits).toBeGreaterThanOrEqual(3); // sample = 3 (plus any goal reward)
+    expect(eng.gallery).toHaveLength(1);
+    expect(eng.gallery[0]).toMatchObject({ type: 0, subject: T.SAMPLE, received: 18 });
   });
 
   it('spectrometer refuses empty slots and repair kits; USE repairs the hull', () => {

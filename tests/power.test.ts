@@ -103,16 +103,18 @@ describe('solar array & motors', () => {
 });
 
 describe('comms', () => {
-  it('TX needs signal; the factory firmware aligns the dish and transmits', () => {
+  it('@TX_DATA is LOG 0; the factory firmware aligns the dish and logs a heartbeat', () => {
     const eng = new SimulationEngine({ seed: 1 });
     const u = eng.spawnUnit('t');
     eng.upload(u, 'MOV @TX_DATA 1\nMOV r0 @STATUS\nSLEEP 1000', factory);
     eng.advanceTick();
-    expect(u.vm.regs[0]).toBe(Status.ERR_NO_SIGNAL);
+    expect(u.vm.regs[0]).toBe(Status.OK); // queued, even without signal
+    expect(u.link.fifo.at(-1)!.bytes).toEqual([0x02, 0x01]);
     eng.upload(u, FACTORY_IDLE, factory);
     for (let i = 0; i < 300; i++) eng.advanceTick();
     expect(eng.signalOf(u)).toBeGreaterThan(90);
-    expect(u.packetsSent).toBeGreaterThan(0);
+    expect(eng.received.some((f) => f.bytes[0] >> 3 === 1)).toBe(true); // T_BAT heartbeat
+    expect(eng.director.completed.has('first_contact')).toBe(true);
   });
 
   it('upload cost scales inversely with signal and is rejected without enough energy', () => {

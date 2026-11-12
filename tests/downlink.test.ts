@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { BALANCE, CHASSIS_MK1 } from '../src/core/balance';
-import { decodeFrame, Downlink, encodeLog, hex, SYSTEM_TAG } from '../src/core/downlink';
+import { decodeFrame, Downlink, encodeLog, hex, productFrameBytes, ProductType, SYSTEM_TAG } from '../src/core/downlink';
+import { productFrame, spectrum } from '../src/core/imaging';
+import { Status } from '../src/core/types';
+import { T } from '../src/core/WorldRegistry';
 import { deserialize, migrate, serialize } from '../src/core/SaveManager';
 import { SimulationEngine } from '../src/core/SimulationEngine';
 import type { Unit } from '../src/core/Unit';
@@ -201,5 +204,145 @@ describe('console decoding', async () => {
     expect(f(encodeLog(3, -1))).toBe('tag 3 = -1');
     expect(f(encodeLog(3, null))).toBe('tag 3');
     expect(f(encodeLog(15, 2))).toBe('BOOT: watchdog');
+  });
+});
+
+describe('science recorder (SPEC §3.8.5)', () => {
+  const spec = (subject: number = T.SAMPLE) => ({ type: ProductType.SPECTRUM, subject, x: 3, y: -2, credits: 3 });
+
+  it('records descriptors, frees space only when the last byte is sent, wraps the sequence', () => {
+    const d = new Downlink();
+    for (let i = 0; i < 56; i++) expect(d.record({ ...spec(), tick: i }, 1024)).not.toBeNull();
+    expect(d.recFree(1024)).toBe(1024 - 56 * 18);
+    expect(d.record({ ...spec(), tick: 99 }, 1024)).toBeNull(); // 16 B left
+    let delivered = 0;
+    for (let t = 0; t < 9; t++) delivered += d.pump(100, 20, 2).delivered.length;
+    expect(delivered).toBe(1); // 18 B at 2 B/tick
+    expect(d.recFree(1024)).toBe(16 + 18);
+    const s = new Downlink();
+    s.seq = 255;
+    expect(s.record({ ...spec(), tick: 0 }, 1024)!.seq).toBe(255);
+    expect(s.record({ ...spec(), tick: 0 }, 1024)!.seq).toBe(0);
+  });
+
+  it('the log preempts a product between bytes; the product resumes', () => {
+    const d = new Downlink();
+    d.record({ ...spec(), tick: 0 }, 1024);
+    d.pump(100, 20, 2); // 2 B of the spectrum
+    d.enqueue(encodeLog(1, 1000), 32); // 3 B log frame
+    const a = d.pump(100, 20, 2);
+    expect([a.done.length, d.recSent]).toEqual([0, 2]);
+    const b = d.pump(100, 20, 2); // last log byte + 1 product byte
+    expect([b.done.length, d.recSent, b.partial?.seq]).toEqual([1, 3, 0]);
+  });
+
+  it('spectrometer records a spectrum; ERR_FULL keeps the item', () => {
+    const { e, u } = rover('ACT TOOL_2 0\nMOV r0 @STATUS\nMOV r1 @REC_FREE\nACT TOOL_2 1\nMOV r2 @STATUS\nMOV r3 @SCIENCE_READY\nSLEEP 1000');
+    u.cargo[0] = T.IRON_ORE;
+    u.cargo[1] = T.SILICON_ORE;
+    u.antennaHealth = 0; // nothing leaves the recorder
+    for (let i = 0; i < 56; i++) e.recordProduct(u, spec());
+    e.recordProduct(u, spec()); // cannot fit: 16 B left
+    for (let i = 0; i < 80; i++) e.advanceTick();
+    expect([u.vm.regs[0], u.vm.regs[1], u.vm.regs[2], u.vm.regs[3]]).toEqual([Status.ERR_FULL, 16, Status.ERR_FULL, 56]);
+    expect(u.cargo.slice(0, 2)).toEqual([T.IRON_ORE, T.SILICON_ORE]);
+  });
+
+  it('delivers in order, pays credits once, shows partial products in the gallery', () => {
+    const { e, u } = rover('SLEEP 100000');
+    u.link.fifo = [];
+    e.recordProduct(u, { ...spec(T.IRON_ORE), credits: 1 });
+    e.recordProduct(u, spec());
+    const c0 = e.credits;
+    run(e, 5);
+    expect(e.gallery).toHaveLength(1);
+    expect(e.gallery[0].received).toBe(10);
+    run(e, 13);
+    expect(e.gallery.map((g) => [g.seq, g.received])).toEqual([
+      [0, 18],
+      [1, 18],
+    ]);
+    expect(e.credits - c0).toBeGreaterThanOrEqual(4);
+    expect(e.stats.scienceDelivered).toBe(2);
+    expect(u.link.products).toEqual([]);
+  });
+
+  it('spectra are integer, deterministic and shaped by the material', () => {
+    const at = (subject: number, x = 5, y = 7) => spectrum(1, { subject, x, y, tick: 100, seq: 0 });
+    for (const s of [at(T.IRON_ORE), at(T.SILICON_ORE), at(T.SAMPLE)]) {
+      expect(s).toHaveLength(16);
+      for (const b of s) expect(Number.isInteger(b) && b >= 0 && b <= 255).toBe(true);
+    }
+    expect(at(T.IRON_ORE)).toEqual(at(T.IRON_ORE));
+    expect(at(T.IRON_ORE, 6, 7)).not.toEqual(at(T.IRON_ORE));
+    const iron = at(T.IRON_ORE);
+    expect(iron[12]).toBeLessThan(iron[9] - 30); // 880 nm absorption vs 760 nm
+    const si = at(T.SILICON_ORE);
+    expect(Math.max(...si) - Math.min(...si)).toBeLessThan(40); // flat
+    expect(Math.min(...si)).toBeGreaterThan(150); // bright
+    const smp = at(T.SAMPLE);
+    expect(smp.indexOf(Math.max(...smp))).toBeGreaterThanOrEqual(2);
+    expect(smp.indexOf(Math.max(...smp))).toBeLessThanOrEqual(5); // green peak, 480–600 nm
+    const f = productFrame(1, { type: 0, seq: 7, subject: T.SAMPLE, x: 5, y: 7, tick: 100, credits: 3 });
+    expect(f.slice(0, 2)).toEqual([0x80, 7]);
+    expect(f).toHaveLength(productFrameBytes(0));
+  });
+
+  it('boot frames alone do not complete First contact', () => {
+    const { e } = rover('SLEEP 100000');
+    run(e, 30);
+    expect(e.received.length).toBe(1);
+    expect(e.stats.framesReceived).toBe(0);
+    expect(e.director.completed.has('first_contact')).toBe(false);
+  });
+
+  it('save mid-product, load, continue == uninterrupted run', () => {
+    const make = () => {
+      const { e, u } = rover('CONST T 2\nloop: LOG T @TICK\nSLEEP 7\nJMP loop', 21);
+      u.antennaHealth = 75;
+      for (let i = 0; i < 6; i++) e.recordProduct(u, spec(i % 2 ? T.IRON_ORE : T.SAMPLE));
+      return e;
+    };
+    const a = make();
+    run(a, 120);
+    const b0 = make();
+    run(b0, 53);
+    expect(b0.units[0].link.recSent).toBeGreaterThan(0);
+    const b = deserialize(JSON.parse(JSON.stringify(serialize(b0))));
+    run(b, 67);
+    expect(serialize(b)).toEqual(serialize(a));
+    expect(a.stats.scienceDelivered).toBe(6);
+  });
+
+  it('migrates v4 saves: waiting science packets are credited', () => {
+    const { e } = rover('SLEEP 10');
+    const v4 = serialize(e) as unknown as Record<string, any>;
+    v4.version = 4;
+    delete v4.gallery;
+    v4.stats.packetsSent = 3;
+    delete v4.stats.framesReceived;
+    for (const u of v4.units) {
+      u.scienceReady = 4;
+      u.packetsSent = 3;
+      u.lastTx = null;
+      u.link = { fifo: [], headSent: 0, acc: 0, lost: 0, gap: 0 };
+    }
+    const credits = v4.credits;
+    const m = migrate(v4);
+    expect(m.credits).toBe(credits + 4);
+    expect(m.stats.framesReceived).toBe(3 + m.received.length);
+    expect(m.gallery).toEqual([]);
+    const l = deserialize(v4);
+    expect(l.units[0].link.products).toEqual([]);
+    expect('scienceReady' in m.units[0]).toBe(false);
+  });
+});
+
+describe('gallery rendering', async () => {
+  const { spectrumSvg } = await import('../src/ui/GalleryPanel');
+  it('draws received bands as bars and hatches the rest', () => {
+    const svg = spectrumSvg(new Array(16).fill(100), 3);
+    expect(svg.match(/<title>/g)).toHaveLength(3);
+    expect(svg.match(/url\(#hatch\)/g)).toHaveLength(13);
   });
 });

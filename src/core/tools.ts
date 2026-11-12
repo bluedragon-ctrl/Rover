@@ -1,6 +1,7 @@
 import type { SimulationEngine } from './SimulationEngine';
 import { DIR_VEC, Layer, Status, SystemId } from './types';
 import type { Unit } from './Unit';
+import { productFrameBytes, ProductType } from './downlink';
 import { T } from './WorldRegistry';
 
 export type ToolId = 'DRILL' | 'GRABBER' | 'SPECTROMETER' | 'SEISMIC' | 'USE_ITEM';
@@ -94,15 +95,17 @@ export const TOOLS: Record<ToolId, ToolDef> = {
     arg: 'slot',
     ticks: 30,
     energy: 300,
-    description: 'Analyzes the item in cargo <slot>, freeing it and adding @SCIENCE_READY packets.',
+    description: 'Analyzes the item in cargo <slot>, freeing it and recording a 16-byte spectrum (18 B in the recorder; ERR_FULL keeps the item).',
     check(e, u, slot) {
       if (!validSlot(u, slot)) return Status.ERR_INVALID;
-      return e.registry.get(u.cargo[slot])?.science ? Status.OK : Status.ERR_INVALID;
+      if (!e.registry.get(u.cargo[slot])?.science) return Status.ERR_INVALID;
+      return u.link.recFree(u.chassis.recorderBytes) < productFrameBytes(ProductType.SPECTRUM) ? Status.ERR_FULL : Status.OK;
     },
     complete(e, u, slot) {
       const st = this.check(e, u, slot);
       if (st !== Status.OK) return st;
-      u.scienceReady += e.registry.get(u.cargo[slot])!.science!;
+      const subject = u.cargo[slot];
+      e.recordProduct(u, { type: ProductType.SPECTRUM, subject, x: u.x, y: u.y, credits: e.registry.get(subject)!.science! });
       u.cargo[slot] = 0;
       e.stats.itemsAnalyzed++;
       return Status.OK;

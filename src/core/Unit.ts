@@ -43,11 +43,7 @@ export class Unit {
   solarTarget = 0;
   antennaAngle = 0;
   antennaTarget = 0;
-  packetsSent = 0;
-  /** Analyzed science waiting to be transmitted. */
-  scienceReady = 0;
-  lastTx: { tick: number; value: number; ok: boolean } | null = null;
-  /** Byte downlink: log FIFO + transmitter (M9). */
+  /** Byte downlink: log FIFO, science recorder, transmitter (M9). */
   link = new Downlink();
   /** Energy gained from solar last tick (for UI). */
   lastSolarGain = 0;

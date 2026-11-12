@@ -47,8 +47,8 @@ export class DebuggerPanel {
         <div class="meter"><label>SOLAR ${u.solarHealth}</label><div><i style="width:${u.solarHealth}%;background:${u.solarHealth < 50 ? '#ff4d4d' : '#5a7dff'}"></i></div></div>
         <div class="meter"><label>DISH ${u.antennaHealth}</label><div><i style="width:${u.antennaHealth}%;background:${u.antennaHealth < 50 ? '#ff4d4d' : '#3affc8'}"></i></div></div>
       </div>
-      <div class="dim small" style="margin-top:4px">solar ${u.solarDeployed ? `+${u.lastSolarGain}/tick` : u.solarDeploy > 0 ? 'moving…' : 'stowed'} · signal ${this.engine.signalOf(u)} · TX packets ${u.packetsSent}${u.lastTx ? ` · last TX ${u.lastTx.value} ${u.lastTx.ok ? 'ok' : 'failed'} @t${u.lastTx.tick}` : ''}</div>
-      <h4>Cargo <small>${u.cargo.filter((c) => !c).length} free · science ready ${u.scienceReady}</small></h4>
+      <div class="dim small" style="margin-top:4px">solar ${u.solarDeployed ? `+${u.lastSolarGain}/tick` : u.solarDeploy > 0 ? 'moving…' : 'stowed'} · signal ${this.engine.signalOf(u)} · log FIFO ${u.link.used}/${u.chassis.logFifoBytes} B · recorder ${u.link.recUsed}/${u.chassis.recorderBytes} B</div>
+      <h4>Cargo <small>${u.cargo.filter((c) => !c).length} free · science ready ${u.link.products.length}</small></h4>
       <div class="stack">${u.cargo.map((c, i) => `<span class="slot cargo ${c ? 'full' : ''}" title="slot ${i}">${c ? esc(this.engine.registry.get(c)?.constName ?? String(c)) : '·'}</span>`).join('')}</div>
       <h4>Hardpoints</h4>
       <div class="stack">${u.chassis.tools.map((t, i) => `<span class="slot tool ${t ? 'full' : ''} ${u.action?.kind === 'TOOL' && u.action.tool === t ? 'busy' : ''}" title="TOOL_${i}">${i}:${t ? esc(TOOLS[t].name) : 'empty'}</span>`).join('')}</div>
