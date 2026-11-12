@@ -238,17 +238,9 @@ Writes are clamped to the port's range; angle ports wrap modulo 360.
 
 ## 6. Milestones
 
-| | Scope |
-| :--- | :--- |
-| **M0** | Vite + TS + Vitest scaffold, GitHub Pages workflow. |
-| **M1** | Compiler + VM (cycle budget, faults, watchdog), unit tests. |
-| **M2** | Registry, chunked world, generator, engine with `STEP`/`SCAN`/energy. |
-| **M3** | Three.js wireframe viewport, CodeMirror editor, debugger, speed controls, admin buttons. |
-| **M4** | Sun, solar, antenna, signal-scaled upload, headlight cost, fog of war, baseline idle script. |
-| M5 | Tools, cargo, spectrometer, science, first goals. |
-| M6 | Save/load, storyteller events, admin console UI. |
-| M7 | Upgrades (Flash, registers, cycles, cargo, `TOOL_3`), chassis tiers. |
-| **M8** | **Visual overhaul** (see §7). |
+Milestone status, the detailed plan for the next step, open decisions and the
+backlog live in [`ROADMAP.md`](ROADMAP.md). This spec describes *what the game is*;
+the roadmap tracks *where the work is*.
 
 ## 7. Visual overhaul roadmap (M8)
 

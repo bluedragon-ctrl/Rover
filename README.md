@@ -4,7 +4,7 @@ A browser sandbox game: program an autonomous planetary rover in a tiny stack-ba
 assembly language (**Rover-ASM**) and watch it explore an infinite, procedurally
 generated world rendered as vector wireframes.
 
-* Spec: [`docs/SPEC.md`](docs/SPEC.md)
+* Spec: [`docs/SPEC.md`](docs/SPEC.md) · Roadmap & status: [`docs/ROADMAP.md`](docs/ROADMAP.md) · Contributing: [`CLAUDE.md`](CLAUDE.md)
 * Stack: Vite + TypeScript + Three.js + CodeMirror 6, tests with Vitest.
 
 ## Run
