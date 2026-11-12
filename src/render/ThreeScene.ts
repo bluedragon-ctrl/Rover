@@ -245,7 +245,7 @@ export class ThreeScene {
     for (const u of this.engine.units) {
       let v = this.rovers.get(u.id);
       if (!v) {
-        const mesh = buildRoverRig();
+        const mesh = buildRoverRig({ post: true });
         this.worldRoot.add(mesh.group, mesh.sensorRing);
         v = { mesh, anim: new RoverAnimator(mesh), angle: -u.heading * (Math.PI / 2), radarAt: -Infinity };
         this.rovers.set(u.id, v);
@@ -276,6 +276,9 @@ export class ThreeScene {
         cpu: dead ? 'off' : fault ? 'fault' : u.action?.kind === 'WAIT' ? 'idle' : 'run',
         beaconHex: dead || blinkOff ? 0x222222 : LIGHT_HEX[u.lightColor] ?? 0xffffff,
         indicators: u.indicators.map((i) => indicatorHex(dead ? 0 : i)),
+        // Dark while powered off. The operator's view is centred on the rover, so its own
+        // display is always in view; other rovers (M12) will need the view check.
+        post: dead ? null : u.post,
         headlight: !!u.headlight && !dead,
         drilling: u.action?.kind === 'TOOL' && u.action.tool === 'DRILL',
         sensorRange: view.radius,

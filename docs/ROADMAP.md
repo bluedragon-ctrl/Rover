@@ -20,7 +20,7 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | **M8** | **Visual overhaul (SPEC §7)** | 🚧 in progress: asset preview, indicator lamps, **game renderer switched to v2**, frame-time HUD + geometry baseline, pan leash; performance fine on PC, remaining items (LOD, fat lines, zoom range, atmosphere) deferred to the next visual pass |
 | M8.1 | Radar `SCAN` vs. light-limited operator view; headlight cone; `@HEADING` | ✅ done |
 | Flash bytes | Program size in machine-code bytes instead of lines (SPEC §5.7) | ✅ core done; editor byte gutter awaiting preview approval |
-| **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | 🚧 slices 1–3 done (link layer, `LOG`, Console tab; recorder, spectra, Gallery tab; dumps, `BRK`, admin-only debugger; save v6); ⏭ next: slice 4 (`@POST` display, preview first); photo POC in `preview.html?photos=1` |
+| **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | 🚧 slices 1–4 done (link layer, `LOG`, Console tab; recorder, spectra, Gallery tab; dumps, `BRK`, admin-only debugger; `@POST` display; save v7); ⏭ next: slice 5 (camera + photos); photo POC in `preview.html?photos=1` |
 | M10 | Firmware + program slot (SPEC §3.9) | planned: design agreed, plan below |
 | M11 | User interface review (after M10) | planned |
 | M12 | Multiple rovers (after single-rover tuning) | planned |
@@ -208,9 +208,12 @@ Slices, one PR each, in order. Every slice: tests green, build, SPEC markers upd
        frames carry `taken`. `BRK` (1 cycle, compute) → `HALTED`; *Continue* resumes,
        upload reboots, no watchdog, admin stepper stops. Console buttons with cost, dumps
        decoded with source lines. Save v6 (dump queue). Tests in `tests/debug.test.ts`.
-4. [ ] **`@POST` display.** Preview first (`preview.html`, two 7-segment digits on the
-       cabin), owner screenshot review, then the game renderer; visible only in the
-       operator's view.
+4. [x] **`@POST` display.** Preview first (`preview.html`: two italic red seven-segment
+       digits with ghost segments on a bezel at the back of the cabin, `?post=`, +1 /
+       count-up buttons), owner approved the screenshots (kept on the back), then the game
+       renderer (`buildRoverRig({ post })`, `RoverPose.post`, dark while powered off).
+       Port `@POST` (0–255, free, no `@STATUS`, survives reboots), `Unit.post`, save v7.
+       Tests in `tests/indicators.test.ts`.
 5. [ ] **Camera + photos.** `SNAP dir [mode]` (modes 1–2 on Mk-I), subject rules and light
        rule from SPEC §3.8.5, deterministic integer image generator per subject (port the
        POC scenes from `src/preview/photos.ts`, no float trig in the tick path; the
@@ -331,3 +334,4 @@ window with a fixed dish?
 | 2026-11-12 | `ccr-a25966c0-1wr43t` (5) | M9 slice 2: science recorder, spectra (`imaging.ts`), `@REC_FREE`, `@TX_DATA` = `LOG 0`, goals on frames/products, firmware updated, Gallery tab, save v5. |
 | 2026-11-12 | `ccr-a25966c0-1wr43t` (6) | M9 slice 3: uplinked Dump / Dump stacks / Continue, dump frames ahead of the log, `BRK` and `HALTED`, live debugger admin-only, save v6. |
 | 2026-11-12 | `ccr-a25966c0-1wr43t` (6b) | Design: firmware + program slot agreed as M10 (SPEC §3.9), UI review as M11, multiple rovers renumbered to M12. |
+| 2026-11-12 | `ccr-a25966c0-1wr43t` (7) | M9 slice 4: `@POST` two-digit hex display (preview reviewed, then game), port, save v7; M10/M11 design docs from PR #12 that missed the merge. |

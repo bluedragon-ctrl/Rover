@@ -7,7 +7,7 @@ import { UPGRADE_BY_ID } from './upgrades';
 import { CpuState, type Status } from './types';
 import type { Unit, UnitAction, UnitMotion } from './Unit';
 
-export const SAVE_VERSION = 6;
+export const SAVE_VERSION = 7;
 
 interface UnitSave {
   id: number;
@@ -30,6 +30,8 @@ interface UnitSave {
   seismic: [type: number, dist: number];
   /** v3 */
   indicators: number[];
+  /** v7: @POST display */
+  post: number;
   /** v4: downlink transmitter (v5: recorder, v6: dump replies) */
   link: { fifo: QueuedFrame[]; headSent: number; acc: number; lost: number; gap: number; products: ProductDesc[]; recSent: number; seq: number; sys: SysFrame[]; sysSent: number };
   action: UnitAction | null;
@@ -153,6 +155,7 @@ function saveUnit(u: Unit): UnitSave {
     cargo: [...u.cargo],
     lights: [u.lightColor, u.lightBlink, u.headlight],
     indicators: [...u.indicators],
+    post: u.post,
     link: {
       fifo: u.link.fifo.map((f) => ({ bytes: [...f.bytes], gap: f.gap })),
       headSent: u.link.headSent,
@@ -241,6 +244,11 @@ export function migrate(raw: unknown): SaveSnapshot {
     for (const u of out.units) Object.assign(u.link, { sys: [], sysSent: 0 });
     v = 6;
   }
+  if (v === 6) {
+    // v6 -> v7: @POST display (M9 slice 4) starts at 00.
+    for (const u of out.units) u.post = 0;
+    v = 7;
+  }
   if (v !== SAVE_VERSION) throw new SaveError(`Unsupported save version ${s.version}.`);
   out.version = v;
   return out;
@@ -309,6 +317,7 @@ export function deserialize(raw: unknown): SimulationEngine {
       lightBlink: us.lights[1],
       headlight: us.lights[2],
       indicators: [...us.indicators],
+      post: us.post,
       solarOpen: us.solar[0],
       solarDeploy: us.solar[1],
       solarAngle: us.solar[2],
