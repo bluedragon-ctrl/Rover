@@ -1,11 +1,12 @@
 import { CHASSIS_MK1 } from './balance';
 import { CHUNK_AREA, WorldChunk } from './ChunkedWorld';
 import type { DirectorState } from './EventDirector';
-import { SimulationEngine } from './SimulationEngine';
+import { SimulationEngine, type SupplyDrop } from './SimulationEngine';
+import { UPGRADE_BY_ID } from './upgrades';
 import { CpuState, type Status } from './types';
 import type { Unit, UnitAction, UnitMotion } from './Unit';
 
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 
 interface UnitSave {
   id: number;
@@ -26,6 +27,9 @@ interface UnitSave {
   packetsSent: number;
   lastTx: Unit['lastTx'];
   sourceCode: string;
+  /** v2 */
+  upgrades: string[];
+  seismic: [type: number, dist: number];
   action: UnitAction | null;
   motion: UnitMotion | null;
   cyclesLeft: number;
@@ -62,6 +66,9 @@ export interface SaveSnapshot {
   mappedTiles: number;
   nextUnitId: number;
   director: DirectorState;
+  /** v2 */
+  drops: SupplyDrop[];
+  nextDropId: number;
   units: UnitSave[];
   chunks: ChunkSave[];
 }
@@ -115,6 +122,8 @@ export function serialize(e: SimulationEngine): SaveSnapshot {
     mappedTiles: e.world.mappedTiles,
     nextUnitId: e.nextUnitId,
     director: e.director.saveState(),
+    drops: e.drops.map((d) => ({ ...d })),
+    nextDropId: e.nextDropId,
     units: e.units.map(saveUnit),
     chunks,
   };
@@ -141,6 +150,8 @@ function saveUnit(u: Unit): UnitSave {
     packetsSent: u.packetsSent,
     lastTx: u.lastTx ? { ...u.lastTx } : null,
     sourceCode: u.sourceCode,
+    upgrades: [...u.upgrades],
+    seismic: [u.seismicType, u.seismicDist],
     action: u.action ? { ...u.action } : null,
     motion: u.motion ? { ...u.motion } : null,
     cyclesLeft: u.cyclesLeft,
@@ -160,11 +171,31 @@ function saveUnit(u: Unit): UnitSave {
 
 export class SaveError extends Error {}
 
-/** Rebuild an engine from a snapshot. Throws SaveError on unknown/invalid data. */
+/** Upgrade older snapshots step by step to the current version. */
+export function migrate(raw: unknown): SaveSnapshot {
+  const s = raw as SaveSnapshot & Record<string, unknown>;
+  if (!s || typeof s !== 'object' || typeof s.seed !== 'number' || typeof s.version !== 'number') throw new SaveError('Not a Rover save file.');
+  if (s.version > SAVE_VERSION) throw new SaveError(`Save version ${s.version} is newer than this game (${SAVE_VERSION}).`);
+  let v = s.version;
+  const out = structuredClone(s) as SaveSnapshot;
+  if (v === 1) {
+    // v1 -> v2: upgrades and supply drops did not exist yet.
+    out.drops = [];
+    out.nextDropId = 1;
+    for (const u of out.units) {
+      u.upgrades = [];
+      u.seismic = [0, 0];
+    }
+    v = 2;
+  }
+  if (v !== SAVE_VERSION) throw new SaveError(`Unsupported save version ${s.version}.`);
+  out.version = v;
+  return out;
+}
+
+/** Rebuild an engine from a snapshot (any supported version). Throws SaveError on bad data. */
 export function deserialize(raw: unknown): SimulationEngine {
-  const s = raw as SaveSnapshot;
-  if (!s || typeof s !== 'object' || typeof s.seed !== 'number') throw new SaveError('Not a Rover save file.');
-  if (s.version !== SAVE_VERSION) throw new SaveError(`Unsupported save version ${s.version} (expected ${SAVE_VERSION}).`);
+  const s = migrate(raw);
 
   const e = new SimulationEngine({ seed: s.seed });
   e.tick = s.tick;
@@ -174,6 +205,8 @@ export function deserialize(raw: unknown): SimulationEngine {
   Object.assign(e.cheats, s.cheats);
   e.nextUnitId = s.nextUnitId;
   e.director.loadState(s.director);
+  e.drops = s.drops.map((d) => ({ ...d }));
+  e.nextDropId = s.nextDropId;
 
   for (const cs of s.chunks) {
     const c = e.world.getChunk(cs.cx, cs.cy);
@@ -188,6 +221,14 @@ export function deserialize(raw: unknown): SimulationEngine {
   for (const us of s.units) {
     if (us.chassis !== CHASSIS_MK1.name) throw new SaveError(`Unknown chassis ${us.chassis}.`);
     const u = e.restoreUnit(us.id, us.name, CHASSIS_MK1);
+    for (const id of us.upgrades) {
+      const def = UPGRADE_BY_ID[id];
+      if (!def) throw new SaveError(`Unknown upgrade ${id}.`);
+      def.apply(u.chassis, u); // rebuild stats; counters are restored from the snapshot
+      u.upgrades.push(id);
+    }
+    u.seismicType = us.seismic[0];
+    u.seismicDist = us.seismic[1];
     Object.assign(u, {
       x: us.x,
       y: us.y,

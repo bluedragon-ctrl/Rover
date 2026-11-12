@@ -1,8 +1,9 @@
 import type { SimulationEngine } from './SimulationEngine';
 import { DIR_VEC, Layer, Status, SystemId } from './types';
 import type { Unit } from './Unit';
+import { T } from './WorldRegistry';
 
-export type ToolId = 'DRILL' | 'GRABBER' | 'SPECTROMETER' | 'USE_ITEM';
+export type ToolId = 'DRILL' | 'GRABBER' | 'SPECTROMETER' | 'SEISMIC' | 'USE_ITEM';
 
 /**
  * Declarative tool table. `ACT TOOL_n arg` looks up the tool mounted in hardpoint n;
@@ -67,7 +68,9 @@ export const TOOLS: Record<ToolId, ToolDef> = {
     check(e, u, dir) {
       if (!validDir(dir)) return Status.ERR_INVALID;
       const [x, y] = adjacent(u, dir);
-      if (e.registry.get(e.world.getTile(x, y, Layer.ITEM))?.tool !== 'GRABBER') return Status.ERR_INVALID;
+      const item = e.world.getTile(x, y, Layer.ITEM);
+      if (e.registry.get(item)?.tool !== 'GRABBER') return Status.ERR_INVALID;
+      if (item === T.SUPPLY_CRATE) return Status.OK; // installs directly, needs no cargo slot
       return freeSlot(u) < 0 ? Status.ERR_FULL : Status.OK;
     },
     complete(e, u, dir) {
@@ -76,6 +79,10 @@ export const TOOLS: Record<ToolId, ToolDef> = {
       const [x, y] = adjacent(u, dir);
       const item = e.world.getTile(x, y, Layer.ITEM);
       e.world.setTile(x, y, Layer.ITEM, 0);
+      if (item === T.SUPPLY_CRATE) {
+        e.openSupplyCrate(u, x, y);
+        return Status.OK;
+      }
       u.cargo[freeSlot(u)] = item;
       e.stats.itemsCollected++;
       return Status.OK;
@@ -98,6 +105,29 @@ export const TOOLS: Record<ToolId, ToolDef> = {
       u.scienceReady += e.registry.get(u.cargo[slot])!.science!;
       u.cargo[slot] = 0;
       e.stats.itemsAnalyzed++;
+      return Status.OK;
+    },
+  },
+  SEISMIC: {
+    id: 'SEISMIC',
+    name: 'Seismic scanner',
+    arg: 'dir',
+    ticks: 4,
+    energy: 150,
+    description: 'Finds the nearest ore vein up to 12 tiles away in <dir>, through walls: @SEISMIC_TYPE / @SEISMIC_DIST (0 = none).',
+    check: (_e, _u, dir) => (validDir(dir) ? Status.OK : Status.ERR_INVALID),
+    complete(e, u, dir) {
+      u.seismicType = 0;
+      u.seismicDist = 0;
+      const [dx, dy] = DIR_VEC[dir];
+      for (let d = 1; d <= 12; d++) {
+        const id = e.world.getTile(u.x + dx * d, u.y + dy * d, Layer.OBSTACLE);
+        if (e.registry.get(id)?.tool === 'DRILL') {
+          u.seismicType = id;
+          u.seismicDist = d;
+          break;
+        }
+      }
       return Status.OK;
     },
   },

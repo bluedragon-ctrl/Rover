@@ -1,6 +1,6 @@
 import { Layer } from './types';
 
-export type TileShape = 'floor' | 'rough' | 'vent' | 'wall' | 'crystal' | 'crate' | 'sample' | 'rover';
+export type TileShape = 'floor' | 'rough' | 'vent' | 'wall' | 'crystal' | 'crate' | 'sample' | 'supply' | 'rover';
 
 export interface TileDef {
   id: number;
@@ -82,6 +82,7 @@ export const T = {
   SILICON_ORE: 12,
   REPAIR_KIT: 20,
   SAMPLE: 21,
+  SUPPLY_CRATE: 22,
   ROVER: 30,
 } as const;
 
@@ -95,6 +96,7 @@ export function createDefaultRegistry(): WorldRegistry {
   r.register({ id: T.SILICON_ORE, constName: 'SILICON_ORE', name: 'Silicon ore vein', layer: Layer.OBSTACLE, color: 0x5ad0ff, shape: 'crystal', blocksMove: true, tool: 'DRILL', science: 1, repairs: { 1: 20 } });
   r.register({ id: T.REPAIR_KIT, constName: 'REPAIR_KIT', name: 'Repair kit', layer: Layer.ITEM, color: 0xffffff, shape: 'crate', tool: 'GRABBER', repairs: { 0: 30, 1: 40, 2: 40 } });
   r.register({ id: T.SAMPLE, constName: 'SAMPLE', name: 'Geological sample', layer: Layer.ITEM, color: 0xffd23a, shape: 'sample', tool: 'GRABBER', science: 3 });
+  r.register({ id: T.SUPPLY_CRATE, constName: 'SUPPLY_CRATE', name: 'Supply crate (upgrade)', layer: Layer.ITEM, color: 0xffd23a, shape: 'supply', tool: 'GRABBER' });
   r.register({ id: T.ROVER, constName: 'ROVER', name: 'Rover', layer: Layer.ACTOR, color: 0x3affc8, shape: 'rover', blocksMove: true });
   return r;
 }

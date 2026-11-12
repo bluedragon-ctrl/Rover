@@ -5,7 +5,7 @@ import type { Unit } from '../core/Unit';
 import { ChunkPool } from './ChunkPool';
 import { FxOverlay } from './FxOverlay';
 import { BALANCE } from '../core/balance';
-import { buildRoverMesh, LIGHT_HEX, type RoverMesh } from './VectorFactory';
+import { buildCapsuleMesh, buildRoverMesh, LIGHT_HEX, type RoverMesh } from './VectorFactory';
 
 interface RoverView extends RoverMesh {
   angle: number;
@@ -39,6 +39,7 @@ export class ThreeScene {
   /** Called on shift+click with the world tile (admin teleport). */
   onTileShiftClick?: (x: number, y: number) => void;
   private squall: THREE.LineSegments;
+  private capsules = new Map<number, { capsule: THREE.LineSegments; ring: THREE.LineLoop }>();
   private squallSeeds: Float32Array;
   /** World tile under the mouse, or null. */
   hover: { x: number; y: number } | null = null;
@@ -231,6 +232,7 @@ export class ThreeScene {
     this.chunks.setBrightness(0.3 + 0.7 * Math.sqrt(light));
 
     this.updateSquall(now);
+    this.updateCapsules(simTime, now);
     this.fx.update(this.focusX, this.focusY, now);
     this.renderer.render(this.scene, this.camera);
   }
@@ -239,6 +241,39 @@ export class ThreeScene {
     this.followUnitId = u.id;
     this.focusX = u.x + 0.5;
     this.focusY = u.y + 0.5;
+  }
+
+  /** Supply crates in flight: a parachute capsule descending onto a pulsing target ring. */
+  private updateCapsules(simTime: number, now: number): void {
+    const live = new Set<number>();
+    for (const d of this.engine.drops) {
+      if (d.landed) continue;
+      live.add(d.id);
+      let c = this.capsules.get(d.id);
+      if (!c) {
+        const pts: THREE.Vector3[] = [];
+        for (let i = 0; i < 24; i++) pts.push(new THREE.Vector3(Math.cos((i / 24) * Math.PI * 2) * 0.6, 0.02, Math.sin((i / 24) * Math.PI * 2) * 0.6));
+        const ring = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0xffd23a, transparent: true }));
+        c = { capsule: buildCapsuleMesh(), ring };
+        c.capsule.frustumCulled = c.ring.frustumCulled = false;
+        this.worldRoot.add(c.capsule, c.ring);
+        this.capsules.set(d.id, c);
+      }
+      const left = Math.max(0, d.landTick - simTime) / BALANCE.supplyDropTicks;
+      const px = d.x + 0.5 - this.focusX;
+      const pz = -(d.y + 0.5 - this.focusY);
+      c.capsule.position.set(px + left * 4, left * 18, pz - left * 2);
+      c.ring.position.set(px, 0, pz);
+      c.ring.scale.setScalar(1 + 0.25 * Math.sin(now / 150));
+      (c.ring.material as THREE.LineBasicMaterial).opacity = 0.5 + 0.5 * Math.sin(now / 150);
+    }
+    for (const [id, c] of this.capsules) {
+      if (live.has(id)) continue;
+      this.worldRoot.remove(c.capsule, c.ring);
+      c.capsule.geometry.dispose();
+      c.ring.geometry.dispose();
+      this.capsules.delete(id);
+    }
   }
 
   private updateSquall(now: number): void {

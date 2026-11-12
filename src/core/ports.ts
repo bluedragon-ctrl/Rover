@@ -12,6 +12,8 @@ export interface PortContext {
   registry: WorldRegistry;
   sensorRange(u: Unit): number;
   alert(): { type: number; eta: number };
+  drops(): { x: number; y: number }[];
+  nearestDrop(u: Unit): { x: number; y: number } | null;
   transmit(u: Unit, value: number): void;
 }
 
@@ -31,7 +33,7 @@ const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi 
 /** Memory-mapped I/O. Add a port here and it is instantly usable from Rover-ASM. */
 export const PORTS: PortDef[] = [
   // Telemetry
-  { name: 'BAT', description: 'Battery 0–100 %', read: (u) => Math.floor((u.energy * 100) / BALANCE.batteryCapacity) },
+  { name: 'BAT', description: 'Battery 0–100 %', read: (u) => u.batteryPercent },
   { name: 'HULL', description: 'Hull integrity 0–100', read: (u) => u.hull },
   { name: 'SOLAR_HEALTH', description: 'Solar array integrity 0–100 (scales charging)', read: (u) => u.solarHealth },
   { name: 'ANTENNA_HEALTH', description: 'Dish integrity 0–100 (scales signal)', read: (u) => u.antennaHealth },
@@ -49,6 +51,11 @@ export const PORTS: PortDef[] = [
   { name: 'SCIENCE_READY', description: 'Analyzed science packets waiting for uplink', read: (u) => u.scienceReady },
   { name: 'ALERT', description: 'Announced/active world event: ALERT_NONE, ALERT_ECLIPSE, ALERT_SQUALL', read: (_u, c) => c.alert().type },
   { name: 'ALERT_ETA', description: 'Ticks until the alerted event starts (0 = active or none)', read: (_u, c) => c.alert().eta },
+  { name: 'SEISMIC_TYPE', description: 'Ore found by the last seismic scan (TOOL_3), 0 = none', read: (u) => u.seismicType },
+  { name: 'SEISMIC_DIST', description: 'Distance to that ore, 0 = none', read: (u) => u.seismicDist },
+  { name: 'DROPS', description: 'Supply crates that have landed and wait to be picked up', read: (_u, c) => c.drops().length },
+  { name: 'DROP_X', description: 'X of the nearest landed supply crate (own X if none)', read: (u, c) => c.nearestDrop(u)?.x ?? u.x },
+  { name: 'DROP_Y', description: 'Y of the nearest landed supply crate (own Y if none)', read: (u, c) => c.nearestDrop(u)?.y ?? u.y },
   { name: 'SENSOR_RANGE', description: 'Current SCAN range in tiles (drops at night)', read: (u, c) => c.sensorRange(u) },
 
   // Sun & solar

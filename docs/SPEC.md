@@ -4,7 +4,7 @@ This document supersedes `v1.2` of the architecture/language review. It fixes th
 inconsistencies found in review and pins down the numbers the code relies on.
 All tunable numbers live in `src/core/balance.ts`; this document lists defaults.
 
-Status markers: **[M1–M3]**, **[M4]**, **[M5]**, **[M6]** implemented in that milestone, **[later]** designed
+Status markers: **[M1–M3]** … **[M7]** implemented in that milestone, **[later]** designed
 but not yet implemented.
 
 ---
@@ -50,6 +50,8 @@ Tick order: (1) world/event update, (2) each unit's in-flight action advances an
 complete (unblocking its CPU), (3) passive energy drain, (4) each CPU spends its cycles.
 
 ## 3. The Rover (Mk-I chassis)
+
+Each rover owns a copy of its chassis stats; upgrades (§3.7) modify that copy.
 
 | Stat | Mk-I | Notes |
 | :--- | :--- | :--- |
@@ -198,7 +200,8 @@ prerequisites and count neither toward goals nor toward "seen" prerequisites.
 
 ## 3.6 Persistence **[M6]**
 
-`SaveManager.serialize/deserialize` (headless). A save (`version: 1`) holds the seed,
+`SaveManager.serialize/deserialize` (headless). A save (`version: 2`; v1 files are migrated
+by `migrate()`) holds the seed, supply drops, installed upgrades,
 tick, credits, stats, cheats, storyteller state (RNG, schedule, completed goals), full
 unit and VM state (firmware source is recompiled on load), and **only chunks that are
 dirty or explored**: fog as run lengths plus a sparse `[layer, index, id]` diff against
@@ -208,6 +211,31 @@ uninterrupted one (tested). Typical size: a few KB.
 The browser keeps one autosave in `localStorage` (every 30 s and on page hide) and resumes
 it on startup unless the URL asks for a different `?seed`. Saves can be exported to and
 imported from JSON files.
+
+## 3.7 Upgrades & supply drops **[M7]**
+
+Science credits buy upgrades (`src/core/upgrades.ts`) in the Upgrades tab. A purchase
+is **not instant**: a supply crate (`SUPPLY_CRATE`, layer 2) is dropped by parachute on a
+clear tile 3–6 tiles (Manhattan) from the rover and lands after 80 ticks. The rover must
+pick it up with the grabber (`ACT TOOL_1 dir`); the upgrade is **installed immediately**
+on pickup and needs no cargo slot. Ports: `@DROPS` (landed crates waiting), `@DROP_X`,
+`@DROP_Y` (nearest landed crate; the rover's own position if none). Template:
+*Fetch supply crate*.
+
+| Upgrade | Cost | Effect | Requires |
+| :--- | :--- | :--- | :--- |
+| Flash 48 / Flash 64 | 40 / 90 | Program memory 48 / 64 lines | – / Flash 48 |
+| Register file r0–r5 / r0–r7 | 40 / 80 | 6 / 8 registers (values kept) | – / r0–r5 |
+| CPU overclock I / II | 50 / 100 | 6 / 8 cycles per tick | – / I |
+| Cargo racks | 35 | 6 cargo slots | – |
+| Battery pack | 60 | Capacity 150 000 (`@BAT` stays a percentage) | – |
+| High-efficiency cells | 50 | Solar output +25 % | – |
+| Long-range LIDAR | 40 | Daytime SCAN range 8 | – |
+| Hull plating | 60 | Squall hull wear halved | – |
+| Seismic scanner | 80 | Fits `TOOL_3`: `ACT TOOL_3 dir` finds the nearest ore vein ≤ 12 tiles away *through walls* (4 ticks, 150 energy) → `@SEISMIC_TYPE`, `@SEISMIC_DIST` | – |
+
+Flash and register upgrades change compiler limits at once; the running program is
+unaffected (it already fits). Goal *Upgraded*: install a first upgrade.
 
 ## 4. World
 
@@ -328,6 +356,8 @@ compute instructions leave it alone.
 | `@SOLAR_HEALTH`, `@ANTENNA_HEALTH` | R | 0–100 | M6 |
 | `@ALERT` | R | `ALERT_*` | M6 |
 | `@ALERT_ETA` | R | ticks until the alerted event | M6 |
+| `@DROPS`, `@DROP_X`, `@DROP_Y` | R | supply crates waiting / nearest crate | M7 |
+| `@SEISMIC_TYPE`, `@SEISMIC_DIST` | R | last seismic scan | M7 |
 | `@SCIENCE_READY` | R | science packets waiting for uplink | M5 |
 
 Writes are clamped to the port's range; angle ports wrap modulo 360.

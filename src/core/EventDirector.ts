@@ -24,6 +24,7 @@ export const GOALS: GoalDef[] = [
   { id: 'collector', title: 'Collector', description: 'Pick up 2 surface items with the grabber (ACT TOOL_1).', target: 2, reward: 10, progress: (e) => e.stats.itemsCollected },
   { id: 'scientist', title: 'Scientist', description: 'Deliver 5 science packets to the orbiter.', target: 5, reward: 20, progress: (e) => e.stats.scienceDelivered },
   { id: 'field_engineer', title: 'Field engineer', description: 'Repair a system with material from cargo (USE slot SYS_*).', target: 1, reward: 10, progress: (e) => e.stats.repairs },
+  { id: 'upgraded', title: 'Upgraded', description: 'Buy an upgrade and pick up its supply crate with the grabber.', target: 1, reward: 5, progress: (e) => e.stats.upgradesInstalled },
   { id: 'eclipse', title: 'Into the dark', description: 'Keep a rover powered through a whole solar eclipse.', target: 1, reward: 15, progress: (e) => e.stats.eclipsesSurvived },
   { id: 'storm_chaser', title: 'Storm chaser', description: 'Come out of a micrometeorite squall with hull ≥ 50 and solar array ≥ 50.', target: 1, reward: 15, progress: (e) => e.stats.squallsWeathered },
 ];

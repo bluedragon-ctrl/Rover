@@ -16,39 +16,35 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | M4 | Sun, solar, antenna, upload cost, headlight, fog of war, factory firmware | ✅ done |
 | M5 | Tools, cargo, spectrometer, science, first goals | ✅ done |
 | M6 | Save/load + autosave, storyteller with prerequisites & teaching events, subsystem damage, material repairs, admin console | ✅ done |
-| **M7** | **Upgrades & chassis tiers: spend credits** | ⏭ next |
-| M8 | Visual overhaul: bloom, fat lines, LOD, zoom, camera, atmosphere (SPEC §7) | planned |
+| M7 | Upgrades bought with credits, delivered as supply crates, seismic scanner, save v2 | ✅ done |
+| **M8** | **Visual overhaul (SPEC §7)** | ⏭ next |
+| M9 | Multiple rovers (after single-rover tuning) | planned |
 
-## Next: M7 — Upgrades (detailed plan)
+## Next: M8 — Visual overhaul (detailed plan)
 
-Goal: close the progression loop. Credits (science + goals) buy hardware that removes the
-tight Mk-I limits, so better programs become possible.
+Everything lives in `src/render/` (the renderer only reads the simulation), so gameplay
+tests must stay untouched. Do it in small PRs, checking frame time at each step.
 
-### Simulation
-- [ ] Per-unit mutable stats: `Unit.chassis` becomes the base `ChassisDef` plus a list of
-      installed upgrade ids; derived stats computed in one place (`effectiveChassis(u)`).
-      Everything that reads `chassis.*` uses it (VM limits, sensor range, cargo, battery).
-- [ ] Upgrade catalogue `src/core/upgrades.ts` (declarative, tiered), e.g.:
-      Flash 32 → 48 → 64 lines · registers 4 → 6 → 8 · cycles/tick 4 → 6 → 8 ·
-      cargo 4 → 6 → 8 · battery 100 % → 150 % · sensor range 6 → 8 · solar efficiency
-      +25 % · dish gain (cos⁴ → cos²) · reinforced hull (squall damage −50 %).
-- [ ] **`TOOL_3` modules** (pick one first): *Seismic scanner* (`ACT TOOL_3 dir` → nearest
-      ore within 12 tiles along the ray, result via a new port) or *Field welder*
-      (repairs a subsystem without a kit, slowly, costs energy).
-- [ ] `engine.buyUpgrade(u, id)`: checks credits and prerequisites; applies on the next
-      reboot (firmware limits change) or instantly (physical). Decision 1 below.
-- [ ] Save format v2 with installed upgrades; v1 saves load with no upgrades
-      (first migration test).
-- [ ] Tests: each upgrade's effect; compiler accepts r4–r7 / longer programs only when
-      installed; save migration; credits never go negative.
+- [ ] **Frame-time HUD** (toggle): fps, ms/frame, chunk meshes, line vertices. Baseline first.
+- [ ] **Bloom:** `EffectComposer` + `UnrealBloomPass`, selective (grid stays crisp; ore,
+      beacons, scan/uplink FX, vents, supply crates glow). Settings toggle for slow GPUs.
+- [ ] **Fat lines:** `LineSegments2` + `LineMaterial` for rover, ore, crates and FX;
+      width scales with zoom. Keep 1 px for the terrain grid (cost).
+- [ ] **LOD by zoom:** far = grid + silhouettes; near = pebbles, rock strata, detailed rover
+      (wheels turning while driving, suspension bounce, panel hinges, dish ribs).
+- [ ] **Zoom range** 0.15×–8×, zoom to cursor; far zoom switches to a minimap-like style.
+- [ ] **Camera:** optional perspective mode, smooth follow, rotate with right-drag (then
+      the compass must rotate too).
+- [ ] **Atmosphere:** day/night colour grading (not just dimming), dust particles,
+      animated vents and crates, optional CRT/scanline pass.
+- [ ] Keep `VectorFactory.ts` as the single place shapes are defined.
 
-### Presentation
-- [ ] **Upgrades** tab: catalogue with costs, tiers, owned state, buy buttons.
-- [ ] Rover mesh shows installed upgrades (bigger array, extra dish ring, TOOL_3 module).
-- [ ] Reference tab shows the rover's *current* limits.
+## Resolved decisions (M7)
 
-### Docs
-- [ ] SPEC: upgrades section, chassis stats as base + upgrades; ROADMAP: M8 plan.
+1. Upgrades are **picked up**: a supply crate lands near the rover; the grabber installs it.
+2. Installed **immediately** on pickup (including Flash/register limits).
+3. **More rovers later**, once the single-rover game is tuned (M9).
+4. Prospector stays at 31/32 lines without squall handling: **a lesson** (Flash 48 fixes it).
 
 ## Resolved decisions (M6)
 
@@ -70,19 +66,19 @@ tight Mk-I limits, so better programs become possible.
 
 ## Open decisions
 
-1. Upgrade delivery: **instant** purchase, or a **supply drop** (a crate lands near the
-   rover and must be collected with the grabber — more gameplay)?
-2. Flash/register upgrades: apply immediately, or only after the next firmware upload
-   (more realistic, avoids changing limits under a running program)?
-3. Should a second rover be purchasable in M7, or later?
-4. Prospector firmware (31/32 lines) has no room to stow its array on squall alerts. Leave
-   it as a lesson, or wait for the Flash upgrade?
+1. M8 look: keep the strict vector/wireframe style, or allow filled translucent surfaces
+   (e.g. faint terrain fill, glowing panels)?
+2. Bloom on by default, or opt-in for performance?
+3. Upgrade prices: fine for now? (A Prospector run earns ~75 credits in 1.5 sols; the
+   whole catalogue costs 745.)
 
 ## Backlog / ideas
 
 - More storyteller events using the catalogue: dust devils that push the rover, solar
   flares that scramble the uplink, ore-rich meteor falls (reward events), distress beacon
   missions. Teaching variants first.
+- Upgrade ideas: second tool modules for `TOOL_3` (field welder, fabricator), solar
+  tracker automation, larger stacks.
 - Crafting: combine ores into a `REPAIR_KIT` (needs a fabricator module, M7 `TOOL_3`?).
 
 - Breakpoints in the editor gutter; "run to cursor".
@@ -99,3 +95,4 @@ tight Mk-I limits, so better programs become possible.
 | 2026-11-12 | `ccr-fb6a40ee-nae64a` | M0–M4 implemented; spec v1.3; M8 visual roadmap added. Branch later renamed to `main`. |
 | 2026-11-12 | PR #2 (merged) | M5: tools, cargo, spectrometer, science credits, goals, Prospector template. |
 | 2026-11-12 | PR #3 | M6: save/load + autosave, storyteller events, subsystem damage, admin console; then event prerequisites + teaching events and material-consuming repairs (review feedback). |
+| 2026-11-12 | (next PR) | M7: upgrades via supply crates, seismic scanner, Fetch template, save v2 + migration. |

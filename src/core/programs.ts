@@ -106,8 +106,42 @@ chg:    MOV @SOLAR_ANGLE @SUN_AZIMUTH
         JLT @BAT 90 chg                   ; then wraps to boot: stow & go
 `;
 
+/** Template: drive to the nearest landed supply crate and grab it (installs the upgrade). */
+export const FETCH_SUPPLY = `; FETCH: drive to the nearest supply crate and grab it, which
+; installs the upgrade. Greedy: no obstacle avoidance (yours to add!).
+
+ALIAS r0 dx
+ALIAS r1 dy
+
+boot:   MOV @SOLAR_OPEN 0
+        SLEEP 20
+loop:   JEQ @DROPS 0 idle
+        MOV dx @DROP_X
+        SUB dx @X
+        MOV dy @DROP_Y
+        SUB dy @Y
+        SUB dy 1                ; aim for the tile just south of the crate
+        JGT dx 0 go_e
+        JLT dx 0 go_w
+        JGT dy 0 go_n
+        JLT dy 0 go_s
+        ACT TOOL_1 NORTH        ; adjacent: grab = install
+        JMP loop
+go_e:   STEP EAST
+        JMP loop
+go_w:   STEP WEST
+        JMP loop
+go_n:   STEP NORTH
+        JMP loop
+go_s:   STEP SOUTH
+        JMP loop
+idle:   MOV @LIGHT_COLOR BLUE
+        SLEEP 50
+`;
+
 export const TEMPLATES: Record<string, string> = {
   'Factory idle': FACTORY_IDLE,
   Explorer: DEMO_EXPLORER,
   Prospector: PROSPECTOR,
+  'Fetch supply crate': FETCH_SUPPLY,
 };

@@ -40,6 +40,11 @@ export const BALANCE = {
   eventEarliestTick: 1500, // grace period for new worlds
   eclipseRampTicks: 20, // per-event chances, lengths, damage: src/core/events.ts
 
+  // Upgrades / supply drops (docs/SPEC.md §3.7)
+  supplyDropTicks: 80, // purchase -> landing
+  supplyDropMinDist: 3,
+  supplyDropMaxDist: 6,
+
   chunkBubbleRadius: 1, // 3x3 chunks around each rover
   chunkEvictAfterTicks: 600,
   landingZoneRadius: 2, // 5x5
@@ -55,7 +60,13 @@ export interface ChassisDef {
   sensorRange: number;
   cargoSlots: number;
   /** Tool mounted in each hardpoint TOOL_0..TOOL_3 (null = empty). */
-  tools: ReadonlyArray<ToolId | null>;
+  tools: Array<ToolId | null>;
+  /** Energy units at 100 % (@BAT reports a percentage of this). */
+  batteryCapacity: number;
+  /** Solar output multiplier in percent. */
+  solarPercent: number;
+  /** Squall hull damage is applied every (hullEvery × hullArmor) ticks. */
+  hullArmor: number;
 }
 
 export const CHASSIS_MK1: ChassisDef = {
@@ -68,4 +79,12 @@ export const CHASSIS_MK1: ChassisDef = {
   sensorRange: 6,
   cargoSlots: 4,
   tools: ['DRILL', 'GRABBER', 'SPECTROMETER', null],
+  batteryCapacity: 100_000,
+  solarPercent: 100,
+  hullArmor: 1,
 };
+
+/** Per-unit mutable copy (upgrades modify it in place, so the VM's reference stays valid). */
+export function cloneChassis(c: ChassisDef): ChassisDef {
+  return { ...c, tools: [...c.tools] };
+}

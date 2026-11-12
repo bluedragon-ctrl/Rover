@@ -11,6 +11,8 @@ import { EditorPanel } from './ui/EditorPanel';
 import { renderReference } from './ui/ReferencePanel';
 import { CompassHud } from './ui/CompassHud';
 import { GoalsPanel } from './ui/GoalsPanel';
+import { UpgradesPanel } from './ui/UpgradesPanel';
+import { UPGRADE_BY_ID } from './core/upgrades';
 import { clearAutosave, downloadSave, tryLoadAutosave, writeAutosave, writeAutosaveRaw } from './ui/persistence';
 import { deserialize } from './core/SaveManager';
 import { EVENT_BY_ID, EVENT_DEFS } from './core/events';
@@ -46,6 +48,9 @@ scene.centerOn(rover);
 const debuggerPanel = new DebuggerPanel($('#debugger'), engine);
 const compass = new CompassHud($<HTMLCanvasElement>('#compass'), engine);
 const goalsPanel = new GoalsPanel($('#goals'), engine);
+const upgradesPanel = new UpgradesPanel($('#upgrades'), engine, () => rover, (err, id) => {
+  if (err) log('warn', `Cannot buy ${UPGRADE_BY_ID[id]?.title}: ${err}.`);
+});
 const toasts = $('#toasts');
 engine.events.on('GOAL_COMPLETED', (g) => {
   log('info', `Goal completed: ${g.title} (+${g.reward} credits)`);
@@ -122,6 +127,18 @@ loadInput.addEventListener('change', async () => {
     log('error', `Load failed: ${(err as Error).message}`);
   }
   loadInput.value = '';
+});
+
+engine.events.on('SUPPLY', (s) => {
+  const title = UPGRADE_BY_ID[s.upgrade]?.title ?? s.upgrade;
+  if (s.phase === 'LANDED') log('info', `Supply crate (${title}) landed at (${s.x}, ${s.y}). Grab it to install.`);
+  if (s.phase === 'INSTALLED') {
+    const t = document.createElement('div');
+    t.className = 'toast';
+    t.textContent = `⬆ ${title} installed`;
+    $('#toasts').appendChild(t);
+    setTimeout(() => t.remove(), 5000);
+  }
 });
 
 // ---------------------------------------------------------------- world events
@@ -259,6 +276,7 @@ function frame(now: number): void {
     compass.update(rover);
     updateBanner();
     goalsPanel.update();
+    upgradesPanel.update();
     creditsEl.textContent = `◆ ${engine.credits} credits`;
     const cost = engine.uploadCost(rover, editorFlash);
     const sig = engine.signalOf(rover);

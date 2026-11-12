@@ -1,4 +1,3 @@
-import { BALANCE } from '../core/balance';
 import { PORTS } from '../core/ports';
 import type { SimulationEngine } from '../core/SimulationEngine';
 import { CpuState, Dir, Status } from '../core/types';
@@ -33,7 +32,7 @@ export class DebuggerPanel {
     if (u.action?.kind === 'WAIT') action = `waiting ${u.action.ticksLeft}t`;
     else if (u.action?.kind === 'TOOL') action = `${u.action.tool} ${u.action.ticksLeft}t`;
     else if (u.action?.kind === 'STEP') action = `STEP ${Dir[u.action.dir]} (${u.action.tilesLeft} left, ${u.action.ticksLeft}t)`;
-    const batPct = (u.energy * 100) / BALANCE.batteryCapacity;
+    const batPct = (u.energy * 100) / u.chassis.batteryCapacity;
 
     const html = `
       <div class="dbg-row">

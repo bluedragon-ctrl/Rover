@@ -3,6 +3,8 @@ import { ChunkedWorld } from './ChunkedWorld';
 import { EventBus } from './EventBus';
 import { MapGenerator } from './MapGenerator';
 import { EventDirector } from './EventDirector';
+import { hash3 } from './rng';
+import { UPGRADE_BY_ID } from './upgrades';
 import type { SquallDamage } from './events';
 import { TOOLS, type ToolDef } from './tools';
 import { Environment, signalStrength, solarGain, wrapDeg, angleDiff, type SunState } from './Environment';
@@ -16,6 +18,15 @@ import { createDefaultRegistry, T, type WorldRegistry } from './WorldRegistry';
 export interface EngineOptions {
   seed: number;
   registry?: WorldRegistry;
+}
+
+export interface SupplyDrop {
+  id: number;
+  upgrade: string;
+  x: number;
+  y: number;
+  landTick: number;
+  landed: boolean;
 }
 
 export interface UploadResult extends CompileResult {
@@ -48,10 +59,14 @@ export class SimulationEngine {
     sunrisesPowered: 0,
     eclipsesSurvived: 0,
     repairs: 0,
+    upgradesInstalled: 0,
     squallsWeathered: 0,
   };
-  /** Science credits: delivered science + goal rewards. Currency for M7 upgrades. */
+  /** Science credits: delivered science + goal rewards. Spent on upgrades. */
   credits = 0;
+  /** Ordered upgrades: in flight (landed=false) or waiting on the ground. */
+  drops: SupplyDrop[] = [];
+  nextDropId = 1;
   tick = 0;
   sun: SunState;
   orbitAzimuth: number;
@@ -80,6 +95,8 @@ export class SimulationEngine {
       registry: this.registry,
       sensorRange: (u) => this.sensorRange(u),
       alert: () => this.director.alert(this.tick),
+      drops: () => this.drops.filter((d) => d.landed),
+      nearestDrop: (u) => this.nearestDrop(u),
       transmit: (u, v) => this.transmit(u, v),
     };
   }
@@ -225,6 +242,7 @@ export class SimulationEngine {
       this.revealAround(u);
       u.cyclesLeft = u.vm.state === CpuState.RUNNING ? u.chassis.cyclesPerTick : 0;
     }
+    for (const d of this.drops) if (!d.landed && d.landTick === this.tick) this.landDrop(d);
     if (this.tick % 100 === 0) this.world.evictStale(BALANCE.chunkEvictAfterTicks);
     if (this.tick % 10 === 0) this.director.updateGoals();
     this.events.emit('TICK', { tick: this.tick });
@@ -259,11 +277,11 @@ export class SimulationEngine {
     const B = BALANCE;
 
     // Solar charging works even when powered off: that is how a dead rover recovers.
-    u.lastSolarGain = u.solarDeployed ? Math.floor((solarGain(u.solarAngle, this.sun) * u.solarHealth) / 100) : 0;
-    u.energy = Math.min(B.batteryCapacity, u.energy + u.lastSolarGain);
+    u.lastSolarGain = u.solarDeployed ? Math.floor((solarGain(u.solarAngle, this.sun) * u.solarHealth * u.chassis.solarPercent) / 10_000) : 0;
+    u.energy = Math.min(u.chassis.batteryCapacity, u.energy + u.lastSolarGain);
 
     if (u.vm.state === CpuState.POWER_OFF) {
-      if (u.energy * 100 >= B.coldBootPercent * B.batteryCapacity) {
+      if (u.energy * 100 >= B.coldBootPercent * u.chassis.batteryCapacity) {
         u.vm.state = CpuState.RUNNING;
         u.vm.reboot();
         this.log(u, 'warn', 'Solar cold boot: battery recovered, firmware restarted.');
@@ -297,7 +315,8 @@ export class SimulationEngine {
     if (u.vm.state === CpuState.DESTROYED || this.cheats.invulnerable) return;
     const t = this.tick;
     if (d.hullEvery) {
-      const every = u.action?.kind === 'STEP' ? Math.max(1, Math.floor(d.hullEvery / 2)) : d.hullEvery;
+      const base = d.hullEvery * u.chassis.hullArmor;
+      const every = u.action?.kind === 'STEP' ? Math.max(1, Math.floor(base / 2)) : base;
       if (t % every === 0) this.damage(u, 1);
     }
     if (d.solarEvery && !u.solarStowed && t % d.solarEvery === 0) u.solarHealth = Math.max(0, u.solarHealth - d.solarDamage);
@@ -409,6 +428,93 @@ export class SimulationEngine {
     u.motion = { fromX: u.x, fromY: u.y, toX: tx, toY: ty, startTick: this.tick, endTick: this.tick + ticks };
     this.events.emit('UNIT_MOVED', { unitId: u.id, ...u.motion });
     return Status.OK;
+  }
+
+  // ---------------------------------------------------------------- upgrades
+
+  /** Why `id` cannot be bought for `u` right now, or null if it can. */
+  upgradeBlocker(u: Unit, id: string): string | null {
+    const def = UPGRADE_BY_ID[id];
+    if (!def) return 'unknown upgrade';
+    if (u.upgrades.includes(id)) return 'installed';
+    if (this.drops.some((d) => d.upgrade === id)) return 'on its way';
+    if (def.requires && !u.upgrades.includes(def.requires)) return `needs ${UPGRADE_BY_ID[def.requires]?.title ?? def.requires}`;
+    if (this.credits < def.cost) return `needs ${def.cost} credits`;
+    if (!u.powered) return 'rover is offline';
+    return null;
+  }
+
+  /** Spend credits and send a supply crate; it lands near `u` after supplyDropTicks. */
+  buyUpgrade(u: Unit, id: string): string | null {
+    const why = this.upgradeBlocker(u, id);
+    if (why) return why;
+    const spot = this.findDropSpot(u);
+    if (!spot) return 'no clear landing spot near the rover';
+    this.credits -= UPGRADE_BY_ID[id].cost;
+    const d: SupplyDrop = { id: this.nextDropId++, upgrade: id, x: spot[0], y: spot[1], landTick: this.tick + BALANCE.supplyDropTicks, landed: false };
+    this.drops.push(d);
+    this.events.emit('SUPPLY', { phase: 'ORDERED', upgrade: id, x: d.x, y: d.y, landTick: d.landTick });
+    this.log(u, 'info', `Ordered ${UPGRADE_BY_ID[id].title}: supply crate lands at (${d.x}, ${d.y}) in ${BALANCE.supplyDropTicks} ticks.`);
+    return null;
+  }
+
+  /** Deterministic clear tile on a Manhattan ring 3..6 tiles from the rover. */
+  private findDropSpot(u: Unit): [number, number] | null {
+    const B = BALANCE;
+    for (let k = 0; k < 64; k++) {
+      const h = hash3(this.seed, this.tick, this.nextDropId, k);
+      const dist = B.supplyDropMinDist + (h % (B.supplyDropMaxDist - B.supplyDropMinDist + 1));
+      const dx = ((h >>> 8) % (2 * dist + 1)) - dist;
+      const dy = ((h >>> 20) & 1 ? 1 : -1) * (dist - Math.abs(dx));
+      const x = u.x + dx;
+      const y = u.y + dy;
+      const terrain = this.registry.get(this.world.getTile(x, y, Layer.TERRAIN));
+      if (terrain?.hazardDamage) continue;
+      if (this.world.getTile(x, y, Layer.OBSTACLE) || this.world.getTile(x, y, Layer.ITEM) || this.unitAt(x, y)) continue;
+      if (this.drops.some((d) => d.x === x && d.y === y)) continue;
+      return [x, y];
+    }
+    return null;
+  }
+
+  private landDrop(d: SupplyDrop): void {
+    d.landed = true;
+    // The spot was checked when ordered; reveal it so the crate is visible on the map.
+    this.world.setTile(d.x, d.y, Layer.ITEM, T.SUPPLY_CRATE);
+    this.world.revealCircle(d.x, d.y, 1);
+    this.events.emit('SUPPLY', { phase: 'LANDED', upgrade: d.upgrade, x: d.x, y: d.y, landTick: d.landTick });
+  }
+
+  nearestDrop(u: Unit): SupplyDrop | null {
+    let best: SupplyDrop | null = null;
+    let bd = Infinity;
+    for (const d of this.drops) {
+      if (!d.landed) continue;
+      const dist = Math.abs(d.x - u.x) + Math.abs(d.y - u.y);
+      if (dist < bd || (dist === bd && best && d.id < best.id)) {
+        best = d;
+        bd = dist;
+      }
+    }
+    return best;
+  }
+
+  /** Grabber picked up a supply crate at (x, y): install its upgrade on `u` immediately. */
+  openSupplyCrate(u: Unit, x: number, y: number): void {
+    const i = this.drops.findIndex((d) => d.landed && d.x === x && d.y === y);
+    if (i < 0) return;
+    const [d] = this.drops.splice(i, 1);
+    this.installUpgrade(u, d.upgrade);
+    this.events.emit('SUPPLY', { phase: 'INSTALLED', upgrade: d.upgrade, x, y, landTick: d.landTick });
+    this.log(u, 'info', `Installed ${UPGRADE_BY_ID[d.upgrade]?.title}.`);
+  }
+
+  installUpgrade(u: Unit, id: string): void {
+    const def = UPGRADE_BY_ID[id];
+    if (!def || u.upgrades.includes(id)) return;
+    def.apply(u.chassis, u);
+    u.upgrades.push(id);
+    this.stats.upgradesInstalled++;
   }
 
   /** Validate, pay and start a tool action; the effect applies when it completes. */
@@ -554,7 +660,7 @@ export class SimulationEngine {
 
   readonly admin = {
     forceCharge: (u: Unit) => {
-      u.energy = BALANCE.batteryCapacity;
+      u.energy = u.chassis.batteryCapacity;
       if (u.vm.state === CpuState.POWER_OFF) {
         u.vm.state = CpuState.RUNNING;
         u.vm.reboot();
@@ -587,7 +693,7 @@ export class SimulationEngine {
       u.y = 0;
       u.action = null;
       u.motion = null;
-      u.energy = BALANCE.batteryCapacity;
+      u.energy = u.chassis.batteryCapacity;
       u.hull = 100;
       u.solarHealth = 100;
       u.antennaHealth = 100;

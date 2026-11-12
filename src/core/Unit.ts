@@ -1,4 +1,4 @@
-import { BALANCE, type ChassisDef } from './balance';
+import { BALANCE, cloneChassis, type ChassisDef } from './balance';
 import { CpuState, LightColor } from './types';
 import type { ToolId } from './tools';
 import { RoverVM } from './vm/RoverVM';
@@ -22,7 +22,7 @@ export class Unit {
   y = 0;
   /** Last direction moved or scanned; drives the renderer's heading. */
   heading = 0;
-  energy: number = BALANCE.batteryCapacity;
+  energy: number;
   hull = 100;
   /** Subsystem integrity 0–100. Damaged systems work proportionally worse. */
   solarHealth = 100;
@@ -55,13 +55,23 @@ export class Unit {
   sourceCode = '';
   readonly vm: RoverVM;
 
-  constructor(readonly id: number, public name: string, readonly chassis: ChassisDef) {
+  /** Last seismic scan result (TOOL_3 SEISMIC). */
+  seismicType = 0;
+  seismicDist = 0;
+  /** Installed upgrade ids, in installation order. */
+  upgrades: string[] = [];
+  /** This rover's own stats: base chassis + upgrades. */
+  readonly chassis: ChassisDef;
+
+  constructor(readonly id: number, public name: string, base: ChassisDef) {
+    const chassis = (this.chassis = cloneChassis(base));
+    this.energy = chassis.batteryCapacity;
     this.vm = new RoverVM(chassis);
     this.cargo = new Array(chassis.cargoSlots).fill(0);
   }
 
   get batteryPercent(): number {
-    return Math.floor((this.energy * 100) / BALANCE.batteryCapacity);
+    return Math.floor((this.energy * 100) / this.chassis.batteryCapacity);
   }
 
   get solarDeployed(): boolean {

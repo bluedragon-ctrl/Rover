@@ -19,7 +19,7 @@ export type StepResult = 'continue' | 'endTick';
 export class RoverVM {
   program: Program | null = null;
   ip = 0;
-  readonly regs: Int32Array;
+  regs: Int32Array;
   dataStack: number[] = [];
   callStack: number[] = [];
   state: CpuState = CpuState.RUNNING;
@@ -33,6 +33,14 @@ export class RoverVM {
 
   constructor(readonly chassis: ChassisDef) {
     this.regs = new Int32Array(chassis.registers);
+  }
+
+  /** Hardware upgrade: grow the register file, keeping current values. */
+  resizeRegisters(n: number): void {
+    if (n <= this.regs.length) return;
+    const r = new Int32Array(n);
+    r.set(this.regs);
+    this.regs = r;
   }
 
   load(program: Program): void {

@@ -40,6 +40,8 @@ npm run build      # typecheck + production bundle in dist/
   New world events: `EVENT_DEFS` in `src/core/events.ts` (with prerequisites; add a
   teaching variant first for anything harsh).
   Repair materials: `repairs` on the tile in `WorldRegistry`.
+  New upgrades: `UPGRADES` in `src/core/upgrades.ts` (modify the rover's own `chassis`;
+  never the shared `CHASSIS_MK1`).
 - Shapes are drawn only in `src/render/VectorFactory.ts` (keeps M8 visual work local).
 - Shipped firmware (`src/core/programs.ts`) must compile and is covered by tests.
 
