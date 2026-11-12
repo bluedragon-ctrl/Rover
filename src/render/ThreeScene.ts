@@ -21,6 +21,9 @@ interface RoverView {
   radarAt: number;
 }
 
+/** How far (tiles) the camera focus may be panned away from the rover. */
+export const PAN_LEASH = 24;
+
 export interface PerfSnapshot {
   fps: number;
   avgMs: number;
@@ -215,6 +218,12 @@ export class ThreeScene {
       }
     }
     rig.lockFocus = this.followUnitId !== null;
+    // Panning stays near the rover (followed one, else the first).
+    const anchor = this.engine.getUnit(this.followUnitId ?? -1) ?? this.engine.units[0];
+    if (anchor) {
+      const [ax, ay] = this.unitPos(anchor, simTime);
+      rig.leash = { x: ax, y: ay, r: PAN_LEASH };
+    } else rig.leash = null;
     rig.update(dt);
     const fx = rig.focusX, fy = rig.focusY;
 

@@ -21,6 +21,11 @@ export class CameraRig {
   maxDist = 140;
   minPitch = 0.02;
   maxPitch = 1.3;
+  /**
+   * Keeps the focus within `r` tiles of (x, y) (the rover): there is nothing to do far
+   * from it, and it bounds how much of the world the renderer has to build.
+   */
+  leash: { x: number; y: number; r: number } | null = null;
   /** Eased targets for programmatic changes (view toggles, rotate keys). */
   private targetYaw: number | null = null;
   private targetPitch: number | null = null;
@@ -86,7 +91,18 @@ export class CameraRig {
     return this.dist * Math.tan((this.camera.fov * Math.PI) / 360) * Math.max(1, this.camera.aspect) * (1 + Math.sin(this.pitch) * 1.5);
   }
 
+  private clampFocus(): void {
+    const l = this.leash;
+    if (!l) return;
+    const dx = this.focusX - l.x, dy = this.focusY - l.y;
+    const d = Math.hypot(dx, dy);
+    if (d <= l.r) return;
+    this.focusX = l.x + (dx / d) * l.r;
+    this.focusY = l.y + (dy / d) * l.r;
+  }
+
   private apply(): void {
+    this.clampFocus();
     this.pitch = THREE.MathUtils.clamp(this.pitch, this.minPitch, this.maxPitch);
     this.dist = THREE.MathUtils.clamp(this.dist, this.minDist, this.maxDist);
     const s = Math.sin(this.pitch);
@@ -140,6 +156,7 @@ export class CameraRig {
         if (before && after && !this.lockFocus) {
           this.focusX += before.x - after.x;
           this.focusY -= before.z - after.z;
+          this.apply();
         }
       },
       { passive: false },

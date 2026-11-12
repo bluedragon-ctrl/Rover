@@ -122,6 +122,9 @@ tests must stay untouched. Do it in small PRs, checking frame time at each step.
       per frame) instead of a flat 4 per frame (up to ~16 ms hitches while panning).
 - [ ] **Baseline on real GPUs** (owner): note the HUD numbers at the default view, zoomed
       out to the max, and at night, on a desktop and a laptop. Decide LOD from that.
+- [x] **Pan leash** (owner): the camera focus stays within `PAN_LEASH` = 24 tiles of the
+      followed rover (else the first rover); dragging further stops at the edge. Bounds
+      what the renderer must build around the rover (`CameraRig.leash`, `tests/camera.test.ts`).
 - [x] **Bloom:** `PostFx` (threshold bloom keeps the grid crisp), B toggles it.
 - [ ] **Fat lines:** `LineSegments2` + `LineMaterial` for rover, ore, crates and FX;
       width scales with zoom. Keep 1 px for the terrain grid (cost).
@@ -272,3 +275,4 @@ window with a fixed dish?
 | 2026-11-12 | `ccr-31b53af7-npq5g8` | M9 designed (SPEC §3.8 v1.5): byte downlink, `LOG` debug channel, admin-only debugger, dumps/`BRK`, `@POST`, science recorder, spectra and camera photos with upgrade tiers; photo POC `preview.html?photos=1`; multiple rovers renumbered to M10. |
 | 2026-11-12 | `ccr-a25966c0-1wr43t` | M8: game renderer switched to the v2 assets (CameraRig, PostFx bloom, TileLighting, rover rig + animator, dust/fog); radar wave outlines unmapped terrain via hidden chunk geometry; compass rotates with the camera; Q/E/B keys; v1 shapes removed. |
 | 2026-11-12 | `ccr-a25966c0-1wr43t` (2) | M8: frame-time HUD (P, `?perf=1`: frame ms avg/p95/max, render CPU ms, draw calls, geometry counts); headless geometry budget test (179k/204k line verts for 25 chunks, hidden geometry +14%); chunk rebuilds time-budgeted. |
+| 2026-11-12 | `ccr-a25966c0-1wr43t` (3) | M8: pan leash, camera focus stays within 24 tiles of the rover (owner request). |
