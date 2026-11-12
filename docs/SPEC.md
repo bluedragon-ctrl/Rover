@@ -1,11 +1,11 @@
-# Rover — Game & Language Specification (`v1.4`)
+# Rover — Game & Language Specification (`v1.5`)
 
 This document supersedes `v1.2` of the architecture/language review. It fixes the
 inconsistencies found in review and pins down the numbers the code relies on.
 All tunable numbers live in `src/core/balance.ts`; this document lists defaults.
 
 Status markers: **[M1–M3]** … **[M7]** implemented in that milestone, **[later]** designed
-but not yet implemented.
+but not yet implemented, **[M9, planned]** designed for a milestone that has not started.
 
 ---
 
@@ -65,6 +65,8 @@ Each rover owns a copy of its chassis stats; upgrades (§3.7) modify that copy.
 | Cargo | 4 slots | Item IDs (= tile IDs). **[M5]** |
 | Hardpoints | `TOOL_0` drill, `TOOL_1` grabber, `TOOL_2` spectrometer, `TOOL_3` empty | **[M5]** |
 | Sensor range | 6 tiles | `SCAN` radar, every direction, day and night. The operator's *view* needs light: 6 by day, 1-tile ring at night plus the headlight cone (§3.1.1). **[M4, M8.1]** |
+| Downlink | 2 B/tick at full signal, log FIFO 32 B, science recorder 1024 B | **[M9, planned]** §3.8 |
+| Camera | mast camera, 32×32 2 bpp | `SNAP dir [mode]`. **[M9, planned]** §3.8.5 |
 
 ### 3.1 Energy costs (defaults)
 
@@ -112,6 +114,7 @@ The rover and the player "see" differently:
 | :--- | :--- |
 | `RUNNING` | Executing instructions. |
 | `BLOCKED` | Waiting for a hardware action (`STEP`, `SCAN`, `SLEEP`, ...). |
+| `HALTED` | **[M9, planned]** Stopped by `BRK`; resumes on *Continue* or upload (§3.8.4). No watchdog. |
 | `FAULT` | Stack overflow/underflow. A **watchdog** hard-reboots the CPU after 50 ticks. |
 | `POWER_OFF` | Battery empty (§3.4). |
 | `DESTROYED` | Hull at 0. Only the admin console can recover. |
@@ -146,6 +149,8 @@ old program keeps running. New rovers ship with factory firmware installed for f
 * **TX:** writing `@TX_DATA` sends a packet if `@SIGNAL_STR >= 50` and sets `@STATUS`
   (`OK`, `ERR_NO_SIGNAL`, `ERR_LOW_POWER`). This is the one port write that touches
   `@STATUS`.
+  **[M9, planned]** replaced by the byte-based downlink (§3.8): `@TX_DATA` becomes
+  `LOG 0 value`, science travels in the recorder.
 
 ### 3.3.2 Tools, cargo and science **[M5]**
 
@@ -166,7 +171,9 @@ Errors: `ERR_INVALID` (bad direction/slot, nothing usable there), `ERR_FULL` (no
 cargo slot), `ERR_LOW_POWER`, `ERR_NO_TOOL`.
 
 **Science:** analyzed science waits in `@SCIENCE_READY`. Every *successful* `@TX_DATA`
-write carries one science packet home (decision: automatic, no extra port). Delivered
+write carries one science packet home (decision: automatic, no extra port). **[M9, planned]**
+the spectrometer records a 16-byte spectrum in the science recorder instead, delivered
+by the downlink (§3.8.5). Delivered
 science adds **science credits**, as do completed goals. Credits are the currency for
 M7 upgrades.
 
@@ -268,6 +275,149 @@ on pickup and needs no cargo slot. Ports: `@DROPS` (landed crates waiting), `@DR
 Flash and register upgrades change compiler limits at once; the running program is
 unaffected (it already fits). Goal *Upgraded*: install a first upgrade.
 
+## 3.8 Downlink, debugging and science products **[M9, planned]**
+
+Design principle: **mission control knows only what the rover sent**, plus the program
+it uploaded itself. There is no live view of registers, stacks or ports for the player
+(the old debugger becomes an admin-only "omniscient" view). Everything the player learns
+about the rover's memory crosses the radio link as bytes, so the encoding is the game.
+
+### 3.8.1 The link
+
+The rover has **one downlink transmitter** shared by two on-board buffers:
+
+```
+CPU ── LOG ──► log FIFO (32 B, lossy)       ─┐
+                                             ├─► transmitter ─► orbiter ─► mission control
+SNAP / spectrometer ─► science recorder     ─┘
+                       (1024 B, reliable)
+```
+
+* **Rate:** `linkBytesPerTick` = 2 bytes per tick at `@SIGNAL_STR` 100, proportional to
+  signal (integer accumulator: each tick adds `2 × @SIGNAL_STR` to a byte budget; every
+  100 sends one byte). Nothing is sent below `linkMinSignal` = 20.
+* **Order:** a pending memory dump first, then the log FIFO, then the recorder (oldest
+  product first). Logging a lot therefore starves science: a deliberate trade-off.
+* **Energy:** `linkEnergyPerTick` = 2 for every tick in which at least one byte is sent.
+  A badly aimed dish sends the same bytes more slowly and so costs more energy.
+* The transmitter runs by itself; firmware never waits for it. It keeps running while the
+  CPU is halted or faulted, and stops when the rover is powered off.
+
+### 3.8.2 Frames (on-air format)
+
+Every frame starts with one header byte:
+
+```
+bit   7      6..3     2..1     0
+    [kind] [ tag ]  [size]  [0]
+kind 0 = log frame       size = payload length: 0 → 0 B, 1 → 1 B, 2 → 2 B, 3 → 4 B
+kind 1 = science frame   size = 0; followed by 1 sequence byte, then the product payload
+```
+
+* **Log frames** carry a signed value, big-endian, in the smallest of 1/2/4 bytes that
+  holds it (−128..127 → 1 B, −32768..32767 → 2 B, else 4 B): the same idea as immediates in
+  Flash (§5.7). `LOG 5` = `28` (1 B); `LOG 5 r0` with r0 = 42 = `2A 2A` (2 B);
+  with r0 = −300 = `2C FE D4` (3 B).
+* **Tag 15** is reserved for the system: boot frames, dump replies. `LOG 15` is a compile
+  error.
+* **Boot frame:** after every hard reboot the rover queues `LOG 15 reason`
+  (1 = code upload, 2 = watchdog, 3 = cold boot, 4 = admin).
+* **Science frames:** `tag` = product type (§3.8.5), then a sequence byte (0–255,
+  wrapping, per rover), then the payload. Overhead is 2 bytes per product.
+
+### 3.8.3 Debug log: `LOG`, the console, `@POST`
+
+| Instruction | Cycles | Bytes | Semantics |
+| :--- | :--- | :--- | :--- |
+| `LOG tag [src]` | 1 | 1 + 1 + src | Queues a log frame. `tag` is a compile-time constant 0–14. Compute instruction: **no `@STATUS` change**, no energy (the transmitter pays). If the whole frame does not fit in the FIFO it is **dropped** and `@LOG_LOST` increments. |
+
+* `@LOG_FREE` (R): free bytes in the log FIFO. `@LOG_LOST` (RW): frames dropped since
+  boot; saturates at 255; write sets it (usually 0).
+* `@TX_DATA` (W) becomes shorthand for `LOG 0 value`, kept for old programs. It still
+  writes `@STATUS` (`OK`, or `ERR_FULL` when the frame was dropped). It no longer carries
+  science.
+* **Console** (mission-control tab): every received frame with its tick of arrival,
+  raw hex and the decoded value. Tags are named from the uploaded program, like a
+  `defmt` / spacecraft-EVR dictionary: with `CONST T_BAT 5`, `LOG T_BAT @BAT` shows as
+  `T_BAT = 812 (L17)`. A raw-hex toggle hides the decoding. Lost frames show as a gap
+  ("⚠ 3 frames lost", from the next frame's `@LOG_LOST`).
+* **`@POST` (RW, 0–255):** a two-digit hexadecimal display on the rover body, like a PC
+  POST card. Free, no link needed, no `@STATUS`; physical (survives reboots), dark while
+  powered off. The player can read it only while the rover is inside their view
+  (§3.1.1): at night, near the rover or in the headlight cone.
+
+### 3.8.4 Memory dumps and `BRK`
+
+* **Dump** (console button): an uplinked command, paid like a small upload
+  (`dumpEnergy` = `ceil(150 × 100 / max(10, @SIGNAL_STR))`), rejected without power.
+  The rover answers with a tag-15 dump frame (IP 2 B, `@STATUS` 1 B, CPU state 1 B,
+  each installed register 4 B, data-stack depth 1 B, call-stack depth 1 B: 22 B on Mk-I,
+  38 B with 8 registers; stack contents need a second command, "dump stacks"). The console shows it as a **snapshot with the
+  tick it was taken**, never as a live view.
+* **`BRK`** (1 cycle, 1 byte, compute): the CPU enters the new state `HALTED`. Physical
+  actions already in progress finish; the world keeps running; the watchdog does not
+  fire. The console offers *Dump* and *Continue* (both uplinked commands; *Continue*
+  costs the same as a dump). An upload also ends the halt (hard reboot).
+* **Admin view:** the old live debugger stays available behind the admin toggle, clearly
+  labelled, for development and when stuck.
+
+### 3.8.5 Science products and the recorder
+
+Science lives in the **science recorder** (Mk-I 1024 B) until it has been sent
+completely; it is never lost. A product interrupted by a link drop resumes where it
+stopped; mission control shows the received part (photos fill in row by row, the rest is
+hatched). The space is freed when the last byte is sent.
+
+| Type | Product | Payload | On air | Source |
+| :--- | :--- | :--- | :--- | :--- |
+| 0 | Spectrum: 16 bands 400–1000 nm, 1 B each | 16 B | 18 B | spectrometer, `ACT TOOL_2 slot` |
+| 1 | Photo 32×32, 2 bpp grey | 256 B | 258 B | camera, Mk-I |
+| 2 | Photo 32×32, 2 bpp grey, ordered dither | 256 B | 258 B | camera, Mk-I |
+| 3 | Photo 32×32, 4 bpp, 16-colour planet palette | 512 B | 514 B | upgrade *Colour filter wheel* |
+| 4 | Photo 64×64, 2 bpp grey, dithered | 1024 B | 1026 B | upgrade *Hi-res sensor* |
+| 5 | Photo 32×32, 8 bpp RGB332 | 1024 B | 1026 B | upgrade *Colour sensor* |
+
+Pixels are packed MSB-first, row by row (2 bpp: four pixels per byte, leftmost in the top
+bits). The camera auto-exposes (stretches the frame's darkest..brightest luma to the full
+range, keeping hue) before quantizing. Reference renders: `preview.html?photos=1`.
+
+* **Spectrometer** (`ACT TOOL_2 slot`, unchanged timing and energy): needs 18 free
+  recorder bytes (else `ERR_FULL`, the item is kept), then frees the cargo slot and
+  records one spectrum. Each material has its own curve (iron: absorption near 900 nm;
+  silicon: flat and bright; vent sulfates: green peak) with small per-position variation.
+* **Camera** (mast, not a hardpoint): `SNAP dir [mode=1]`, blocks 10 ticks,
+  200 energy, writes `@STATUS`: `ERR_FULL` (not enough recorder space),
+  `ERR_INVALID` (bad direction or mode not installed), `ERR_LOW_POWER`. Subject: the first
+  obstacle or item within 2 tiles in `dir`, else the ground tile in front. **Light:**
+  `@SUN_LIGHT ≥ 20`, or the headlight on and `@HEADING = dir`; otherwise the photo is dark
+  and noisy (auto-exposure amplifies sensor noise) and worth nothing.
+* `@REC_FREE` (R): free recorder bytes. `@SCIENCE_READY` (R): products waiting in the
+  recorder (meaning unchanged: science waiting for downlink).
+* **Content is deterministic:** a product is stored as a descriptor (type, subject tile,
+  position, light, tick); its bytes come from a pure, integer-only function of the world
+  seed and the descriptor (`src/core/imaging.ts`, no `Math.random`, no float trig in the
+  tick path), so saves stay small and runs stay reproducible.
+
+**Credits on delivery** (tunable, `BALANCE`): spectrum = the item's `science` value
+(sample 3, ore 1, as today); lit photo = 1, +5 the first time a subject type is
+delivered; dark photo = 0. **Anomalies:** rare tiles (seeded, e.g. 1 in 40 cliff walls
+and samples) show a pattern only a photo reveals; flagging a delivered anomaly photo in
+the gallery pays +20, a wrong flag −5, one flag per photo.
+
+**Gallery** (mission-control tab): received photos (crisp pixels, scaled up) and spectra
+(bar charts), each with tick, position, size and hex view.
+
+### 3.8.6 Upgrades (catalogue additions)
+
+| Upgrade | Cost | Effect | Requires |
+| :--- | :--- | :--- | :--- |
+| Recorder 2 KB / 4 KB | 40 / 80 | Science recorder 2048 / 4096 B | – / 2 KB |
+| High-gain amplifier | 60 | Link 3 B/tick at full signal | – |
+| Trace buffer | 30 | Log FIFO 64 B | – |
+| Colour filter wheel | 60 | Camera mode 3 | – |
+| Hi-res sensor | 80 | Camera mode 4 | Recorder 2 KB |
+| Colour sensor | 100 | Camera mode 5 | Colour filter wheel, Recorder 2 KB |
+
 ## 4. World
 
 * Infinite, signed integer coordinates. **`NORTH` = +Y, `EAST` = +X.**
@@ -347,6 +497,9 @@ friction, but the set should stay small enough to learn in one sitting.
 | | `ACT tool [arg]` | tool-defined | Fire the tool in hardpoint `tool` (§3.3.2). |
 | | `PEEK slot -> dst` | 1 cycle | Item ID in cargo `slot` (0 = empty); bad slot → `ERR_INVALID`. |
 | | `USE slot` | 5 ticks | Consume a cargo item (§3.3.2). |
+| | `SNAP dir [mode]` | blocks 10 | **[M9, planned]** Photograph the subject in `dir` into the science recorder (§3.8.5). |
+| Debug | `LOG tag [src]` | 1 cycle | **[M9, planned]** Queue a log frame for the downlink; compute, no `@STATUS` (§3.8.3). |
+| | `BRK` | 1 cycle | **[M9, planned]** Halt the CPU (`HALTED`) until *Continue* or an upload (§3.8.4). |
 
 `@STATUS` is written by every hardware instruction and by arithmetic errors; pure
 compute instructions leave it alone.
@@ -384,14 +537,18 @@ compute instructions leave it alone.
 | `@SOLAR_ANGLE` | RW | 0–359 (write = target, read = current) | M4 |
 | `@ORBIT_AZIMUTH`, `@SIGNAL_STR` | R | 0–359, 0–100 | M4 |
 | `@ANTENNA_ANGLE` | RW | 0–359 (write = target, read = current) | M4 |
-| `@TX_DATA` | W | any int | M4 |
+| `@TX_DATA` | W | any int | M4 (M9: = `LOG 0 value`) |
 | `@CARGO_FREE` | R | free cargo slots | M5 |
 | `@SOLAR_HEALTH`, `@ANTENNA_HEALTH` | R | 0–100 | M6 |
 | `@ALERT` | R | `ALERT_*` | M6 |
 | `@ALERT_ETA` | R | ticks until the alerted event | M6 |
 | `@DROPS`, `@DROP_X`, `@DROP_Y` | R | supply crates waiting / nearest crate | M7 |
 | `@SEISMIC_TYPE`, `@SEISMIC_DIST` | R | last seismic scan | M7 |
-| `@SCIENCE_READY` | R | science packets waiting for uplink | M5 |
+| `@SCIENCE_READY` | R | science products waiting for downlink | M5 (M9: products in the recorder) |
+| `@LOG_FREE` | R | free bytes in the log FIFO | M9, planned |
+| `@LOG_LOST` | RW | log frames dropped (saturates at 255) | M9, planned |
+| `@REC_FREE` | R | free bytes in the science recorder | M9, planned |
+| `@POST` | RW | 0–255, two-digit hex display on the rover | M9, planned |
 
 Writes are clamped to the port's range; angle ports wrap modulo 360.
 
