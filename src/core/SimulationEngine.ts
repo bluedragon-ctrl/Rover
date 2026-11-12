@@ -3,6 +3,7 @@ import { ChunkedWorld } from './ChunkedWorld';
 import { EventBus } from './EventBus';
 import { MapGenerator } from './MapGenerator';
 import { EventDirector } from './EventDirector';
+import type { SquallDamage } from './events';
 import { TOOLS, type ToolDef } from './tools';
 import { Environment, signalStrength, solarGain, wrapDeg, angleDiff, type SunState } from './Environment';
 import { getPort, writePortClamped, type PortContext } from './ports';
@@ -46,6 +47,7 @@ export class SimulationEngine {
     maxDistance: 0,
     sunrisesPowered: 0,
     eclipsesSurvived: 0,
+    repairs: 0,
     squallsWeathered: 0,
   };
   /** Science credits: delivered science + goal rewards. Currency for M7 upgrades. */
@@ -212,13 +214,13 @@ export class SimulationEngine {
     const wasNight = this.sun.elevation <= 0;
     this.director.tick(this.tick);
     this.sun = this.env.sun(this.tick);
-    const squall = this.director.isActive('SQUALL', this.tick);
+    const squall = this.director.active('SQUALL', this.tick)?.damage ?? null;
     if (wasNight && this.sun.elevation > 0) for (const u of this.units) if (u.powered) this.stats.sunrisesPowered++;
     this.orbitAzimuth = this.env.orbitAzimuth(this.tick);
     for (const u of this.units) {
       this.world.touchRadius(u.x, u.y, BALANCE.chunkBubbleRadius);
       this.updatePower(u);
-      if (squall) this.applySquall(u);
+      if (squall) this.applySquall(u, squall);
       this.updateUnitPhysics(u);
       this.revealAround(u);
       u.cyclesLeft = u.vm.state === CpuState.RUNNING ? u.chassis.cyclesPerTick : 0;
@@ -291,14 +293,15 @@ export class SimulationEngine {
   }
 
   /** Micrometeorites: light hull wear (more while driving), dish wear, heavy damage to an exposed array. */
-  private applySquall(u: Unit): void {
+  private applySquall(u: Unit, d: SquallDamage): void {
     if (u.vm.state === CpuState.DESTROYED || this.cheats.invulnerable) return;
-    const B = BALANCE;
     const t = this.tick;
-    const every = u.action?.kind === 'STEP' ? B.squallHullEveryTicks / 2 : B.squallHullEveryTicks;
-    if (t % every === 0) this.damage(u, 1);
-    if (!u.solarStowed && t % B.squallSolarEveryTicks === 0) u.solarHealth = Math.max(0, u.solarHealth - B.squallSolarDamage);
-    if (t % B.squallAntennaEveryTicks === 0) u.antennaHealth = Math.max(0, u.antennaHealth - 1);
+    if (d.hullEvery) {
+      const every = u.action?.kind === 'STEP' ? Math.max(1, Math.floor(d.hullEvery / 2)) : d.hullEvery;
+      if (t % every === 0) this.damage(u, 1);
+    }
+    if (d.solarEvery && !u.solarStowed && t % d.solarEvery === 0) u.solarHealth = Math.max(0, u.solarHealth - d.solarDamage);
+    if (d.antennaEvery && t % d.antennaEvery === 0) u.antennaHealth = Math.max(0, u.antennaHealth - 1);
   }
 
   private transmit(u: Unit, value: number): void {

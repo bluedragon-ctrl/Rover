@@ -83,3 +83,6 @@ input[type=checkbox] { width: auto; }
 @keyframes pulse { from { opacity: 1; } to { opacity: 0.65; } }
 #tab-admin h4 { margin: 10px 0 2px; color: var(--accent); }
 .meters { flex-wrap: wrap; } .meter { min-width: 40%; }
+#goals .goal.locked { opacity: 0.6; }
+#goals .goal em { font-style: normal; font-size: 10px; color: var(--info); border: 1px solid var(--info); border-radius: 3px; padding: 0 4px; margin-left: 4px; }
+#goals .evh { margin: 14px 0 2px; color: var(--accent); }

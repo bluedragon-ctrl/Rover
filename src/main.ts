@@ -13,6 +13,7 @@ import { CompassHud } from './ui/CompassHud';
 import { GoalsPanel } from './ui/GoalsPanel';
 import { clearAutosave, downloadSave, tryLoadAutosave, writeAutosave, writeAutosaveRaw } from './ui/persistence';
 import { deserialize } from './core/SaveManager';
+import { EVENT_BY_ID, EVENT_DEFS } from './core/events';
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 
@@ -126,7 +127,7 @@ loadInput.addEventListener('change', async () => {
 // ---------------------------------------------------------------- world events
 const banner = $('#event-banner');
 engine.events.on('WORLD_EVENT', (w) => {
-  const name = w.type === 'ECLIPSE' ? 'Solar eclipse' : 'Micrometeorite squall';
+  const name = EVENT_BY_ID[w.def]?.title ?? w.type;
   if (w.phase === 'ALERT') log('warn', `${name} forecast in ${w.startTick - engine.tick} ticks (@ALERT).`);
   else if (w.phase === 'START') log('warn', `${name} has begun.`);
   else log('info', `${name} is over.`);
@@ -138,7 +139,7 @@ function updateBanner(): void {
     return;
   }
   const squall = a.event.type === 'SQUALL';
-  const name = squall ? '☄ MICROMETEORITE SQUALL' : '◐ SOLAR ECLIPSE';
+  const name = `${squall ? '☄' : '◐'} ${(EVENT_BY_ID[a.event.def]?.title ?? a.event.type).toUpperCase()}`;
   if (a.eta > 0) {
     banner.className = 'warn';
     banner.textContent = `${name} in ${a.eta} ticks${squall ? ' — stow the solar array' : ''}`;
@@ -185,8 +186,9 @@ $<HTMLInputElement>('#adm-free').addEventListener('change', (e) => (engine.cheat
 $<HTMLInputElement>('#adm-reveal').addEventListener('change', (e) => scene.setRevealAll((e.target as HTMLInputElement).checked));
 $('#btn-view').addEventListener('click', () => scene.setViewMode(scene.mode === 'angled' ? 'top' : 'angled'));
 $('#btn-follow').addEventListener('click', () => scene.centerOn(rover));
-$('#adm-eclipse').addEventListener('click', () => engine.director.triggerNow('ECLIPSE'));
-$('#adm-squall').addEventListener('click', () => engine.director.triggerNow('SQUALL'));
+const eventSel = $<HTMLSelectElement>('#adm-event');
+for (const d of EVENT_DEFS) eventSel.add(new Option(d.title, d.id));
+$('#adm-event-go').addEventListener('click', () => engine.director.triggerNow(eventSel.value));
 $('#adm-credits').addEventListener('click', () => (engine.credits += 50));
 const invuln = $<HTMLInputElement>('#adm-invuln');
 invuln.checked = engine.cheats.invulnerable;

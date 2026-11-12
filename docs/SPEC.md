@@ -127,7 +127,7 @@ that the target is still there). Tools work with the solar array deployed.
 | `ACT TOOL_1 dir` | Grabber | 2 | 100 | Picks up the adjacent surface item (`SAMPLE`, `REPAIR_KIT`). Adjacent tiles only. |
 | `ACT TOOL_2 slot` | Spectrometer | 30 | 300 | Analyzes the item in `slot` and frees it: `SAMPLE` +3 science, ore +1. |
 | `ACT TOOL_3` | (empty) | – | – | `ERR_NO_TOOL`. |
-| `USE slot [system]` | – | 5 | 0 | Consumes an item: `REPAIR_KIT` +30 hull (`SYS_HULL`, default) or +40 to `SYS_SOLAR` / `SYS_ANTENNA`. |
+| `USE slot [system]` | Field repair | 10 | 200 | Repairs `system` (default `SYS_HULL`) by **consuming the material** in cargo `slot` (see table below). |
 
 Errors: `ERR_INVALID` (bad direction/slot, nothing usable there), `ERR_FULL` (no free
 cargo slot), `ERR_LOW_POWER`, `ERR_NO_TOOL`.
@@ -149,6 +149,18 @@ dish gives proportionally weaker signal (`@SIGNAL_STR × @ANTENNA_HEALTH / 100`)
 also makes uploads more expensive. Repair with `USE slot SYS_SOLAR` / `SYS_ANTENNA`.
 Hull 0 destroys the rover; a 0 subsystem just stops working.
 
+Repairs consume materials from cargo (`USE slot system`); the item is used up. Which
+material fixes what (`repairs` in the tile registry):
+
+| Material | `SYS_HULL` | `SYS_SOLAR` | `SYS_ANTENNA` |
+| :--- | :--- | :--- | :--- |
+| `REPAIR_KIT` | +30 | +40 | +40 |
+| `IRON_ORE` | +10 | – | +15 |
+| `SILICON_ORE` | – | +20 | – |
+
+A material that cannot fix the chosen system gives `ERR_INVALID` and is not consumed.
+Ore is therefore a choice: analyze it for science, or keep it as spare parts.
+
 ### 3.4 Power-off and solar recovery
 
 When energy reaches 0 the CPU powers off and any action is aborted. If the solar array
@@ -158,19 +170,31 @@ reaches 5 % **[M4]**. If the array was stowed, the rover is stuck: the admin con
 
 ## 3.5 Storyteller events **[M6]**
 
-The `EventDirector` rolls once per sol (seeded RNG, state saved) after a grace period of
-1500 ticks. Every event is announced `200` ticks ahead: `@ALERT` reports the most urgent
-announced or active event (`ALERT_NONE=0`, `ALERT_ECLIPSE=1`, `ALERT_SQUALL=2`) and
-`@ALERT_ETA` the ticks until it starts (0 while active).
+Events are declared in `src/core/events.ts` (`EVENT_DEFS`). Each has a kind
+(`ECLIPSE` / `SQUALL`), chance per sol, length, warning time, effect profile and
+**prerequisites**: goals that must be completed, events that must already have happened
+(non-admin), and an earliest sol. The `EventDirector` rolls once per sol (seeded RNG,
+state saved) after a 1500-tick grace period:
 
-| Event | Chance / sol | Length | Effect |
-| :--- | :--- | :--- | :--- |
-| Solar eclipse | 35 % | 150 ticks (20-tick ramps) | Daytime only. `@SUN_LIGHT` → 0, so no solar charging; night sensor rules apply only if the sun is down. |
-| Micrometeorite squall | 40 % | 100 ticks | Hull −1 every 10 ticks (every 5 while driving); dish −1 every 20 ticks; solar array −2 every 3 ticks unless fully stowed (≈ −66 for a whole squall). |
+1. Only **unlocked** events are considered; at most one event of each kind per sol.
+2. **Teaching** events marked `guaranteedFirst` are scheduled for certain at the first
+   roll after they unlock (at most one guaranteed event per sol, catalogue order).
+3. Everything else rolls its chance.
+
+Every event is announced ahead of time: `@ALERT` reports the most urgent announced or
+active event (`ALERT_NONE=0`, `ALERT_ECLIPSE=1`, `ALERT_SQUALL=2`) and `@ALERT_ETA` the
+ticks until it starts (0 while active).
+
+| Event | Teaching | Unlocks after | Chance / sol | Warning | Length | Effect |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| Dust squall | ✔ (guaranteed first) | goal *First contact* | 15 % | 400 | 60 | Hull −1 / 20 ticks; open array −1 / 3 ticks. |
+| Partial eclipse | ✔ (guaranteed first) | goal *First contact* | 15 % | 300 | 120 | Light dips to 40 %. |
+| Micrometeorite squall | | Dust squall seen, sol ≥ 3 | 35 % | 200 | 100 | Hull −1 / 10 ticks (/5 while driving); dish −1 / 20; open array −2 / 3 ticks (≈ −66). |
+| Total solar eclipse | | Partial eclipse seen, goal *Night owl*, sol ≥ 3 | 30 % | 200 | 150 | Light → 0. Daytime only. |
 
 Event goals: *Into the dark* (a rover powered through a whole eclipse), *Storm chaser*
-(out of a squall with hull ≥ 50 and solar ≥ 50). Events started from the admin console
-do not count toward goals.
+(out of a squall with hull ≥ 50 and solar ≥ 50). Admin-started events ignore
+prerequisites and count neither toward goals nor toward "seen" prerequisites.
 
 ## 3.6 Persistence **[M6]**
 

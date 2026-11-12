@@ -103,23 +103,25 @@ export const TOOLS: Record<ToolId, ToolDef> = {
   },
   USE_ITEM: {
     id: 'USE_ITEM',
-    name: 'Use cargo item',
+    name: 'Field repair',
     arg: 'slot',
-    ticks: 5,
-    energy: 0,
-    description: 'Consumes the item in cargo <slot>. REPAIR_KIT: +30 hull, or +40 to [system] (SYS_SOLAR, SYS_ANTENNA).',
+    ticks: 10,
+    energy: 200,
+    description:
+      'Repairs [system] (default SYS_HULL) by consuming the material in cargo <slot>: REPAIR_KIT +30 hull / +40 solar / +40 dish, IRON_ORE +10 hull / +15 dish, SILICON_ORE +20 solar.',
     check(e, u, slot, system = SystemId.SYS_HULL) {
       if (!validSlot(u, slot) || system < 0 || system > 2) return Status.ERR_INVALID;
-      return e.registry.get(u.cargo[slot])?.useEffect ? Status.OK : Status.ERR_INVALID;
+      return e.registry.get(u.cargo[slot])?.repairs?.[system] ? Status.OK : Status.ERR_INVALID;
     },
     complete(e, u, slot, system = SystemId.SYS_HULL) {
       const st = this.check(e, u, slot, system);
       if (st !== Status.OK) return st;
-      const fx = e.registry.get(u.cargo[slot])!.useEffect!;
-      if (system === SystemId.SYS_HULL) u.hull = Math.min(100, u.hull + (fx.hull ?? 0));
-      else if (system === SystemId.SYS_SOLAR) u.solarHealth = Math.min(100, u.solarHealth + (fx.system ?? 0));
-      else u.antennaHealth = Math.min(100, u.antennaHealth + (fx.system ?? 0));
-      u.cargo[slot] = 0;
+      const amount = e.registry.get(u.cargo[slot])!.repairs![system]!;
+      if (system === SystemId.SYS_HULL) u.hull = Math.min(100, u.hull + amount);
+      else if (system === SystemId.SYS_SOLAR) u.solarHealth = Math.min(100, u.solarHealth + amount);
+      else u.antennaHealth = Math.min(100, u.antennaHealth + amount);
+      u.cargo[slot] = 0; // the material is used up
+      e.stats.repairs++;
       return Status.OK;
     },
   },

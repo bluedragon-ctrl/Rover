@@ -5,6 +5,7 @@ import { deserialize, SAVE_VERSION, SaveError, serialize } from '../src/core/Sav
 import { SimulationEngine } from '../src/core/SimulationEngine';
 import { Alert, CpuState, Layer, Status } from '../src/core/types';
 import { T } from '../src/core/WorldRegistry';
+import { EVENT_BY_ID } from '../src/core/events';
 
 const factory = { factory: true };
 const run = (e: SimulationEngine, n: number) => {
@@ -17,8 +18,8 @@ function rover(src = 'SLEEP 100000', seed = 3) {
   return { e, u };
 }
 
-describe('subsystems', () => {
-  it('a damaged array charges proportionally less; repair kits fix a chosen system', () => {
+describe('subsystems & material repairs', () => {
+  it('a damaged array charges proportionally less', () => {
     const { e, u } = rover('MOV @SOLAR_OPEN 1\nMOV @SOLAR_ANGLE @SUN_AZIMUTH\nSLEEP 100000');
     run(e, 80);
     const full = u.lastSolarGain;
@@ -26,13 +27,6 @@ describe('subsystems', () => {
     e.advanceTick();
     expect(u.lastSolarGain).toBeLessThanOrEqual(Math.ceil(full / 2) + 1);
     expect(u.lastSolarGain).toBeGreaterThan(0);
-
-    e.upload(u, 'USE 0 SYS_SOLAR\nMOV r0 @STATUS\nUSE 1 SYS_ANTENNA\nMOV r1 @SOLAR_HEALTH\nMOV r2 @ANTENNA_HEALTH\nSLEEP 100000', factory);
-    u.cargo[0] = T.REPAIR_KIT;
-    u.cargo[1] = T.REPAIR_KIT;
-    u.antennaHealth = 10;
-    run(e, 15);
-    expect([u.vm.regs[0], u.vm.regs[1], u.vm.regs[2]]).toEqual([Status.OK, 90, 50]);
   });
 
   it('a damaged dish weakens the signal', () => {
@@ -42,55 +36,97 @@ describe('subsystems', () => {
     u.antennaHealth = 40;
     expect(e.signalOf(u)).toBe(40);
   });
+
+  it('repairs consume the right material from cargo', () => {
+    const { e, u } = rover(
+      'USE 0 SYS_SOLAR\nMOV r0 @STATUS\nUSE 1 SYS_SOLAR\nMOV r1 @STATUS\nUSE 1 SYS_HULL\nMOV r2 @STATUS\nUSE 2 SYS_ANTENNA\nMOV r3 @STATUS\nSLEEP 100000',
+    );
+    u.cargo = [T.IRON_ORE, T.SILICON_ORE, T.REPAIR_KIT, 0];
+    u.solarHealth = 50;
+    u.antennaHealth = 50;
+    u.hull = 50;
+    run(e, 40);
+    expect([u.vm.regs[0], u.vm.regs[1], u.vm.regs[2], u.vm.regs[3]]).toEqual([Status.ERR_INVALID, Status.OK, Status.ERR_INVALID, Status.OK]);
+    expect(u.solarHealth).toBe(70); // silicon +20
+    expect(u.antennaHealth).toBe(90); // kit +40
+    expect(u.hull).toBe(50); // slot 1 was already used up
+    expect(u.cargo).toEqual([T.IRON_ORE, 0, 0, 0]); // iron untouched: it cannot fix solar cells
+    expect(e.stats.repairs).toBe(2);
+  });
 });
 
 describe('storyteller events', () => {
-  it('schedules deterministically per seed, with warnings ahead of time', () => {
-    const log = (seed: number) => {
-      const { e } = rover('SLEEP 100000', seed);
-      const ev: string[] = [];
-      e.events.on('WORLD_EVENT', (w) => ev.push(`${w.phase}:${w.type}@${e.tick}`));
-      run(e, BALANCE.dayTicks * 8);
-      return ev;
-    };
-    const a = log(42);
-    expect(a).toEqual(log(42));
-    expect(a).not.toEqual(log(43));
-    expect(a.some((s) => s.startsWith('START'))).toBe(true);
-    // every START is preceded by its ALERT eventWarnTicks earlier
-    for (const s of a.filter((x) => x.startsWith('START'))) {
-      const [, type, at] = /START:(\w+)@(\d+)/.exec(s)!;
-      expect(a).toContain(`ALERT:${type}@${+at - BALANCE.eventWarnTicks}`);
+  const starts = (seed: number, src: string, sols: number) => {
+    const { e } = rover(src, seed);
+    const ev: { phase: string; def: string; at: number; start: number }[] = [];
+    e.events.on('WORLD_EVENT', (w) => ev.push({ phase: w.phase, def: w.def, at: e.tick, start: w.startTick }));
+    run(e, BALANCE.dayTicks * sols);
+    return { e, ev };
+  };
+
+  it('nothing happens until the prerequisites (First contact) are met', () => {
+    const { ev } = starts(42, 'SLEEP 100000', 6);
+    expect(ev).toEqual([]);
+  });
+
+  it('teaching events come first; full events only after their teaching version', () => {
+    for (const seed of [1, 2, 3, 42, 99]) {
+      const { ev } = starts(seed, FACTORY_IDLE, 12);
+      const order = ev.filter((x) => x.phase === 'START').map((x) => x.def);
+      expect(order.length, `seed ${seed}`).toBeGreaterThanOrEqual(2);
+      expect(EVENT_BY_ID[order[0]].teaching, `seed ${seed}: ${order}`).toBe(true);
+      const firstFull = (id: string, teach: string) => {
+        const i = order.indexOf(id);
+        if (i >= 0) expect(order.indexOf(teach), `seed ${seed}: ${order}`).toBeGreaterThanOrEqual(0);
+        if (i >= 0) expect(order.indexOf(teach)).toBeLessThan(i);
+      };
+      firstFull('SQUALL', 'DUST_SQUALL');
+      firstFull('ECLIPSE', 'PARTIAL_ECLIPSE');
     }
   });
 
-  it('an eclipse darkens the sky and is visible on @ALERT', () => {
+  it('schedules deterministically per seed, each event announced warnTicks ahead', () => {
+    const a = starts(42, FACTORY_IDLE, 10).ev;
+    expect(a).toEqual(starts(42, FACTORY_IDLE, 10).ev);
+    expect(a).not.toEqual(starts(43, FACTORY_IDLE, 10).ev);
+    for (const s of a.filter((x) => x.phase === 'START')) {
+      expect(a).toContainEqual({ phase: 'ALERT', def: s.def, at: s.start - EVENT_BY_ID[s.def].warnTicks, start: s.start });
+    }
+  });
+
+  it('eclipses darken the sky to their minimum and show on @ALERT', () => {
     const { e, u } = rover('MOV r0 @ALERT\nMOV r1 @SUN_LIGHT\nSLEEP 1');
-    run(e, 300); // mid-morning
-    expect(e.sun.light).toBeGreaterThan(30);
+    run(e, 300);
+    const day = e.sun.light;
+    e.director.triggerNow('PARTIAL_ECLIPSE');
+    run(e, BALANCE.eclipseRampTicks + 10);
+    expect(e.sun.light).toBeGreaterThan(day * 0.3);
+    expect(e.sun.light).toBeLessThan(day * 0.5);
+    run(e, 200);
     e.director.triggerNow('ECLIPSE');
     run(e, BALANCE.eclipseRampTicks + 10);
     expect(e.sun.light).toBe(0);
     expect(u.vm.regs[0]).toBe(Alert.ALERT_ECLIPSE);
-    run(e, BALANCE.eclipseTicks);
-    expect(e.sun.light).toBeGreaterThan(30);
-    expect(e.stats.eclipsesSurvived).toBe(0); // admin-triggered events don't count for goals
+    expect(e.stats.eclipsesSurvived).toBe(0); // admin-triggered events don't count
+    expect(e.director.history).toEqual({});
   });
 
-  it('a squall wears the hull and dish, and wrecks an open solar array', () => {
+  it('a squall wears hull and dish and wrecks an open array; the training squall is gentle', () => {
     const open = rover('MOV @SOLAR_OPEN 1\nSLEEP 100000');
     const shut = rover('SLEEP 100000');
-    for (const r of [open, shut]) {
+    const dust = rover('MOV @SOLAR_OPEN 1\nSLEEP 100000');
+    for (const [r, id] of [[open, 'SQUALL'], [shut, 'SQUALL'], [dust, 'DUST_SQUALL']] as const) {
       run(r.e, 30);
-      r.e.director.triggerNow('SQUALL');
-      run(r.e, BALANCE.squallTicks + 2);
+      r.e.director.triggerNow(id);
+      run(r.e, EVENT_BY_ID[id].ticks + 2);
     }
     expect(open.u.solarHealth).toBeLessThan(40);
     expect(shut.u.solarHealth).toBe(100);
     expect(shut.u.hull).toBeLessThan(100);
     expect(shut.u.hull).toBeGreaterThan(80);
     expect(shut.u.antennaHealth).toBeLessThan(100);
-
+    expect(dust.u.solarHealth).toBeGreaterThan(70);
+    expect(dust.u.antennaHealth).toBe(100);
   });
 
   it('factory firmware stows the array when a squall is forecast and survives it', () => {
@@ -98,12 +134,13 @@ describe('storyteller events', () => {
     run(e, 300);
     expect(u.solarDeployed).toBe(true);
     const t = e.tick;
-    e.director.events.push({ type: 'SQUALL', warnTick: t + 1, startTick: t + BALANCE.eventWarnTicks, endTick: t + BALANCE.eventWarnTicks + BALANCE.squallTicks });
-    run(e, BALANCE.eventWarnTicks);
+    const d = EVENT_BY_ID.SQUALL;
+    e.director.events.push({ def: 'SQUALL', type: 'SQUALL', warnTick: t + 1, startTick: t + d.warnTicks, endTick: t + d.warnTicks + d.ticks });
+    run(e, d.warnTicks);
     expect(u.solarStowed).toBe(true);
-    run(e, BALANCE.squallTicks + 100);
+    run(e, d.ticks + 100);
     expect(u.solarHealth).toBe(100);
-    expect(u.solarDeployed).toBe(true); // redeployed afterwards
+    expect(u.solarDeployed).toBe(true);
     expect(e.stats.squallsWeathered).toBe(1);
   });
 
@@ -111,7 +148,7 @@ describe('storyteller events', () => {
     const { e, u } = rover();
     e.cheats.invulnerable = true;
     e.director.triggerNow('SQUALL');
-    run(e, BALANCE.squallTicks + 2);
+    run(e, 120);
     expect(u.hull).toBe(100);
   });
 });

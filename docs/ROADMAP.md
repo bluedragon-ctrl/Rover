@@ -15,7 +15,7 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | M3 | Three.js wireframe viewport, CodeMirror editor, debugger, speed controls, admin | ✅ done |
 | M4 | Sun, solar, antenna, upload cost, headlight, fog of war, factory firmware | ✅ done |
 | M5 | Tools, cargo, spectrometer, science, first goals | ✅ done |
-| M6 | Save/load + autosave, storyteller (eclipses, squalls), subsystem damage, admin console | ✅ done |
+| M6 | Save/load + autosave, storyteller with prerequisites & teaching events, subsystem damage, material repairs, admin console | ✅ done |
 | **M7** | **Upgrades & chassis tiers: spend credits** | ⏭ next |
 | M8 | Visual overhaul: bloom, fat lines, LOD, zoom, camera, atmosphere (SPEC §7) | planned |
 
@@ -56,6 +56,10 @@ tight Mk-I limits, so better programs become possible.
 2. Squalls: **damage individual systems**: light hull wear (more while driving), dish wear,
    heavy damage to an open solar array. Subsystem health scales charging / signal.
 3. Rewards: fine for now, tune later.
+4. Events have **prerequisites** (goals, previously seen events, sol); gentle **teaching**
+   versions are guaranteed first (`src/core/events.ts`).
+5. **Repairs consume materials** from cargo: kits fix anything; iron ore patches hull and
+   dish, silicon ore patches solar cells. New goal *Field engineer*.
 
 ## Resolved decisions (M5)
 
@@ -76,6 +80,11 @@ tight Mk-I limits, so better programs become possible.
 
 ## Backlog / ideas
 
+- More storyteller events using the catalogue: dust devils that push the rover, solar
+  flares that scramble the uplink, ore-rich meteor falls (reward events), distress beacon
+  missions. Teaching variants first.
+- Crafting: combine ores into a `REPAIR_KIT` (needs a fabricator module, M7 `TOOL_3`?).
+
 - Breakpoints in the editor gutter; "run to cursor".
 - Multiple rovers (engine already supports units; UI is single-rover).
 - Autosave in `localStorage` (M6).
@@ -89,4 +98,4 @@ tight Mk-I limits, so better programs become possible.
 | :--- | :--- | :--- |
 | 2026-11-12 | `ccr-fb6a40ee-nae64a` | M0–M4 implemented; spec v1.3; M8 visual roadmap added. Branch later renamed to `main`. |
 | 2026-11-12 | PR #2 (merged) | M5: tools, cargo, spectrometer, science credits, goals, Prospector template. |
-| 2026-11-12 | `ccr-fb6a40ee-nae64a` → PR | M6: save/load + autosave, storyteller events, subsystem damage, admin console. |
+| 2026-11-12 | PR #3 | M6: save/load + autosave, storyteller events, subsystem damage, admin console; then event prerequisites + teaching events and material-consuming repairs (review feedback). |

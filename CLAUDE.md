@@ -37,6 +37,9 @@ npm run build      # typecheck + production bundle in dist/
   New instructions: `src/core/vm/Compiler.ts` signature table + `RoverVM.ts`.
   New tools: `src/core/tools.ts` (check/complete) + mount in a chassis in `balance.ts`.
   New goals: `GOALS` in `src/core/EventDirector.ts`.
+  New world events: `EVENT_DEFS` in `src/core/events.ts` (with prerequisites; add a
+  teaching variant first for anything harsh).
+  Repair materials: `repairs` on the tile in `WorldRegistry`.
 - Shapes are drawn only in `src/render/VectorFactory.ts` (keeps M8 visual work local).
 - Shipped firmware (`src/core/programs.ts`) must compile and is covered by tests.
 
