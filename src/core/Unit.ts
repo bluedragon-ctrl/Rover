@@ -1,10 +1,12 @@
 import { BALANCE, type ChassisDef } from './balance';
 import { CpuState, LightColor } from './types';
+import type { ToolId } from './tools';
 import { RoverVM } from './vm/RoverVM';
 
 export type UnitAction =
   | { kind: 'WAIT'; ticksLeft: number }
-  | { kind: 'STEP'; dir: number; tilesLeft: number; ticksLeft: number; toX: number; toY: number };
+  | { kind: 'STEP'; dir: number; tilesLeft: number; ticksLeft: number; toX: number; toY: number }
+  | { kind: 'TOOL'; tool: ToolId; arg: number; ticksLeft: number };
 
 export interface UnitMotion {
   fromX: number;
@@ -36,6 +38,8 @@ export class Unit {
   antennaAngle = 0;
   antennaTarget = 0;
   packetsSent = 0;
+  /** Analyzed science waiting to be transmitted. */
+  scienceReady = 0;
   lastTx: { tick: number; value: number; ok: boolean } | null = null;
   /** Energy gained from solar last tick (for UI). */
   lastSolarGain = 0;

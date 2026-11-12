@@ -59,7 +59,50 @@ chg:    MOV @SOLAR_ANGLE @SUN_AZIMUTH
                                   ; falls off the end -> wraps to boot: stow & go
 `;
 
+/** Template: mine ore, grab samples, analyze them and beam the science home. */
+export const PROSPECTOR = `; PROSPECTOR: wander; mine ore and grab samples found next to
+; the rover, analyze cargo, and beam science to the orbiter.
+
+ALIAS r0 dir
+ALIAS r1 seen
+ALIAS r2 dist
+ALIAS r3 slot
+
+boot:   MOV @SOLAR_OPEN 0
+        SLEEP 20
+loop:   JLT @BAT 30 charge
+        MOV @ANTENNA_ANGLE @ORBIT_AZIMUTH ; keep the dish on the orbiter
+        JEQ @SCIENCE_READY 0 look
+        JLT @SIGNAL_STR 50 look
+        MOV @TX_DATA @SCIENCE_READY       ; each packet carries 1 science
+look:   SCAN dir -> seen dist
+        JGT dist 1 go                     ; target not adjacent yet
+        JEQ seen IRON_ORE mine
+        JEQ seen SILICON_ORE mine
+        JEQ seen SAMPLE grab
+        JEQ seen NONE go
+turn:   ADD dir 1
+        MOD dir 4
+        JMP loop
+mine:   ACT TOOL_0 dir                    ; drill: 8 ticks
+        JMP lab
+grab:   ACT TOOL_1 dir                    ; grabber: 2 ticks
+lab:    MOV slot 0
+an:     ACT TOOL_2 slot                   ; spectrometer (ERR_INVALID if empty)
+        ADD slot 1
+        JLT slot 4 an
+        JMP loop
+go:     STEP dir 1
+        JEQ @STATUS OK loop
+        JMP turn
+charge: MOV @SOLAR_OPEN 1
+chg:    MOV @SOLAR_ANGLE @SUN_AZIMUTH
+        SLEEP 20
+        JLT @BAT 90 chg                   ; then wraps to boot: stow & go
+`;
+
 export const TEMPLATES: Record<string, string> = {
   'Factory idle': FACTORY_IDLE,
   Explorer: DEMO_EXPLORER,
+  Prospector: PROSPECTOR,
 };

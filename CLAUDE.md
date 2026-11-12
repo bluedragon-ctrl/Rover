@@ -35,6 +35,8 @@ npm run build      # typecheck + production bundle in dist/
 - New tiles: `WorldRegistry` (constName auto-becomes a language constant).
   New ports: `src/core/ports.ts` (auto-appears in compiler and Reference tab).
   New instructions: `src/core/vm/Compiler.ts` signature table + `RoverVM.ts`.
+  New tools: `src/core/tools.ts` (check/complete) + mount in a chassis in `balance.ts`.
+  New goals: `GOALS` in `src/core/EventDirector.ts`.
 - Shapes are drawn only in `src/render/VectorFactory.ts` (keeps M8 visual work local).
 - Shipped firmware (`src/core/programs.ts`) must compile and is covered by tests.
 

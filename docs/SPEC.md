@@ -4,7 +4,7 @@ This document supersedes `v1.2` of the architecture/language review. It fixes th
 inconsistencies found in review and pins down the numbers the code relies on.
 All tunable numbers live in `src/core/balance.ts`; this document lists defaults.
 
-Status markers: **[M1–M3]**, **[M4]** implemented in that milestone, **[later]** designed
+Status markers: **[M1–M3]**, **[M4]**, **[M5]** implemented in that milestone, **[later]** designed
 but not yet implemented.
 
 ---
@@ -59,7 +59,8 @@ complete (unblocking its CPU), (3) passive energy drain, (4) each CPU spends its
 | Call stack | 8 frames | Return addresses only. |
 | Battery | 100 000 energy units | Exposed as `@BAT` = 0–100 (%). |
 | Hull | 100 | `@HULL`. |
-| Cargo | 4 slots | **[later]** |
+| Cargo | 4 slots | Item IDs (= tile IDs). **[M5]** |
+| Hardpoints | `TOOL_0` drill, `TOOL_1` grabber, `TOOL_2` spectrometer, `TOOL_3` empty | **[M5]** |
 | Sensor range | 6 tiles | 1 at night, 5 at night with headlight. **[M4]** |
 
 ### 3.1 Energy costs (defaults)
@@ -111,6 +112,33 @@ old program keeps running. New rovers ship with factory firmware installed for f
 * **TX:** writing `@TX_DATA` sends a packet if `@SIGNAL_STR >= 50` and sets `@STATUS`
   (`OK`, `ERR_NO_SIGNAL`, `ERR_LOW_POWER`). This is the one port write that touches
   `@STATUS`.
+
+### 3.3.2 Tools, cargo and science **[M5]**
+
+Tools are declared in `src/core/tools.ts`; hardpoint assignment comes from the chassis.
+`ACT TOOL_n arg` validates immediately (errors cost no time), then pays energy, blocks
+the CPU for the tool's duration and applies the effect when it finishes (re-checking
+that the target is still there). Tools work with the solar array deployed.
+
+| Instruction | Tool | Ticks | Energy | Effect |
+| :--- | :--- | :--- | :--- | :--- |
+| `ACT TOOL_0 dir` | Mining drill | 8 | 600 | Removes the adjacent ore vein (`IRON_ORE`, `SILICON_ORE`) and stores it in the first free slot. |
+| `ACT TOOL_1 dir` | Grabber | 2 | 100 | Picks up the adjacent surface item (`SAMPLE`, `REPAIR_KIT`). Adjacent tiles only. |
+| `ACT TOOL_2 slot` | Spectrometer | 30 | 300 | Analyzes the item in `slot` and frees it: `SAMPLE` +3 science, ore +1. |
+| `ACT TOOL_3` | (empty) | – | – | `ERR_NO_TOOL`. |
+| `USE slot` | – | 5 | 0 | Consumes an item: `REPAIR_KIT` +30 hull. |
+
+Errors: `ERR_INVALID` (bad direction/slot, nothing usable there), `ERR_FULL` (no free
+cargo slot), `ERR_LOW_POWER`, `ERR_NO_TOOL`.
+
+**Science:** analyzed science waits in `@SCIENCE_READY`. Every *successful* `@TX_DATA`
+write carries one science packet home (decision: automatic, no extra port). Delivered
+science adds **science credits**, as do completed goals. Credits are the currency for
+M7 upgrades.
+
+**Goals [M5]:** the `EventDirector` (future storyteller) tracks a fixed set of sandbox
+goals (First contact, Night owl, Surveyor, Trailblazer, Prospector, Collector, Scientist),
+each with a credit reward. Checked every 10 ticks; deterministic.
 
 ### 3.4 Power-off and solar recovery
 
@@ -195,9 +223,9 @@ friction, but the set should stay small enough to learn in one sitting.
 | Hardware | `SLEEP ticks` | blocks `ticks` | `ticks <= 0` just ends the tick. |
 | | `SCAN dir -> type dist` | blocks 1 | Ray across layers 1–3 up to sensor range. Returns the first hit's tile ID and distance, or `NONE` and `0`. |
 | | `STEP dir [tiles=1]` | blocks per tile | Moves tile by tile; aborts with `ERR_BLOCKED`, `ERR_LOW_POWER` or `ERR_HAZARD` (moved onto a hazard). |
-| | `ACT tool [arg]` | tool-defined | **[later]** Currently `ERR_NO_TOOL`. |
-| | `PEEK slot -> dst` | 1 cycle | **[later]** Reads cargo slot item ID. |
-| | `USE slot` | tool-defined | **[later]** |
+| | `ACT tool [arg]` | tool-defined | Fire the tool in hardpoint `tool` (§3.3.2). |
+| | `PEEK slot -> dst` | 1 cycle | Item ID in cargo `slot` (0 = empty); bad slot → `ERR_INVALID`. |
+| | `USE slot` | 5 ticks | Consume a cargo item (§3.3.2). |
 
 `@STATUS` is written by every hardware instruction and by arithmetic errors; pure
 compute instructions leave it alone.
@@ -232,7 +260,8 @@ compute instructions leave it alone.
 | `@ORBIT_AZIMUTH`, `@SIGNAL_STR` | R | 0–359, 0–100 | M4 |
 | `@ANTENNA_ANGLE` | RW | 0–359 (write = target, read = current) | M4 |
 | `@TX_DATA` | W | any int | M4 |
-| `@CARGO_FREE`, `@SCIENCE_READY` | R | | later |
+| `@CARGO_FREE` | R | free cargo slots | M5 |
+| `@SCIENCE_READY` | R | science packets waiting for uplink | M5 |
 
 Writes are clamped to the port's range; angle ports wrap modulo 360.
 

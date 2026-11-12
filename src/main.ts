@@ -10,6 +10,7 @@ import { DebuggerPanel } from './ui/DebuggerPanel';
 import { EditorPanel } from './ui/EditorPanel';
 import { renderReference } from './ui/ReferencePanel';
 import { CompassHud } from './ui/CompassHud';
+import { GoalsPanel } from './ui/GoalsPanel';
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 
@@ -28,6 +29,16 @@ const scene = new ThreeScene($('#viewport'), engine);
 scene.centerOn(rover);
 const debuggerPanel = new DebuggerPanel($('#debugger'), engine);
 const compass = new CompassHud($<HTMLCanvasElement>('#compass'), engine);
+const goalsPanel = new GoalsPanel($('#goals'), engine);
+const toasts = $('#toasts');
+engine.events.on('GOAL_COMPLETED', (g) => {
+  log('info', `Goal completed: ${g.title} (+${g.reward} credits)`);
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = `✔ ${g.title}  +${g.reward}`;
+  toasts.appendChild(t);
+  setTimeout(() => t.remove(), 5000);
+});
 renderReference($('#reference'), engine.registry);
 
 const flashEl = $('#flash');
@@ -137,6 +148,7 @@ window.addEventListener('keydown', (e) => {
 const hud = $('#hud');
 const hoverEl = $('#hover');
 const clockEl = $('#clock');
+const creditsEl = $('#credits');
 const worldInfo = $('#world-info');
 let last = performance.now();
 let uiTimer = 0;
@@ -147,6 +159,7 @@ function frame(now: number): void {
   const n = clock.advance(dt);
   for (let i = 0; i < n; i++) engine.advanceTick();
 
+  scene.ticksPerSecond = clock.tickHz * Math.max(1, clock.speed);
   scene.render(clock.alpha(), now);
 
   uiTimer += dt;
@@ -158,6 +171,8 @@ function frame(now: number): void {
     const sun = engine.sun;
     clockEl.textContent = `sol ${engine.env.dayNumber(engine.tick)} · ${sun.elevation > 0 ? '☀ day' : '☾ night'} · tick ${engine.tick}`;
     compass.update(rover);
+    goalsPanel.update();
+    creditsEl.textContent = `◆ ${engine.credits} credits`;
     const cost = engine.uploadCost(rover, editorFlash);
     const sig = engine.signalOf(rover);
     costEl.textContent = engine.cheats.freeUpload
