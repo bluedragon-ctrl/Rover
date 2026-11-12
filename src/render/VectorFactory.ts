@@ -376,35 +376,60 @@ export function drawTileVec(b: LineBatch, f: FillBatch, shape: TileShape, color:
       break;
     case 'rough': {
       ground(color, 0.1);
-      // Three pebbles as tiny wire pyramids with fills.
+      // Three flat stones lying on the ground: low, dim, same hue as the ground.
       for (let k = 0; k < 3; k++) {
         const px = x0 + 0.18 + jit(variant, k * 2 + 3) * 0.64;
         const pz = z0 + 0.18 + jit(variant, k * 2 + 4) * 0.64;
-        const r = 0.05 + jit(variant, k + 9) * 0.06;
-        const h = r * 0.9;
-        const base: V3[] = [[px - r, 0, pz], [px, 0, pz - r * 0.8], [px + r, 0, pz + r * 0.2], [px - r * 0.2, 0, pz + r]];
-        const top: V3 = [px, h, pz];
-        b.color(color, 0.75).loop(base);
-        for (const p of base) b.seg(p[0], p[1], p[2], top[0], top[1], top[2]);
-        f.color(color, 0.16);
-        for (let i = 0; i < 4; i++) f.tri(base[i], base[(i + 1) % 4], top);
+        const r = 0.05 + jit(variant, k + 9) * 0.05;
+        const h = r * 0.35;
+        const base: V3[] = [];
+        const top: V3[] = [];
+        for (let i = 0; i < 5; i++) {
+          const a = (i / 5) * Math.PI * 2 + jit(variant, k + i) * 0.8;
+          const rr = r * (0.75 + jit(variant, k * 5 + i) * 0.4);
+          base.push([px + Math.cos(a) * rr, 0, pz + Math.sin(a) * rr * 0.8]);
+          top.push([px + Math.cos(a) * rr * 0.55, h, pz + Math.sin(a) * rr * 0.45]);
+        }
+        f.color(color, 0.14).band(base, top).poly(top);
+        b.color(color, 0.5).loop(top);
+        b.color(color, 0.32).loop(base);
       }
       break;
     }
     case 'vent': {
+      // Small volcano: rough cone of crust, glowing crater rim, a lava trail and a fume wisp.
       ground(0x7a5a3a);
-      const ring: V3[] = [];
-      const inner: V3[] = [];
-      for (let i = 0; i < 10; i++) {
-        const a = (i / 10) * Math.PI * 2;
-        const rr = 0.34 + (i % 2) * 0.04;
-        ring.push([cx + Math.cos(a) * rr, 0.06, cz + Math.sin(a) * rr]);
-        inner.push([cx + Math.cos(a) * 0.18, 0.01, cz + Math.sin(a) * 0.18]);
+      const crust = 0x6a4a32;
+      const N = 9;
+      const h = 0.26 + jit(variant, 1) * 0.08;
+      const base: V3[] = [];
+      const mid: V3[] = [];
+      const rim: V3[] = [];
+      const pit: V3[] = [];
+      for (let i = 0; i < N; i++) {
+        const a = (i / N) * Math.PI * 2;
+        const rb = 0.42 + jit(variant, i) * 0.06;
+        const c = Math.cos(a), s = Math.sin(a);
+        base.push([cx + c * rb, 0, cz + s * rb]);
+        mid.push([cx + c * rb * 0.6, h * 0.55, cz + s * rb * 0.6]);
+        rim.push([cx + c * 0.15, h, cz + s * 0.15]);
+        pit.push([cx + c * 0.09, h - 0.07, cz + s * 0.09]);
       }
-      b.color(color, 1).loop(ring);
-      b.color(color, 0.8).loop(inner);
-      for (let i = 0; i < 10; i += 2) b.color(color, 0.5).seg(ring[i][0], ring[i][1], ring[i][2], inner[i][0], inner[i][1], inner[i][2]);
-      f.color(color, 0.18).band(inner, ring).poly(inner);
+      f.color(crust, 0.2).band(base, mid).band(mid, rim);
+      f.color(color, 0.4).band(pit, rim).poly(pit);
+      b.color(crust, 0.8).loop(base);
+      b.color(crust, 0.5).loop(mid);
+      for (let i = 0; i < N; i += 2) b.color(crust, 0.65).seg(...base[i], ...mid[i]).seg(...mid[i], ...rim[i]);
+      b.color(color, 1).loop(rim);
+      b.color(color, 0.75).loop(pit);
+      // Lava trail down one flank (side picked per tile).
+      const k = variant % N;
+      const kk = (k + 1) % N;
+      const lm: V3 = [(mid[k][0] + mid[kk][0]) / 2, mid[k][1], (mid[k][2] + mid[kk][2]) / 2];
+      const lb: V3 = [(base[k][0] + base[kk][0]) / 2, 0.005, (base[k][2] + base[kk][2]) / 2];
+      b.color(color, 0.85).seg(...rim[k], ...lm).seg(...lm, ...lb);
+      // Fume wisp above the crater.
+      b.color(color, 0.35).seg(cx, h, cz, cx + 0.04, h + 0.18, cz - 0.03).seg(cx + 0.04, h + 0.18, cz - 0.03, cx - 0.02, h + 0.34, cz - 0.06);
       break;
     }
     case 'wall': {
@@ -480,9 +505,9 @@ export function drawTileVec(b: LineBatch, f: FillBatch, shape: TileShape, color:
 // ----------------------------------------------------------------------------- rover v2
 
 /** Filled dark body + bright edges. Returns the group and its edge material (for tinting). */
-function vectorPart(geo: THREE.BufferGeometry, edge: number, fill = 0x09131f, edgeOpacity = 1): { obj: THREE.Group; edgeMat: THREE.LineBasicMaterial; fillMat: THREE.MeshBasicMaterial } {
+function vectorPart(geo: THREE.BufferGeometry, edge: number, fill = 0x09131f, edgeOpacity = 1, side: THREE.Side = THREE.FrontSide): { obj: THREE.Group; edgeMat: THREE.LineBasicMaterial; fillMat: THREE.MeshBasicMaterial } {
   const obj = new THREE.Group();
-  const fillMat = new THREE.MeshBasicMaterial({ color: fill, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+  const fillMat = new THREE.MeshBasicMaterial({ color: fill, side, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
   obj.add(new THREE.Mesh(geo, fillMat));
   const edgeMat = new THREE.LineBasicMaterial({ color: edge, transparent: edgeOpacity < 1, opacity: edgeOpacity });
   obj.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo, 20), edgeMat));
@@ -647,13 +672,15 @@ export function buildRoverRig(): RoverRigMesh {
   const mast = vectorPart(new THREE.CylinderGeometry(0.04, 0.07, 0.26, 6), ROVER_CYAN);
   mast.obj.position.y = 0.13;
   dish.add(mast.obj);
-  const dishGeo = new THREE.ConeGeometry(0.34, 0.26, 12, 1, true);
-  dishGeo.rotateX(Math.PI * 0.75);
-  const cone = wireOnly(dishGeo, 0x3affc8, 0.95);
-  cone.obj.position.set(0, 0.34, -0.05);
+  // Solid parabolic dish (opaque, ribbed), facing local -Z and up.
+  const profile = [0, 0.1, 0.2, 0.28, 0.35].map((r) => new THREE.Vector2(r, r * r * 0.9));
+  const dishGeo = new THREE.LatheGeometry(profile, 12);
+  dishGeo.rotateX(-Math.PI / 3);
+  const cone = vectorPart(dishGeo, 0x3affc8, 0x08201c, 1, THREE.DoubleSide);
+  cone.obj.position.set(0, 0.3, 0.02);
   dish.add(cone.obj);
   const feed = vectorPart(new THREE.OctahedronGeometry(0.05, 0), 0x3affc8);
-  feed.obj.position.set(0, 0.5, -0.22);
+  feed.obj.position.set(0, 0.44, -0.22);
   dish.add(feed.obj);
   body.add(dish);
 
@@ -723,7 +750,7 @@ export function buildRoverRig(): RoverRigMesh {
     solarJoints,
     solarMats,
     dish,
-    dishMats: [cone.mat, mast.edgeMat],
+    dishMats: [cone.edgeMat, mast.edgeMat],
     beacon,
     headLamp,
     beam,
