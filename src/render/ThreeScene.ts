@@ -1,39 +1,52 @@
 import * as THREE from 'three';
 import type { SimulationEngine } from '../core/SimulationEngine';
-import { CpuState } from '../core/types';
+import { CpuState, DIR_VEC } from '../core/types';
 import type { Unit } from '../core/Unit';
+import { BALANCE } from '../core/balance';
 import { ChunkPool } from './ChunkPool';
 import { FxOverlay } from './FxOverlay';
-import { BALANCE } from '../core/balance';
-import { buildCapsuleMesh, buildRoverMesh, indicatorHex, LIGHT_HEX, type RoverMesh } from './VectorFactory';
+import { CameraRig } from './CameraRig';
+import { PostFx } from './PostFx';
+import { RoverAnimator, type RoverPose } from './RoverRig';
+import { MAX_LIGHTS, radarFront, TileLighting } from './TileLighting';
+import { buildCapsuleMesh, buildRoverRig, indicatorHex, LIGHT_HEX, type RoverRigMesh } from './VectorFactory';
 
-interface RoverView extends RoverMesh {
+interface RoverView {
+  mesh: RoverRigMesh;
+  anim: RoverAnimator;
+  /** Eased body yaw (radians). */
   angle: number;
+  /** performance.now() of the last SCAN (radar wave). */
+  radarAt: number;
 }
 
 export type ViewMode = 'angled' | 'top';
 
+const ANGLED_PITCH = 0.85;
+const TOP_PITCH = 0.02;
+const DAY_BG = new THREE.Color(0x07101a);
+const NIGHT_BG = new THREE.Color(0x020306);
+const DUSK = new THREE.Color(1.18, 0.82, 0.62);
+const NOON = new THREE.Color(1, 1, 1);
+
 /**
- * Three.js viewport. Read-only consumer of the simulation: it never mutates sim state
- * (apart from touching chunks so visible ones stay loaded).
+ * Three.js viewport (M8 v2 look): wireframe-with-fills chunks under per-tile lighting,
+ * bloom, orbit camera, animated rover rig. Read-only consumer of the simulation: it never
+ * mutates sim state (apart from touching chunks so visible ones stay loaded).
  */
 export class ThreeScene {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
-  readonly camera: THREE.OrthographicCamera;
+  readonly rig: CameraRig;
+  readonly post: PostFx;
+  private lighting = new TileLighting();
   private worldRoot = new THREE.Group();
   private chunks: ChunkPool;
   private fx: FxOverlay;
   private rovers = new Map<number, RoverView>();
-  private viewSize = 28; // tiles visible vertically at zoom 1
-  private raycaster = new THREE.Raycaster();
-  private groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
   /** Effective simulation ticks per real second (set by the app) for FX timing. */
   ticksPerSecond = 10;
-  /** Camera focus in world tile coordinates (float). */
-  focusX = 0.5;
-  focusY = 0.5;
   followUnitId: number | null = null;
   mode: ViewMode = 'angled';
   /** Called on shift+click with the world tile (admin teleport). */
@@ -41,19 +54,28 @@ export class ThreeScene {
   private squall: THREE.LineSegments;
   private capsules = new Map<number, { capsule: THREE.LineSegments; ring: THREE.LineLoop }>();
   private squallSeeds: Float32Array;
+  private dust: THREE.Points;
+  private lastNow = performance.now();
   /** World tile under the mouse, or null. */
   hover: { x: number; y: number } | null = null;
+  /** Frame-time stats (smoothed). */
+  readonly stats = { fps: 0, ms: 0 };
+  private frames = 0;
+  private statT = 0;
 
   constructor(private container: HTMLElement, private engine: SimulationEngine) {
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.setClearColor(0x05070c);
     container.appendChild(this.renderer.domElement);
-    this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -500, 500);
+    this.scene.fog = new THREE.Fog(0x050910, 30, 90);
+    this.rig = new CameraRig(this.renderer.domElement);
+    this.rig.dist = 14;
+    this.rig.pitch = ANGLED_PITCH;
+    this.rig.onUserPan = () => (this.followUnitId = null);
+    this.post = new PostFx(this.renderer, this.scene, this.rig.camera);
     this.scene.add(this.worldRoot);
-    this.chunks = new ChunkPool(engine, this.worldRoot);
+    this.chunks = new ChunkPool(engine, this.worldRoot, this.lighting);
     this.fx = new FxOverlay(this.worldRoot);
-    this.applyViewMode();
     this.resize();
     new ResizeObserver(() => this.resize()).observe(container);
     this.bindInput();
@@ -68,9 +90,20 @@ export class ThreeScene {
     this.squall.visible = false;
     this.scene.add(this.squall);
 
+    // Drifting dust, brighter by day (cosmetic).
+    const DUST = 500;
+    const dustPos = new Float32Array(DUST * 3).map((_, i) => (i % 3 === 1 ? Math.random() * 3 : (Math.random() - 0.5) * 40));
+    const dustGeo = new THREE.BufferGeometry();
+    dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
+    this.dust = new THREE.Points(dustGeo, new THREE.PointsMaterial({ color: 0xd8b48a, size: 0.035, transparent: true, opacity: 0.5, depthWrite: false }));
+    this.dust.frustumCulled = false;
+    this.scene.add(this.dust);
+
     engine.events.on('SCAN_PULSE', (e) => {
       const color = e.hit ? (engine.registry.get(e.hit)?.color ?? 0xffffff) : 0x3affc8;
       this.fx.scan(e.x, e.y, e.dir, e.dist, color, performance.now());
+      const v = this.rovers.get(e.unitId);
+      if (v) v.radarAt = performance.now();
     });
     engine.events.on('UPLINK_PULSE', (e) => this.fx.uplink(e.x, e.y, e.ok, engine.orbitAzimuth, performance.now(), e.science));
     const toolColor: Record<string, number> = { DRILL: 0xff8a3a, GRABBER: 0x3affc8, SPECTROMETER: 0xd4a0ff, USE_ITEM: 0xffffff };
@@ -81,82 +114,53 @@ export class ThreeScene {
     });
   }
 
-  setViewMode(mode: ViewMode): void {
-    this.mode = mode;
-    this.applyViewMode();
+  /** Camera yaw in radians (0 = looking north), for the compass. */
+  get yaw(): number {
+    return this.rig.yaw;
   }
 
-  private applyViewMode(): void {
-    if (this.mode === 'top') {
-      this.camera.position.set(0, 100, 0);
-      this.camera.up.set(0, 0, -1);
-    } else {
-      this.camera.position.set(0, 50, 72);
-      this.camera.up.set(0, 1, 0);
-    }
-    this.camera.lookAt(0, 0, 0);
-    this.resize();
+  get focusX(): number {
+    return this.rig.focusX;
+  }
+
+  get focusY(): number {
+    return this.rig.focusY;
+  }
+
+  setViewMode(mode: ViewMode): void {
+    this.mode = mode;
+    this.rig.setPitch(mode === 'top' ? TOP_PITCH : ANGLED_PITCH);
+  }
+
+  /** Rotate the camera by quarter turns (Q/E). */
+  rotate(quarters: number): void {
+    this.rig.rotateTo(Math.round(this.rig.yaw / (Math.PI / 2) + quarters) * (Math.PI / 2));
+  }
+
+  setBloom(on: boolean): void {
+    this.post.enabled = on;
   }
 
   private resize(): void {
     const w = this.container.clientWidth || 1;
     const h = this.container.clientHeight || 1;
     this.renderer.setSize(w, h, false);
-    const aspect = w / h;
-    const vs = this.viewSize;
-    this.camera.left = (-vs * aspect) / 2;
-    this.camera.right = (vs * aspect) / 2;
-    this.camera.top = vs / 2;
-    this.camera.bottom = -vs / 2;
-    this.camera.updateProjectionMatrix();
+    this.post.setSize(w, h);
+    this.rig.resize(w, h);
   }
 
   private bindInput(): void {
     const el = this.renderer.domElement;
-    let drag: { x: number; y: number } | null = null;
+    // CameraRig handles pan / orbit / zoom; shift+click is the admin teleport.
     el.addEventListener('pointerdown', (e) => {
-      if (e.shiftKey && this.hover && this.onTileShiftClick) {
-        this.onTileShiftClick(this.hover.x, this.hover.y);
-        return;
-      }
-      drag = { x: e.clientX, y: e.clientY };
-      el.setPointerCapture(e.pointerId);
+      if (e.shiftKey && this.hover && this.onTileShiftClick) this.onTileShiftClick(this.hover.x, this.hover.y);
     });
-    el.addEventListener('pointerup', () => (drag = null));
-    el.addEventListener('pointermove', (e) => {
-      const rect = el.getBoundingClientRect();
-      if (drag) {
-        const scale = this.viewSize / this.camera.zoom / rect.height;
-        const dx = (e.clientX - drag.x) * scale;
-        const dy = (e.clientY - drag.y) * scale * (this.mode === 'angled' ? 1.75 : 1);
-        if (Math.abs(dx) + Math.abs(dy) > 0) this.followUnitId = null;
-        this.focusX -= dx;
-        this.focusY += dy;
-        drag = { x: e.clientX, y: e.clientY };
-      }
-      this.updateHover(e.clientX - rect.left, e.clientY - rect.top, rect);
-    });
+    el.addEventListener('pointermove', (e) => (this.hover = this.rig.tileAt(e.clientX, e.clientY)));
     el.addEventListener('pointerleave', () => (this.hover = null));
-    el.addEventListener(
-      'wheel',
-      (e) => {
-        e.preventDefault();
-        this.camera.zoom = THREE.MathUtils.clamp(this.camera.zoom * Math.exp(-e.deltaY * 0.0012), 0.35, 4);
-        this.camera.updateProjectionMatrix();
-      },
-      { passive: false },
-    );
-  }
-
-  private updateHover(px: number, py: number, rect: DOMRect): void {
-    const ndc = new THREE.Vector2((px / rect.width) * 2 - 1, -(py / rect.height) * 2 + 1);
-    this.raycaster.setFromCamera(ndc, this.camera);
-    const hit = new THREE.Vector3();
-    if (!this.raycaster.ray.intersectPlane(this.groundPlane, hit)) {
-      this.hover = null;
-      return;
-    }
-    this.hover = { x: Math.floor(hit.x + this.focusX), y: Math.floor(-hit.z + this.focusY) };
+    el.addEventListener('dblclick', () => {
+      const u = this.engine.units[0];
+      if (u) this.followUnitId = u.id;
+    });
   }
 
   /** Visual position of a unit at fractional sim time. */
@@ -170,79 +174,136 @@ export class ThreeScene {
   }
 
   render(alpha: number, now: number): void {
+    const dt = Math.min(0.1, Math.max(0, (now - this.lastNow) / 1000));
+    this.lastNow = now;
+    const t = now / 1000;
     const simTime = this.engine.tick + alpha;
+    const rig = this.rig;
 
     if (this.followUnitId !== null) {
       const u = this.engine.getUnit(this.followUnitId);
       if (u) {
         const [x, y] = this.unitPos(u, simTime);
         // Ease toward the rover so the camera does not jitter.
-        this.focusX += (x - this.focusX) * 0.2;
-        this.focusY += (y - this.focusY) * 0.2;
+        const k = Math.min(1, dt * 6);
+        rig.focusX += (x - rig.focusX) * k;
+        rig.focusY += (y - rig.focusY) * k;
       }
     }
+    rig.lockFocus = this.followUnitId !== null;
+    rig.update(dt);
+    const fx = rig.focusX, fy = rig.focusY;
 
-    const aspect = this.container.clientWidth / Math.max(1, this.container.clientHeight);
-    const halfTiles = (this.viewSize / this.camera.zoom) * Math.max(aspect, 1) * (this.mode === 'angled' ? 0.9 : 0.6);
-    const radius = Math.min(6, Math.ceil(halfTiles / 16) + 1);
-    this.chunks.update(this.focusX, this.focusY, radius);
+    const radius = Math.min(6, Math.ceil(Math.min(rig.viewRadius, rig.dist * 3.2 + 10) / 16) + 1);
+    this.chunks.update(fx, fy, radius);
+
+    const light = this.engine.sun.light / 100;
+    const day = THREE.MathUtils.smoothstep(light, 0, 0.35);
+    const L = this.lighting.uniforms;
+    let li = 0;
 
     for (const u of this.engine.units) {
       let v = this.rovers.get(u.id);
       if (!v) {
-        const m = buildRoverMesh();
-        v = { ...m, angle: 0 };
-        this.worldRoot.add(m.group);
-        this.worldRoot.add(m.sensorRing);
+        const mesh = buildRoverRig();
+        this.worldRoot.add(mesh.group, mesh.sensorRing);
+        v = { mesh, anim: new RoverAnimator(mesh), angle: -u.heading * (Math.PI / 2), radarAt: -Infinity };
         this.rovers.set(u.id, v);
       }
       const [x, y] = this.unitPos(u, simTime);
-      v.group.position.set(x - this.focusX, 0, -(y - this.focusY));
+      v.mesh.group.position.set(x - fx, 0, -(y - fy));
+      v.mesh.sensorRing.position.copy(v.mesh.group.position);
       // Heading: forward is -Z at angle 0; EAST = -90°.
       const target = -u.heading * (Math.PI / 2);
       let d = target - v.angle;
       d = Math.atan2(Math.sin(d), Math.cos(d));
-      v.angle += d * 0.25;
-      v.group.rotation.y = v.angle;
+      v.angle += d * Math.min(1, dt * 10);
 
+      const view = this.engine.viewShape(u);
+      const dead = u.vm.state === CpuState.POWER_OFF || u.vm.state === CpuState.DESTROYED;
+      const fault = u.vm.state === CpuState.FAULT;
+      const blinkOff = u.lightBlink && Math.floor(now / 300) % 2 === 1;
       // Turntables use compass bearings (0 = north = -Z), relative to the body.
       const bearing = (deg: number) => (-deg * Math.PI) / 180 - v!.angle;
-      const deploy = u.solarDeploy / BALANCE.solarDeployTicks;
-      v.solar.visible = deploy > 0;
-      v.solar.scale.set(Math.max(0.05, deploy), 1, Math.max(0.05, deploy));
-      v.solar.rotation.y = bearing(u.solarAngle);
-      v.dish.rotation.y = bearing(u.antennaAngle);
-      const tint = (m: THREE.LineBasicMaterial, ok: number, health: number) =>
-        m.color.setHex(ok).lerp(new THREE.Color(0xff3030), 1 - health / 100);
-      tint(v.solarMat, 0x5a7dff, u.solarHealth);
-      tint(v.dishMat, 0x3affc8, u.antennaHealth);
-      // The ring shows the operator's view disc; the headlight wedge shows the night cone.
-      const range = this.engine.viewShape(u).radius + 0.5;
-      v.sensorRing.position.set(x - this.focusX, 0, -(y - this.focusY));
-      v.sensorRing.scale.setScalar(range);
+      const pose: RoverPose = {
+        angle: v.angle,
+        moving: u.action?.kind === 'STEP',
+        deploy: u.solarDeploy / BALANCE.solarDeployTicks,
+        solarRel: bearing(u.solarAngle),
+        dishRel: bearing(u.antennaAngle),
+        solarHealth: u.solarHealth,
+        dishHealth: u.antennaHealth,
+        cpu: dead ? 'off' : fault ? 'fault' : u.action?.kind === 'WAIT' ? 'idle' : 'run',
+        beaconHex: dead || blinkOff ? 0x222222 : LIGHT_HEX[u.lightColor] ?? 0xffffff,
+        indicators: u.indicators.map((i) => indicatorHex(dead ? 0 : i)),
+        headlight: !!u.headlight && !dead,
+        drilling: u.action?.kind === 'TOOL' && u.action.tool === 'DRILL',
+        sensorRange: view.radius,
+      };
+      v.anim.update(pose, dt, t);
+      v.mesh.sensorRing.scale.setScalar(view.radius + 0.5);
+      // Readable when zoomed far out.
+      v.mesh.model.scale.setScalar(THREE.MathUtils.clamp(rig.dist / 30, 1, 2.5));
 
-      const dead = u.vm.state === CpuState.POWER_OFF || u.vm.state === CpuState.DESTROYED;
-      const blinkOff = u.lightBlink && Math.floor(now / 300) % 2 === 1;
-      const fault = u.vm.state === CpuState.FAULT;
-      v.beacon.color.setHex(dead || blinkOff ? 0x222222 : fault ? (Math.floor(now / 120) % 2 ? 0xff00ff : 0x220022) : LIGHT_HEX[u.lightColor] ?? 0xffffff);
-      v.headlight.visible = !!u.headlight && !dead;
-      v.indicators.forEach((m, i) => m.color.setHex(indicatorHex(dead ? 0 : u.indicators[i])));
+      // Tile lighting: the operator's view (same shape as sensors.ts) and the radar wave.
+      if (li < MAX_LIGHTS) {
+        const tx = u.x + 0.5 - fx, tz = -(u.y + 0.5 - fy);
+        L.uLights.value[li].set(tx, tz, view.radius, 0);
+        const [hx, hy] = DIR_VEC[view.cone >= 0 ? view.cone : 0];
+        L.uBeams.value[li].set(hx, -hy, view.cone >= 0 ? 1 : 0, 0);
+        const range = this.engine.sensorRange(u);
+        const front = radarFront((now - v.radarAt) / 1000, range);
+        L.uPulses.value[li].set(tx, tz, front, front < 0 ? 0 : range);
+        li++;
+      }
     }
+    L.uLightCount.value = li;
+    L.uDay.value = day;
+    L.uGrade.value.copy(DUSK).lerp(NOON, THREE.MathUtils.smoothstep(light, 0.05, 0.6));
 
-    // Day/night: dim the terrain with sunlight; never fully black.
-    const light = this.engine.sun.light / 100;
-    this.chunks.setBrightness(0.3 + 0.7 * Math.sqrt(light));
+    const bg = NIGHT_BG.clone().lerp(DAY_BG, day);
+    this.scene.background = bg;
+    const fog = this.scene.fog as THREE.Fog;
+    fog.color.copy(bg);
+    fog.near = rig.dist * 1.3;
+    fog.far = rig.dist * 3.2 + 10;
+    L.fogColor.value.copy(bg);
+    L.fogNear.value = fog.near;
+    L.fogFar.value = fog.far;
+    this.post.bloom.strength = 0.6 + (1 - day) * 0.35;
 
+    this.updateDust(dt, t, day);
     this.updateSquall(now);
     this.updateCapsules(simTime, now);
-    this.fx.update(this.focusX, this.focusY, now);
-    this.renderer.render(this.scene, this.camera);
+    this.fx.update(fx, fy, now);
+    this.post.render(this.scene, rig.camera);
+
+    this.frames++;
+    this.statT += dt;
+    if (this.statT > 0.5) {
+      this.stats.fps = this.frames / this.statT;
+      this.stats.ms = (this.statT * 1000) / this.frames;
+      this.frames = 0;
+      this.statT = 0;
+    }
   }
 
   centerOn(u: Unit): void {
     this.followUnitId = u.id;
-    this.focusX = u.x + 0.5;
-    this.focusY = u.y + 0.5;
+    this.rig.focusX = u.x + 0.5;
+    this.rig.focusY = u.y + 0.5;
+  }
+
+  private updateDust(dt: number, t: number, day: number): void {
+    const dp = this.dust.geometry.getAttribute('position') as THREE.BufferAttribute;
+    for (let i = 0; i < dp.count; i++) {
+      let x = dp.getX(i) + dt * 0.6, z = dp.getZ(i) + dt * 0.15;
+      if (x > 20) x -= 40;
+      if (z > 20) z -= 40;
+      dp.setXYZ(i, x, dp.getY(i) + Math.sin(t + i) * dt * 0.05, z);
+    }
+    dp.needsUpdate = true;
+    (this.dust.material as THREE.PointsMaterial).opacity = 0.12 + 0.35 * day;
   }
 
   /** Supply crates in flight: a parachute capsule descending onto a pulsing target ring. */
@@ -262,8 +323,8 @@ export class ThreeScene {
         this.capsules.set(d.id, c);
       }
       const left = Math.max(0, d.landTick - simTime) / BALANCE.supplyDropTicks;
-      const px = d.x + 0.5 - this.focusX;
-      const pz = -(d.y + 0.5 - this.focusY);
+      const px = d.x + 0.5 - this.rig.focusX;
+      const pz = -(d.y + 0.5 - this.rig.focusY);
       c.capsule.position.set(px + left * 4, left * 18, pz - left * 2);
       c.ring.position.set(px, 0, pz);
       c.ring.scale.setScalar(1 + 0.25 * Math.sin(now / 150));
@@ -283,7 +344,7 @@ export class ThreeScene {
     this.squall.visible = active;
     if (!active) return;
     const pos = this.squall.geometry.getAttribute('position') as THREE.BufferAttribute;
-    const span = (this.viewSize / this.camera.zoom) * 1.6;
+    const span = Math.min(80, this.rig.dist * 1.6 + 8);
     const s = this.squallSeeds;
     for (let i = 0; i < s.length / 3; i++) {
       const t = (s[i * 3 + 2] + now / 900) % 1; // fall phase
@@ -303,5 +364,8 @@ export class ThreeScene {
   get chunkMeshCount(): number {
     return this.chunks.size;
   }
-}
 
+  get lineVertices(): number {
+    return this.chunks.lineVertices;
+  }
+}

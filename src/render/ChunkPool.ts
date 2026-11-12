@@ -2,27 +2,35 @@ import * as THREE from 'three';
 import { CHUNK, chunkKey, type WorldChunk } from '../core/ChunkedWorld';
 import type { SimulationEngine } from '../core/SimulationEngine';
 import { hash3 } from '../core/rng';
-import { drawTile, LineBatch } from './VectorFactory';
+import { drawFogTile, drawTileVec, FillBatch, LineBatch } from './VectorFactory';
+import type { TileLighting } from './TileLighting';
 
 interface Entry {
-  mesh: THREE.LineSegments;
+  group: THREE.Group;
+  lines: THREE.LineSegments;
+  fills: THREE.Mesh;
   chunk: WorldChunk;
   version: number;
 }
 
 /**
- * Builds one merged LineSegments mesh per visible chunk and positions it relative to
- * the camera focus (floating origin) so Float32 precision never degrades far from (0,0).
+ * One merged line mesh + one fill mesh per visible chunk (v2 assets, TileLighting),
+ * positioned relative to the camera focus (floating origin) so Float32 precision never
+ * degrades far from (0,0).
+ *
+ * Unmapped tiles show a survey cross; their real geometry is built too, but flagged
+ * hidden, so only a radar wave (SCAN) briefly outlines it. Nothing is mapped by that.
  */
 export class ChunkPool {
   private entries = new Map<string, Entry>();
-  private material = new THREE.LineBasicMaterial({ vertexColors: true });
   /** Debug/admin: ignore fog of war. */
   private revealAll = false;
   /** Chunks rebuilt per frame, to avoid hitches when panning fast. */
-  maxBuildsPerFrame = 6;
+  maxBuildsPerFrame = 4;
+  /** Line vertices across all chunk meshes (frame-time HUD). */
+  lineVertices = 0;
 
-  constructor(private engine: SimulationEngine, private root: THREE.Object3D) {}
+  constructor(private engine: SimulationEngine, private root: THREE.Object3D, private lighting: TileLighting) {}
 
   update(focusX: number, focusY: number, radiusChunks: number): void {
     const fcx = Math.floor(focusX / CHUNK);
@@ -44,28 +52,37 @@ export class ChunkPool {
       if (stale && builds < this.maxBuildsPerFrame) {
         builds++;
         const chunk = this.engine.world.getChunk(cx, cy);
-        const geom = this.buildGeometry(chunk);
+        const { lines, fills } = this.buildGeometry(chunk);
         if (e) {
-          e.mesh.geometry.dispose();
-          e.mesh.geometry = geom;
+          this.lineVertices -= e.lines.geometry.getAttribute('position').count;
+          e.lines.geometry.dispose();
+          e.fills.geometry.dispose();
+          e.lines.geometry = lines;
+          e.fills.geometry = fills;
           e.chunk = chunk;
           e.version = chunk.version;
         } else {
-          const mesh = new THREE.LineSegments(geom, this.material);
-          mesh.frustumCulled = false;
-          this.root.add(mesh);
-          e = { mesh, chunk, version: chunk.version };
+          const group = new THREE.Group();
+          const l = new THREE.LineSegments(lines, this.lighting.lineMaterial);
+          const f = new THREE.Mesh(fills, this.lighting.fillMaterial);
+          l.frustumCulled = f.frustumCulled = false;
+          group.add(f, l);
+          this.root.add(group);
+          e = { group, lines: l, fills: f, chunk, version: chunk.version };
           this.entries.set(key, e);
         }
+        this.lineVertices += lines.getAttribute('position').count;
       } else if (!e) continue;
       else this.engine.world.getChunk(cx, cy); // keep visible chunks loaded
-      e.mesh.position.set(cx * CHUNK - focusX, 0, -(cy * CHUNK - focusY));
+      e.group.position.set(cx * CHUNK - focusX, 0, -(cy * CHUNK - focusY));
     }
 
     for (const [key, e] of this.entries) {
       if (!wanted.has(key)) {
-        this.root.remove(e.mesh);
-        e.mesh.geometry.dispose();
+        this.root.remove(e.group);
+        this.lineVertices -= e.lines.geometry.getAttribute('position').count;
+        e.lines.geometry.dispose();
+        e.fills.geometry.dispose();
         this.entries.delete(key);
       }
     }
@@ -77,42 +94,32 @@ export class ChunkPool {
     for (const e of this.entries.values()) e.version = -1; // force rebuild
   }
 
-  /** Day/night dimming of the whole terrain. */
-  setBrightness(f: number): void {
-    this.material.color.setScalar(f);
-  }
-
   get size(): number {
     return this.entries.size;
   }
 
-  private buildGeometry(c: WorldChunk): THREE.BufferGeometry {
+  private buildGeometry(c: WorldChunk): { lines: THREE.BufferGeometry; fills: THREE.BufferGeometry } {
     const reg = this.engine.registry;
     const b = new LineBatch();
+    const f = new FillBatch();
     for (let ly = 0; ly < CHUNK; ly++) {
       for (let lx = 0; lx < CHUNK; lx++) {
         const i = ly * CHUNK + lx;
-        if (!this.revealAll && c.fog[i] === 0) {
-          // Unexplored: a faint survey cross on the tile corner only.
-          b.color(0x2a3a52, 0.5).seg(lx - 0.08, 0, -ly, lx + 0.08, 0, -ly).seg(lx, 0, -ly - 0.08, lx, 0, -ly + 0.08);
-          continue;
-        }
+        const hidden = !this.revealAll && c.fog[i] === 0;
+        if (hidden) drawFogTile(b, lx, ly);
+        b.hide(hidden);
+        f.hide(hidden);
         const variant = hash3(7, c.cx * CHUNK + lx, c.cy * CHUNK + ly) & 0xff;
         for (let layer = 0; layer < 3; layer++) {
           const id = c.layers[layer][i];
           if (!id) continue;
           const def = reg.get(id);
-          if (def) drawTile(b, def.shape, def.color, lx, ly, variant);
+          if (def) drawTileVec(b, f, def.shape, def.color, lx, ly, variant);
         }
+        b.hide(false);
+        f.hide(false);
       }
     }
-    // Chunk border, faint, helps orientation.
-    b.color(0x3a5070, 0.6).loop([
-      [0, 0.002, 0],
-      [CHUNK, 0.002, 0],
-      [CHUNK, 0.002, -CHUNK],
-      [0, 0.002, -CHUNK],
-    ]);
-    return b.build();
+    return { lines: b.build(), fills: f.build() };
   }
 }

@@ -46,6 +46,8 @@ clock.tickHz = BALANCE.defaultTickHz;
 const scene = new ThreeScene($('#viewport'), engine);
 scene.centerOn(rover);
 const debuggerPanel = new DebuggerPanel($('#debugger'), engine);
+// Dev builds only: handles for browser-console debugging and screenshot scripts.
+if (import.meta.env.DEV) Object.assign(window, { __rover: { engine, scene, rover } });
 const compass = new CompassHud($<HTMLCanvasElement>('#compass'), engine);
 const goalsPanel = new GoalsPanel($('#goals'), engine);
 const upgradesPanel = new UpgradesPanel($('#upgrades'), engine, () => rover, (err, id) => {
@@ -245,6 +247,9 @@ window.addEventListener('keydown', (e) => {
   } else if (e.key === '.') stepInstruction();
   else if (e.key === 'v' || e.key === 'V') scene.setViewMode(scene.mode === 'angled' ? 'top' : 'angled');
   else if (e.key === 'f' || e.key === 'F') scene.centerOn(rover);
+  else if (e.key === 'b' || e.key === 'B') scene.setBloom(!scene.post.enabled);
+  else if (e.key === 'q' || e.key === 'Q') scene.rotate(1);
+  else if (e.key === 'e' || e.key === 'E') scene.rotate(-1);
 });
 
 // ---------------------------------------------------------------- loop
@@ -273,7 +278,7 @@ function frame(now: number): void {
     editor.setExecLine(running || rover.vm.state === CpuState.FAULT ? rover.vm.nextLine : 0);
     const sun = engine.sun;
     clockEl.textContent = `sol ${engine.env.dayNumber(engine.tick)} · ${sun.elevation > 0 ? '☀ day' : '☾ night'} · tick ${engine.tick}`;
-    compass.update(rover);
+    compass.update(rover, scene.yaw);
     updateBanner();
     goalsPanel.update();
     upgradesPanel.update();
@@ -294,7 +299,7 @@ function frame(now: number): void {
       hoverEl.textContent = `(${x}, ${y})  ${names.join(' · ')}`;
       hoverEl.style.display = '';
     } else hoverEl.style.display = 'none';
-    worldInfo.textContent = `Seed ${seed} · ${engine.world.loadedCount} chunks loaded · ${scene.chunkMeshCount} chunk meshes`;
+    worldInfo.textContent = `Seed ${seed} · ${engine.world.loadedCount} chunks loaded · ${scene.chunkMeshCount} chunk meshes · ${(scene.lineVertices / 1000).toFixed(0)}k line verts · ${scene.stats.fps.toFixed(0)} fps (${scene.stats.ms.toFixed(1)} ms)`;
   }
   requestAnimationFrame(frame);
 }
