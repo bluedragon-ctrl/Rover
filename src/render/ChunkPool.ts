@@ -25,10 +25,20 @@ export class ChunkPool {
   private entries = new Map<string, Entry>();
   /** Debug/admin: ignore fog of war. */
   private revealAll = false;
-  /** Chunks rebuilt per frame, to avoid hitches when panning fast. */
+  /**
+   * CPU budget for chunk rebuilds per frame (ms), to avoid hitches when panning fast.
+   * At least one chunk is built per frame; a chunk takes ~4 ms (render-budget test).
+   */
+  buildBudgetMs = 6;
+  /** Hard cap on rebuilds per frame. */
   maxBuildsPerFrame = 4;
   /** Line vertices across all chunk meshes (frame-time HUD). */
   lineVertices = 0;
+  /** Fill triangles across all chunk meshes. */
+  fillTriangles = 0;
+  /** Chunks rebuilt during the last update() and the CPU ms they took. */
+  lastBuilds = 0;
+  lastBuildMs = 0;
 
   constructor(private engine: SimulationEngine, private root: THREE.Object3D, private lighting: TileLighting) {}
 
@@ -37,6 +47,7 @@ export class ChunkPool {
     const fcy = Math.floor(focusY / CHUNK);
     const wanted = new Set<string>();
     let builds = 0;
+    let buildMs = 0;
     // Build nearest chunks first.
     const order: [number, number][] = [];
     for (let dy = -radiusChunks; dy <= radiusChunks; dy++) for (let dx = -radiusChunks; dx <= radiusChunks; dx++) order.push([dx, dy]);
@@ -49,12 +60,14 @@ export class ChunkPool {
       wanted.add(key);
       let e = this.entries.get(key);
       const stale = !e || !this.engine.world.hasChunk(cx, cy) || e.version !== e.chunk.version;
-      if (stale && builds < this.maxBuildsPerFrame) {
+      if (stale && builds < this.maxBuildsPerFrame && (builds === 0 || buildMs < this.buildBudgetMs)) {
         builds++;
         const chunk = this.engine.world.getChunk(cx, cy);
+        const t0 = performance.now();
         const { lines, fills } = this.buildGeometry(chunk);
+        buildMs += performance.now() - t0;
         if (e) {
-          this.lineVertices -= e.lines.geometry.getAttribute('position').count;
+          this.count(e, -1);
           e.lines.geometry.dispose();
           e.fills.geometry.dispose();
           e.lines.geometry = lines;
@@ -71,7 +84,7 @@ export class ChunkPool {
           e = { group, lines: l, fills: f, chunk, version: chunk.version };
           this.entries.set(key, e);
         }
-        this.lineVertices += lines.getAttribute('position').count;
+        this.count(e, 1);
       } else if (!e) continue;
       else this.engine.world.getChunk(cx, cy); // keep visible chunks loaded
       e.group.position.set(cx * CHUNK - focusX, 0, -(cy * CHUNK - focusY));
@@ -80,12 +93,19 @@ export class ChunkPool {
     for (const [key, e] of this.entries) {
       if (!wanted.has(key)) {
         this.root.remove(e.group);
-        this.lineVertices -= e.lines.geometry.getAttribute('position').count;
+        this.count(e, -1);
         e.lines.geometry.dispose();
         e.fills.geometry.dispose();
         this.entries.delete(key);
       }
     }
+    this.lastBuilds = builds;
+    this.lastBuildMs = buildMs;
+  }
+
+  private count(e: Entry, sign: 1 | -1): void {
+    this.lineVertices += sign * e.lines.geometry.getAttribute('position').count;
+    this.fillTriangles += (sign * e.fills.geometry.getAttribute('position').count) / 3;
   }
 
   setRevealAll(v: boolean): void {
@@ -98,7 +118,8 @@ export class ChunkPool {
     return this.entries.size;
   }
 
-  private buildGeometry(c: WorldChunk): { lines: THREE.BufferGeometry; fills: THREE.BufferGeometry } {
+  /** Line + fill geometry for one chunk (public for the geometry budget test). */
+  buildGeometry(c: WorldChunk): { lines: THREE.BufferGeometry; fills: THREE.BufferGeometry } {
     const reg = this.engine.registry;
     const b = new LineBatch();
     const f = new FillBatch();

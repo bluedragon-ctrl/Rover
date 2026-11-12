@@ -17,7 +17,7 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | M5 | Tools, cargo, spectrometer, science, first goals | ✅ done |
 | M6 | Save/load + autosave, storyteller with prerequisites & teaching events, subsystem damage, material repairs, admin console | ✅ done |
 | M7 | Upgrades bought with credits, delivered as supply crates, seismic scanner, save v2 | ✅ done |
-| **M8** | **Visual overhaul (SPEC §7)** | 🚧 in progress: asset preview, indicator lamps, **game renderer switched to v2**; ⏭ next: owner playtest of the new renderer, then frame-time baseline + LOD |
+| **M8** | **Visual overhaul (SPEC §7)** | 🚧 in progress: asset preview, indicator lamps, **game renderer switched to v2**, frame-time HUD + geometry baseline; ⏭ next: owner GPU numbers (P HUD), then LOD by zoom |
 | M8.1 | Radar `SCAN` vs. light-limited operator view; headlight cone; `@HEADING` | ✅ done |
 | Flash bytes | Program size in machine-code bytes instead of lines (SPEC §5.7) | ✅ core done; editor byte gutter awaiting preview approval |
 | **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | 📝 designed; ⏭ next after M8; photo POC in `preview.html?photos=1` |
@@ -100,10 +100,9 @@ ore mounds (new `mound` shape), buried silicon crystals; **indicator lamps** `@I
       `hidden`** (new `hidden` vertex attribute in `LineBatch` / `FillBatch`), discarded by
       the shader except under a radar wave. v1 `drawTile` / `buildRoverMesh` removed.
       Dev builds expose `window.__rover = { engine, scene, rover }` for console/screenshots.
-      The world-info line shows chunk meshes, line vertices and fps.
+      The world-info line shows fps (details in the frame-time HUD, P).
 - [ ] Owner playtest of the switched renderer (feel of pan/orbit defaults, start zoom 14,
-      bloom strength, dust). Cost note: hidden geometry roughly doubles line vertices in
-      unexplored areas (~250k line vertices at the default view, 25 chunks).
+      bloom strength, dust). Cost: see the geometry baseline below (hidden geometry +14%).
 
 Remaining:
 
@@ -111,17 +110,26 @@ Remaining:
 Everything lives in `src/render/` (the renderer only reads the simulation), so gameplay
 tests must stay untouched. Do it in small PRs, checking frame time at each step.
 
-- [ ] **Frame-time HUD** (toggle): fps, ms/frame, chunk meshes, line vertices. Baseline first.
-      (Partly done: the world-info line under the viewport shows all four; no toggle yet,
-      no baseline measured on real GPUs.)
+- [x] **Frame-time HUD** (P toggles, `?perf=1`, remembered): fps, avg / p95 / worst frame
+      ms, CPU ms inside `render()`, draw calls, triangles, lines, chunk meshes, line verts,
+      fill tris, chunk rebuilds per frame and their ms, canvas size, bloom (`FrameStats`,
+      `PerfHud`). Low CPU ms with a long frame ⇒ GPU-bound.
+- [x] **Geometry baseline** (`tests/render-budget.test.ts`, headless, seed 1, 5×5 chunks):
+      179k line verts and 72k fill tris of real geometry; with fog of war 204k (the hidden
+      geometry is the real tiles, so it only adds the survey crosses, +14%, not ×2 as
+      estimated earlier). Budgets: <12k line verts and <4.5k fill tris per chunk. A chunk
+      build takes ~4 ms, so rebuilds are now time-budgeted (`buildBudgetMs` 6, at least one
+      per frame) instead of a flat 4 per frame (up to ~16 ms hitches while panning).
+- [ ] **Baseline on real GPUs** (owner): note the HUD numbers at the default view, zoomed
+      out to the max, and at night, on a desktop and a laptop. Decide LOD from that.
 - [x] **Bloom:** `PostFx` (threshold bloom keeps the grid crisp), B toggles it.
 - [ ] **Fat lines:** `LineSegments2` + `LineMaterial` for rover, ore, crates and FX;
       width scales with zoom. Keep 1 px for the terrain grid (cost).
 - [ ] **LOD by zoom:** far = grid + silhouettes; near = pebbles, rock strata, detailed rover
       (wheels turning while driving, suspension bounce, panel hinges, dish ribs).
 - [ ] **Zoom range** 0.15×–8×, zoom to cursor; far zoom switches to a minimap-like style.
-- [ ] **Camera:** optional perspective mode, smooth follow, rotate with right-drag (then
-      the compass must rotate too).
+- [x] **Camera:** perspective orbit camera, smooth follow, rotate with right-drag; the
+      compass rotates with it (done in the renderer switch).
 - [ ] **Atmosphere:** day/night colour grading (not just dimming), dust particles,
       animated vents and crates, optional CRT/scanline pass.
 - [ ] Keep `VectorFactory.ts` as the single place shapes are defined.
@@ -263,3 +271,4 @@ window with a fixed dish?
 | 2026-11-12 | `ccr-27c44841-89sznb` | Flash measured in machine-code bytes (SPEC §5.7): encoding table, 128/192/256 B, upload cost per byte, Reference tab; editor byte gutter in preview. |
 | 2026-11-12 | `ccr-31b53af7-npq5g8` | M9 designed (SPEC §3.8 v1.5): byte downlink, `LOG` debug channel, admin-only debugger, dumps/`BRK`, `@POST`, science recorder, spectra and camera photos with upgrade tiers; photo POC `preview.html?photos=1`; multiple rovers renumbered to M10. |
 | 2026-11-12 | `ccr-a25966c0-1wr43t` | M8: game renderer switched to the v2 assets (CameraRig, PostFx bloom, TileLighting, rover rig + animator, dust/fog); radar wave outlines unmapped terrain via hidden chunk geometry; compass rotates with the camera; Q/E/B keys; v1 shapes removed. |
+| 2026-11-12 | `ccr-a25966c0-1wr43t` (2) | M8: frame-time HUD (P, `?perf=1`: frame ms avg/p95/max, render CPU ms, draw calls, geometry counts); headless geometry budget test (179k/204k line verts for 25 chunks, hidden geometry +14%); chunk rebuilds time-budgeted. |
