@@ -83,23 +83,30 @@ export class ChunkedWorld {
     return this.getChunk(cx, cy).fog[ly * CHUNK + lx] !== 0;
   }
 
-  /** Mark all tiles within `radius` (Euclidean) of (x, y) as mapped. */
-  revealCircle(x: number, y: number, radius: number): void {
-    const r2 = radius * radius + radius; // slightly rounder discs
-    for (let dy = -radius; dy <= radius; dy++) {
-      for (let dx = -radius; dx <= radius; dx++) {
-        if (dx * dx + dy * dy > r2) continue;
-        const { cx, cy, lx, ly } = worldToChunk(x + dx, y + dy);
-        const c = this.getChunk(cx, cy);
-        const i = ly * CHUNK + lx;
-        if (c.fog[i] === 0) {
-          c.fog[i] = 1;
-          c.explored = true;
-          this.mappedTiles++;
-          c.version++;
-        }
-      }
+  /** Mark one tile as mapped. */
+  revealTile(x: number, y: number): void {
+    const { cx, cy, lx, ly } = worldToChunk(x, y);
+    const c = this.getChunk(cx, cy);
+    const i = ly * CHUNK + lx;
+    if (c.fog[i] === 0) {
+      c.fog[i] = 1;
+      c.explored = true;
+      this.mappedTiles++;
+      c.version++;
     }
+  }
+
+  /** Mark all tiles within `radius` (Euclidean, r*r + r: slightly rounder discs) of (x, y) as mapped. */
+  revealCircle(x: number, y: number, radius: number): void {
+    const r2 = radius * radius + radius;
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) if (dx * dx + dy * dy <= r2) this.revealTile(x + dx, y + dy);
+    }
+  }
+
+  /** Mark (x + dx, y + dy) for every offset as mapped (e.g. a headlight cone). */
+  revealTiles(x: number, y: number, offsets: ReadonlyArray<readonly [number, number]>): void {
+    for (const [dx, dy] of offsets) this.revealTile(x + dx, y + dy);
   }
 
   /** Keep chunks around (x, y) loaded. */

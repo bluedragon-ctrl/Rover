@@ -39,7 +39,7 @@ export class UpgradesPanel {
     const u = this.unit();
     const e = this.engine;
     const c = u.chassis;
-    const head = `◆ <b>${e.credits}</b> credits · ${u.name}: Flash ${c.flashLines} · r0–r${c.registers - 1} · ${c.cyclesPerTick} cycles/tick · cargo ${c.cargoSlots} · battery ${c.batteryCapacity / 1000}% · LIDAR ${c.sensorRange} · solar ${c.solarPercent}% · TOOL_3 ${c.tools[3] ?? 'empty'}`;
+    const head = `◆ <b>${e.credits}</b> credits · ${u.name}: Flash ${c.flashLines} · r0–r${c.registers - 1} · ${c.cyclesPerTick} cycles/tick · cargo ${c.cargoSlots} · battery ${c.batteryCapacity / 1000}% · radar ${c.sensorRange} · solar ${c.solarPercent}% · TOOL_3 ${c.tools[3] ?? 'empty'}`;
     if (this.header.innerHTML !== head) this.header.innerHTML = head;
     for (const up of UPGRADES) {
       const cell = this.cells.get(up.id)!;

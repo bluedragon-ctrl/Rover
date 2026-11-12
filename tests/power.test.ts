@@ -134,14 +134,15 @@ describe('comms', () => {
 });
 
 describe('night & fog', () => {
-  it('sensor range drops at night and the headlight restores part of it', () => {
+  it('at night the operator view shrinks to the ring; the headlight adds a cone; radar is unaffected', () => {
     const eng = new SimulationEngine({ seed: 1 });
     const u = eng.spawnUnit('t');
     eng.upload(u, 'SLEEP 10000', factory);
     while (eng.sun.elevation > 0) eng.advanceTick();
-    expect(eng.sensorRange(u)).toBe(BALANCE.nightSensorRange);
+    expect(eng.viewShape(u)).toEqual({ radius: BALANCE.nightSensorRange, cone: -1 });
     u.headlight = 1;
-    expect(eng.sensorRange(u)).toBe(BALANCE.headlightSensorRange);
+    expect(eng.viewShape(u)).toEqual({ radius: BALANCE.nightSensorRange, cone: u.heading });
+    expect(eng.sensorRange(u)).toBe(u.chassis.sensorRange);
   });
 
   it('reveals fog around the rover and keeps explored chunks', () => {

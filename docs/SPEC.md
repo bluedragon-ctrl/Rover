@@ -64,7 +64,7 @@ Each rover owns a copy of its chassis stats; upgrades (§3.7) modify that copy.
 | Subsystems | solar array 100, dish 100 | `@SOLAR_HEALTH`, `@ANTENNA_HEALTH`. **[M6]** |
 | Cargo | 4 slots | Item IDs (= tile IDs). **[M5]** |
 | Hardpoints | `TOOL_0` drill, `TOOL_1` grabber, `TOOL_2` spectrometer, `TOOL_3` empty | **[M5]** |
-| Sensor range | 6 tiles | 1 at night, 5 at night with headlight. **[M4]** |
+| Sensor range | 6 tiles | `SCAN` radar, every direction, day and night. The operator's *view* needs light: 6 by day, 1-tile ring at night plus the headlight cone (§3.1.1). **[M4, M8.1]** |
 
 ### 3.1 Energy costs (defaults)
 
@@ -75,10 +75,36 @@ Each rover owns a copy of its chassis stats; upgrades (§3.7) modify that copy.
 | `STEP` onto `ROUGH_GRAVEL` | 6 / tile | 120 / tile |
 | `STEP` onto `ACID_VENT` | 4 / tile | 60 / tile + 10 hull damage |
 | `SCAN` | 1 | 10 |
+| Turn in place (`@HEADING` write) | instant | 5 |
 | Headlight on | per tick | 8 |
 | Actuator moving (array deploy, panel or dish slew) | per tick, each | 1 |
 | `@TX_DATA` packet | instant | 30 |
 | Solar charge | per tick | `floor(60 × SUN_LIGHT/100 × cos(panel − sun azimuth))`, only when fully deployed |
+
+### 3.1.1 Radar, operator view and the headlight **[M8.1]**
+
+The rover and the player "see" differently:
+
+* **`SCAN` is radar.** It reaches the chassis sensor range (6 tiles; 8 with the
+  Long-range radar upgrade) in every direction, by day and by night. It needs no light
+  and does not turn the rover. Firmware can always navigate.
+* **The operator view needs light.** What the player sees (and what gets permanently
+  mapped in the fog of war, and lit by the renderer) is one shape, `src/core/sensors.ts`:
+
+| Condition | Operator sees |
+| :--- | :--- |
+| Day (`@SUN_ELEV > 0`) | Disc of radius 6 (`dx² + dy² ≤ r² + r`) around the rover. |
+| Night | The 1-tile ring around the rover (radius-1 disc, diagonals included). |
+| Night, `@HEADLIGHT 1` (powered) | Ring **plus a forward cone** along `@HEADING`: `1 ≤ forward ≤ 5`, `|lateral| ≤ 1` for `forward ≤ 2`, `≤ 2` beyond (21 tiles). |
+
+* So at night a player cannot look at unexplored ground and type `STEP NORTH 5`: they need
+  the headlight pointed that way, already-mapped terrain, or firmware that uses `SCAN`.
+* Each `SCAN` also sends a brief red **radar wave** around the rover out to the radar
+  range: tiles flash as the front passes, then fade. It is a glimpse for the player only;
+  it maps nothing. (`SCAN` still returns just the first hit along `dir`.)
+* The rover faces `@HEADING`. `STEP` and directional tools (`ACT TOOL_n dir`) turn it;
+  writing `@HEADING` turns it in place (5 energy, value wraps mod 4, so `ADD @HEADING 1`
+  turns right). Use it to aim the headlight.
 
 ### 3.2 CPU states
 
@@ -235,7 +261,7 @@ on pickup and needs no cargo slot. Ports: `@DROPS` (landed crates waiting), `@DR
 | Cargo racks | 35 | 6 cargo slots | – |
 | Battery pack | 60 | Capacity 150 000 (`@BAT` stays a percentage) | – |
 | High-efficiency cells | 50 | Solar output +25 % | – |
-| Long-range LIDAR | 40 | Daytime SCAN range 8 | – |
+| Long-range radar | 40 | SCAN range 8, day and night | – |
 | Hull plating | 60 | Squall hull wear halved | – |
 | Seismic scanner | 80 | Fits `TOOL_3`: `ACT TOOL_3 dir` finds the nearest ore vein ≤ 12 tiles away *through walls* (4 ticks, 150 energy) → `@SEISMIC_TYPE`, `@SEISMIC_DIST` | – |
 
@@ -316,7 +342,7 @@ friction, but the set should stay small enough to learn in one sitting.
 | | `CALL label [args...]` | 1 cycle | Pushes args in order to the data stack, return address to the call stack. |
 | | `RET` | 1 cycle | Pop call stack. Underflow → `FAULT`. |
 | Hardware | `SLEEP ticks` | blocks `ticks` | `ticks <= 0` just ends the tick. |
-| | `SCAN dir -> type dist` | blocks 1 | Ray across layers 1–3 up to sensor range. Returns the first hit's tile ID and distance, or `NONE` and `0`. |
+| | `SCAN dir -> type dist` | blocks 1 | Radar ray across layers 1–3 up to the sensor range, day or night (§3.1.1; does not turn the rover). Returns the first hit's tile ID and distance, or `NONE` and `0`. |
 | | `STEP dir [tiles=1]` | blocks per tile | Moves tile by tile; aborts with `ERR_BLOCKED`, `ERR_LOW_POWER` or `ERR_HAZARD` (moved onto a hazard). |
 | | `ACT tool [arg]` | tool-defined | Fire the tool in hardpoint `tool` (§3.3.2). |
 | | `PEEK slot -> dst` | 1 cycle | Item ID in cargo `slot` (0 = empty); bad slot → `ERR_INVALID`. |
@@ -349,9 +375,10 @@ compute instructions leave it alone.
 | `@GROUND_HAZARD` | R | 0–2 | M1–M3 |
 | `@LIGHT_COLOR` | RW | 0–4 | M1–M3 |
 | `@LIGHT_BLINK` | RW | 0/1 | M1–M3 |
-| `@HEADLIGHT` | RW | 0/1 | M4 (costs energy, extends night range) |
+| `@HEADLIGHT` | RW | 0/1 | M4 (costs energy; M8.1: lights a forward cone for the operator at night) |
+| `@HEADING` | RW | 0–3 (`NORTH`…`WEST`); write turns in place, wraps mod 4 | M8.1 |
 | `@IND1`, `@IND2`, `@IND3` | RW | 0–4 (`OFF`…`AMBER`) | M8 (indicator lamps, visual only) |
-| `@SENSOR_RANGE` | R | current SCAN range | M4 |
+| `@SENSOR_RANGE` | R | SCAN (radar) range, any direction, day and night | M4, M8.1 |
 | `@SUN_AZIMUTH`, `@SUN_ELEV`, `@SUN_LIGHT` | R | 0–359, −70..70, 0–100 | M4 |
 | `@SOLAR_OPEN` | RW | 0/1 | M4 |
 | `@SOLAR_ANGLE` | RW | 0–359 (write = target, read = current) | M4 |

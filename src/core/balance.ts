@@ -25,9 +25,14 @@ export const BALANCE = {
   actuatorEnergyPerTick: 1,
   headlightPerTick: 8,
 
-  // Sensors
-  nightSensorRange: 1,
-  headlightSensorRange: 5,
+  // Operator view (what the player sees / maps; SCAN is radar: chassis.sensorRange, any light)
+  dayViewRange: 6, // daylight: disc around the rover
+  nightSensorRange: 1, // night: ring around the rover (work lights)
+  headlightSensorRange: 5, // headlight cone length (tiles ahead)
+  headlightNearLength: 2, // first tiles of the cone ...
+  headlightNearSpread: 1, // ... are 3 wide (|lateral| <= 1)
+  headlightFarSpread: 2, // the rest is 5 wide
+  turnEnergy: 5, // @HEADING write: turn in place
 
   // Comms
   txEnergy: 30,
