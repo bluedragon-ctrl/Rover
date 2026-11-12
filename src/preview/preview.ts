@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { createDefaultRegistry, T } from '../core/WorldRegistry';
 import { hash3 } from '../core/rng';
-import { BALANCE, CHASSIS_MK1 } from '../core/balance';
+import { BALANCE } from '../core/balance';
 import { CameraRig } from '../render/CameraRig';
 import { PostFx } from '../render/PostFx';
 import { RoverAnimator, type RoverPose } from '../render/RoverRig';
@@ -263,7 +263,7 @@ function frame(now: number): void {
   state.angle += d * Math.min(1, dt * 10);
 
   // Same shape as the simulation (src/core/sensors.ts): day disc, night ring + cone.
-  const sensor = light > 0 ? CHASSIS_MK1.sensorRange : BALANCE.nightSensorRange;
+  const sensor = light > 0 ? BALANCE.dayViewRange : BALANCE.nightSensorRange;
   rover.sensorRing.scale.setScalar(sensor + 0.5);
   const sunBearing = (t * 20) % 360;
   const blinkOff = state.cpu === 3 || (state.led === 1 && Math.floor(now / 300) % 2 === 1);

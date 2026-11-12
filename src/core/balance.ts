@@ -25,8 +25,9 @@ export const BALANCE = {
   actuatorEnergyPerTick: 1,
   headlightPerTick: 8,
 
-  // Sensors
-  nightSensorRange: 1, // always-sensed ring around the rover at night
+  // Operator view (what the player sees / maps; SCAN is radar: chassis.sensorRange, any light)
+  dayViewRange: 6, // daylight: disc around the rover
+  nightSensorRange: 1, // night: ring around the rover (work lights)
   headlightSensorRange: 5, // headlight cone length (tiles ahead)
   headlightNearLength: 2, // first tiles of the cone ...
   headlightNearSpread: 1, // ... are 3 wide (|lateral| <= 1)

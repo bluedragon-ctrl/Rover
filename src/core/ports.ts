@@ -11,7 +11,6 @@ export interface PortContext {
   world: ChunkedWorld;
   registry: WorldRegistry;
   sensorRange(u: Unit): number;
-  sideRange(u: Unit): number;
   turn(u: Unit, dir: number): void;
   alert(): { type: number; eta: number };
   drops(): { x: number; y: number }[];
@@ -60,10 +59,9 @@ export const PORTS: PortDef[] = [
   { name: 'DROP_Y', description: 'Y of the nearest landed supply crate (own Y if none)', read: (u, c) => c.nearestDrop(u)?.y ?? u.y },
   {
     name: 'SENSOR_RANGE',
-    description: `SCAN range ahead (along @HEADING): ${CHASSIS_MK1.sensorRange} by day, ${BALANCE.nightSensorRange} at night, ${BALANCE.headlightSensorRange} at night with @HEADLIGHT`,
+    description: `SCAN range in tiles (radar: every direction, day and night; ${CHASSIS_MK1.sensorRange} on Mk-I)`,
     read: (u, c) => c.sensorRange(u),
   },
-  { name: 'SENSOR_SIDE', description: `SCAN range in the other three directions: ${CHASSIS_MK1.sensorRange} by day, ${BALANCE.nightSensorRange} at night`, read: (u, c) => c.sideRange(u) },
   {
     name: 'HEADING',
     description: `Direction the rover faces (NORTH..WEST). STEP turns it; write to turn in place (${BALANCE.turnEnergy} energy, wraps mod 4). The headlight shines this way`,
@@ -118,7 +116,7 @@ export const PORTS: PortDef[] = [
   ),
   {
     name: 'HEADLIGHT',
-    description: `Headlight 0/1 (${BALANCE.headlightPerTick} energy/tick): at night lights a cone ${BALANCE.headlightSensorRange} tiles ahead (3 wide, then 5), so SCAN along @HEADING reaches ${BALANCE.headlightSensorRange} instead of ${BALANCE.nightSensorRange}`,
+    description: `Headlight 0/1 (${BALANCE.headlightPerTick} energy/tick): at night lights a cone ${BALANCE.headlightSensorRange} tiles along @HEADING (3 wide, then 5) so the operator can see and map it. SCAN does not need it`,
     min: 0,
     max: 1,
     read: (u) => u.headlight,

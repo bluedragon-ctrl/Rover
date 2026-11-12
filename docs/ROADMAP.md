@@ -18,27 +18,30 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | M6 | Save/load + autosave, storyteller with prerequisites & teaching events, subsystem damage, material repairs, admin console | ✅ done |
 | M7 | Upgrades bought with credits, delivered as supply crates, seismic scanner, save v2 | ✅ done |
 | **M8** | **Visual overhaul (SPEC §7)** | 🚧 in progress: asset preview + indicator lamps done; ⏭ next: switch the game renderer |
-| M8.1 | Directional headlight: a forward cone is the night sensor rule; `@HEADING`, `@SENSOR_SIDE` | ✅ done |
+| M8.1 | Radar `SCAN` vs. light-limited operator view; headlight cone; `@HEADING` | ✅ done |
 | M9 | Multiple rovers (after single-rover tuning) | planned |
 
-## Done: M8.1 — Directional headlight
+## Done: M8.1 — Radar vs. operator view, directional headlight
 
-At night the rover senses the 1-tile ring; `@HEADLIGHT 1` adds a forward cone
-(`1 ≤ forward ≤ 5`, 3 wide for 2 tiles then 5 wide, 21 tiles). Day stays a 6-tile disc.
-Decision 4 → **(b)**: `SCAN` no longer turns the rover; `@HEADING` (RW, 5 energy per turn,
-wraps mod 4) turns in place. SPEC §3.1.1.
+Decided in review: **the rover's `SCAN` is radar** (chassis range, every direction, day and
+night, no light needed); **only the player's view is impaired at night**. The operator sees
+(maps, and the renderer lights) a 6-tile disc by day; at night the 1-tile ring, plus with
+`@HEADLIGHT 1` a forward cone (`1 ≤ forward ≤ 5`, 3 wide for 2 tiles then 5 wide). So at
+night the player cannot just look and type `STEP NORTH 5`. SPEC §3.1.1.
 
-- [x] One shared shape in `src/core/sensors.ts` (`inDisc`, `inCone`, `coneOffsets`,
-      `rayRange`); engine `sensorShape` / `isSensed` / `scanRange`; reveal key includes the
-      cone heading.
+- [x] One shared view shape in `src/core/sensors.ts` (`inDisc`, `inCone`, `coneOffsets`);
+      engine `viewShape` / `isVisible`; reveal key includes the cone heading.
 - [x] `ChunkedWorld.revealTile` / `revealTiles`.
-- [x] SCAN uses the sensed range in its direction; `@SENSOR_RANGE` = ahead, new `@SENSOR_SIDE`.
-- [x] Shipped firmware unchanged: Explorer/Prospector only act on adjacent hits, which the
-      ring covers (tested through a night).
+- [x] `SCAN` = radar at `chassis.sensorRange` (no light, does not turn the rover);
+      `@SENSOR_RANGE` reports it. Day view is `BALANCE.dayViewRange` (the radar upgrade no
+      longer widens the daytime map). Upgrade renamed *Long-range radar* (id `LIDAR_8` kept).
+- [x] `@HEADING` port (RW, 5 energy per turn, wraps mod 4) to aim the headlight.
+- [x] Shipped firmware unchanged (radar works at night).
 - [x] Tests (`tests/headlight.test.ts`): cone shape and rotation, ring without headlight,
-      cone reveal per heading, SCAN off-heading, `@HEADING`, day disc, firmware, save round trip.
+      cone reveal per heading, radar at night vs. unmapped walls, `@HEADING`, day disc,
+      firmware, save round trip.
 - [x] `TileLighting` cone numbers injected from `HEADLIGHT_CONE`; preview and the old
-      renderer's sensor ring show the night ring, not a 5-tile circle.
+      renderer's ring show the operator view.
 - No save format change (heading was already saved; the reveal key is derived).
 
 ## M8 — Visual overhaul (detailed plan)
@@ -110,10 +113,11 @@ tests must stay untouched. Do it in small PRs, checking frame time at each step.
 2. Bloom on by default with a toggle (as in the preview) — confirm once measured in-game.
 3. Upgrade prices: fine for now? (A Prospector run earns ~75 credits in 1.5 sols; the
    whole catalogue costs 745.)
-4. ~~M8.1 SCAN vs. cone~~ → (b): `SCAN` does not turn; off-heading night scans reach the
-   ring only; `@HEADING` port turns in place (5 energy). Revisit the turn cost after play.
-5. Explorer firmware toggles `@HEADLIGHT` 0→1 every loop at night (reveal can miss the
+4. ~~M8.1 SCAN vs. cone~~ → `SCAN` is radar (ignores light, does not turn); the cone only
+   limits what the **player** sees at night. `@HEADING` aims the headlight (5 energy).
+5. Explorer firmware toggles `@HEADLIGHT` 0→1 every loop at night (mapping can miss the
    cone on a tick boundary). Harmless now; fix when Flash allows.
+6. Should a radar `SCAN` hit mark the hit tile on the map (as a blip, not full terrain)?
 
 ## Backlog / ideas
 
@@ -140,4 +144,4 @@ tests must stay untouched. Do it in small PRs, checking frame time at each step.
 | 2026-11-12 | PR #3 | M6: save/load + autosave, storyteller events, subsystem damage, admin console; then event prerequisites + teaching events and material-consuming repairs (review feedback). |
 | 2026-11-12 | (next PR) | M7: upgrades via supply crates, seismic scanner, Fetch template, save v2 + migration. |
 | 2026-11-12 | `ccr-685ffa2c-m6av8z` | M8 asset preview page (v2 vector assets, tile lighting, bloom, orbit camera, accordion solar wings, volcano vents, ore mounds, buried crystals); indicator lamps `@IND1..3` (save v3); M8.1 directional headlight planned. |
-| 2026-11-12 | `ccr-4522f0b5-0m8b66` | M8.1 directional headlight: shared sensor shape (`sensors.ts`), night ring + forward cone, `SCAN` no longer turns, `@HEADING` / `@SENSOR_SIDE` ports, TileLighting uses the shared cone. |
+| 2026-11-12 | `ccr-4522f0b5-0m8b66` | M8.1: `SCAN` is radar (day and night); the player's view needs light (night ring + headlight cone, shared `sensors.ts`, TileLighting); `@HEADING` port; Long-range radar upgrade. |

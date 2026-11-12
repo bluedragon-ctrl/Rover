@@ -13,7 +13,7 @@ import { CpuState, DIR_VEC, Layer, Status } from './types';
 import { Unit } from './Unit';
 import { compile, type CompileResult, type Instr } from './vm/Compiler';
 import type { VmHost } from './vm/RoverVM';
-import { coneOffsets, rayRange, shapeContains, type SensorShape } from './sensors';
+import { coneOffsets, shapeContains, type SensorShape } from './sensors';
 import { createDefaultRegistry, T, type WorldRegistry } from './WorldRegistry';
 
 export interface EngineOptions {
@@ -95,7 +95,6 @@ export class SimulationEngine {
       world: this.world,
       registry: this.registry,
       sensorRange: (u) => this.sensorRange(u),
-      sideRange: (u) => this.sideRange(u),
       turn: (u, dir) => this.turn(u, dir),
       alert: () => this.director.alert(this.tick),
       drops: () => this.drops.filter((d) => d.landed),
@@ -149,30 +148,25 @@ export class SimulationEngine {
     return Math.floor((signalStrength(u.antennaAngle, this.orbitAzimuth) * u.antennaHealth) / 100);
   }
 
-  /** What `u` senses right now (shared with the renderer's tile lighting; see sensors.ts). */
-  sensorShape(u: Unit): SensorShape {
-    if (this.sun.elevation > 0) return { radius: u.chassis.sensorRange, cone: -1 };
+  /**
+   * What the operator (player) sees around `u` right now: mapped into the fog of war and
+   * lit by the renderer (shared with TileLighting; see sensors.ts). Needs light: daylight,
+   * or at night the ring plus the headlight cone. The rover's own SCAN is radar and does
+   * not depend on this.
+   */
+  viewShape(u: Unit): SensorShape {
+    if (this.sun.elevation > 0) return { radius: BALANCE.dayViewRange, cone: -1 };
     return { radius: BALANCE.nightSensorRange, cone: u.headlight && u.powered ? u.heading : -1 };
   }
 
-  /** Is the tile at offset (dx, dy) from `u` currently sensed? */
-  isSensed(u: Unit, dx: number, dy: number): boolean {
-    return shapeContains(this.sensorShape(u), dx, dy);
+  /** Can the operator see the tile at offset (dx, dy) from `u` right now? */
+  isVisible(u: Unit, dx: number, dy: number): boolean {
+    return shapeContains(this.viewShape(u), dx, dy);
   }
 
-  /** SCAN range along `dir` (default: ahead, along the heading). */
-  scanRange(u: Unit, dir = u.heading): number {
-    return rayRange(this.sensorShape(u), dir);
-  }
-
-  /** SCAN range ahead (@SENSOR_RANGE). */
+  /** SCAN (radar) range in tiles: any direction, day or night (@SENSOR_RANGE). */
   sensorRange(u: Unit): number {
-    return this.scanRange(u, u.heading);
-  }
-
-  /** SCAN range in the three other directions (@SENSOR_SIDE). */
-  sideRange(u: Unit): number {
-    return this.sensorShape(u).radius;
+    return u.chassis.sensorRange;
   }
 
   /** Turn in place (@HEADING write). Costs a little energy; no-op if already facing `dir`. */
@@ -296,7 +290,7 @@ export class SimulationEngine {
   }
 
   private revealAround(u: Unit): void {
-    const s = this.sensorShape(u);
+    const s = this.viewShape(u);
     const key = `${u.x},${u.y},${s.radius},${s.cone}`;
     if (key === u.lastRevealKey) return;
     u.lastRevealKey = key;
@@ -626,8 +620,8 @@ export class SimulationEngine {
           this.setStatus(u, Status.ERR_LOW_POWER);
           return [0, 0];
         }
-        // SCAN does not turn the rover: at night only the heading is lit by the headlight.
-        const range = this.scanRange(u, dir);
+        // Radar: needs no light and does not turn the rover.
+        const range = this.sensorRange(u);
         this.drain(u, BALANCE.scanEnergy);
         const [dx, dy] = DIR_VEC[dir];
         let hit = 0;

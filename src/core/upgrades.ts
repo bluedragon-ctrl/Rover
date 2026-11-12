@@ -58,7 +58,7 @@ export const UPGRADES: UpgradeDef[] = [
   },
   { id: 'BATTERY_150', title: 'Battery pack', description: 'Battery capacity +50 % (@BAT is still 0–100 %).', cost: 60, apply: (c) => (c.batteryCapacity = 150_000) },
   { id: 'SOLAR_PLUS', title: 'High-efficiency cells', description: 'Solar output +25 %.', cost: 50, apply: (c) => (c.solarPercent = 125) },
-  { id: 'LIDAR_8', title: 'Long-range LIDAR', description: 'Daytime SCAN range 6 → 8 tiles.', cost: 40, apply: (c) => (c.sensorRange = 8) },
+  { id: 'LIDAR_8', title: 'Long-range radar', description: 'SCAN range 6 → 8 tiles, day and night.', cost: 40, apply: (c) => (c.sensorRange = 8) },
   { id: 'ARMOR', title: 'Hull plating', description: 'Squalls wear the hull half as fast.', cost: 60, apply: (c) => (c.hullArmor = 2) },
   {
     id: 'SEISMIC',

@@ -58,8 +58,9 @@ describe('M8.1 directional headlight', () => {
     const { eng, u, ox, oy } = nightRover();
     expect(eng.admin.teleport(u, ox, oy)).toBe(true);
     expect(mapped(eng, ox, oy).length).toBe(9);
-    expect(eng.sensorRange(u)).toBe(BALANCE.nightSensorRange);
-    expect(eng.sideRange(u)).toBe(BALANCE.nightSensorRange);
+    expect(eng.viewShape(u)).toEqual({ radius: BALANCE.nightSensorRange, cone: -1 });
+    // The rover's radar does not care about the dark.
+    expect(eng.sensorRange(u)).toBe(CHASSIS_MK1.sensorRange);
   });
 
   it('headlight reveals the ring plus the cone in the heading direction only', () => {
@@ -73,25 +74,27 @@ describe('M8.1 directional headlight', () => {
     expect(m).toContain('5,2');
     expect(m).not.toContain('-2,0');
     expect(m).not.toContain('0,2');
-    expect(eng.sensorRange(u)).toBe(BALANCE.headlightSensorRange);
-    expect(eng.sideRange(u)).toBe(BALANCE.nightSensorRange);
+    expect(eng.isVisible(u, 5, 0)).toBe(true);
+    expect(eng.isVisible(u, 0, 2)).toBe(false);
     // Turning re-reveals on the next tick (heading is part of the reveal key).
     u.heading = Dir.WEST;
     eng.advanceTick();
     expect(mapped(eng, ox, oy)).toContain('-5,0');
   });
 
-  it('SCAN does not turn the rover; at night only SCAN along the heading uses the headlight', () => {
+  it('SCAN is radar: full range in every direction at night, no headlight, no turning', () => {
     const { eng, u, ox, oy } = nightRover();
     eng.world.setTile(ox + 4, oy, Layer.OBSTACLE, T.CLIFF_WALL);
     eng.world.setTile(ox, oy + 4, Layer.OBSTACLE, T.CLIFF_WALL);
     eng.admin.teleport(u, ox, oy);
     u.heading = Dir.NORTH;
-    eng.upload(u, 'MOV @HEADLIGHT 1\nSCAN EAST -> r0 r1\nSCAN NORTH -> r2 r3\nSLEEP 100000', factory);
+    eng.upload(u, 'SCAN EAST -> r0 r1\nSCAN NORTH -> r2 r3\nSLEEP 100000', factory);
     for (let i = 0; i < 6; i++) eng.advanceTick();
     expect(u.heading).toBe(Dir.NORTH);
-    expect([u.vm.regs[0], u.vm.regs[1]]).toEqual([0, 0]); // EAST: ring only, wall unseen
+    expect([u.vm.regs[0], u.vm.regs[1]]).toEqual([T.CLIFF_WALL, 4]);
     expect([u.vm.regs[2], u.vm.regs[3]]).toEqual([T.CLIFF_WALL, 4]);
+    // ...but the operator has not seen those walls: they are outside the ring.
+    expect(eng.world.isMapped(ox + 4, oy)).toBe(false);
   });
 
   it('@HEADING turns in place for a little energy and wraps mod 4', () => {
@@ -101,23 +104,24 @@ describe('M8.1 directional headlight', () => {
     u.heading = Dir.NORTH;
     eng.upload(u, 'MOV @HEADLIGHT 1\nADD @HEADING 1\nMOV r2 @HEADING\nSCAN EAST -> r0 r1\nMOV @HEADING 7\nMOV r3 @HEADING\nSLEEP 100000', factory);
     const before = u.energy;
-    for (let i = 0; i < 4; i++) eng.advanceTick();
+    eng.advanceTick();
     expect(u.vm.regs[2]).toBe(Dir.EAST);
-    expect([u.vm.regs[0], u.vm.regs[1]]).toEqual([T.CLIFF_WALL, 4]);
+    eng.advanceTick(); // reveal follows the new heading on the next tick
+    expect(eng.world.isMapped(ox + 4, oy)).toBe(true);
+    for (let i = 0; i < 2; i++) eng.advanceTick();
     expect(u.vm.regs[3]).toBe(Dir.WEST);
     expect(u.heading).toBe(Dir.WEST);
     const spent = before - u.energy;
     expect(spent).toBeGreaterThanOrEqual(2 * BALANCE.turnEnergy + BALANCE.scanEnergy);
   });
 
-  it('day keeps the full circle in every direction', () => {
+  it('day: the operator sees the full disc in every direction', () => {
     const eng = new SimulationEngine({ seed: 7 });
     const u = eng.spawnUnit('t');
     expect(eng.sun.elevation).toBeGreaterThan(0);
+    expect(eng.viewShape(u)).toEqual({ radius: BALANCE.dayViewRange, cone: -1 });
+    expect(eng.world.isMapped(0, -BALANCE.dayViewRange)).toBe(true);
     expect(eng.sensorRange(u)).toBe(CHASSIS_MK1.sensorRange);
-    expect(eng.sideRange(u)).toBe(CHASSIS_MK1.sensorRange);
-    u.headlight = 1;
-    expect(eng.scanRange(u, Dir.SOUTH)).toBe(CHASSIS_MK1.sensorRange);
   });
 
   it('shipped firmware compiles and the Explorer keeps driving through a night', () => {

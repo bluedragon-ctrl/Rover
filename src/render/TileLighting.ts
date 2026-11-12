@@ -10,7 +10,7 @@ export const MAX_LIGHTS = 4;
  * Every terrain vertex carries the centre of the tile it belongs to (`tile` attribute,
  * chunk-local x/z). The vertex shader moves that centre into scene space and decides how
  * lit the whole tile is: daylight, a rover's sensor disc, or its headlight cone. Tiles
- * therefore light up as crisp cells, the same cells the simulation reveals: the disc and
+ * therefore light up as crisp cells, the same cells the operator sees and maps: the disc and
  * cone here mirror `src/core/sensors.ts` (cone numbers are injected from HEADLIGHT_CONE).
  *
  * At night unlit tiles fade to a cold, desaturated grey ("remembered terrain") instead of

@@ -2,10 +2,11 @@ import { BALANCE } from './balance';
 import { DIR_VEC } from './types';
 
 /**
- * The one sensor shape (docs/SPEC.md §3.2). Used by the simulation for fog reveal and
- * SCAN, and by the renderer's TileLighting, so what is lit is exactly what is sensed.
+ * The operator's view shape (docs/SPEC.md §3.1.1): what the player sees around a rover.
+ * Used by the simulation for fog-of-war reveal and by the renderer's TileLighting, so what
+ * is lit is exactly what gets mapped. (The rover's SCAN is radar and ignores light.)
  *
- * Day: a disc of the chassis sensor range. Night: the 1-tile ring, plus (headlight on)
+ * Day: a disc of `dayViewRange`. Night: the 1-tile ring, plus (headlight on)
  * a forward cone: `1 <= forward <= length`, `|lateral| <= nearSpread` for the first
  * `nearLength` tiles and `<= farSpread` beyond.
  */
@@ -23,7 +24,7 @@ export const HEADLIGHT_CONE: ConeShape = {
   farSpread: BALANCE.headlightFarSpread,
 };
 
-/** What a rover senses right now. `cone` is the heading (0–3) or -1 for none. */
+/** What the operator sees around a rover right now. `cone` is the heading (0–3) or -1 for none. */
 export interface SensorShape {
   radius: number;
   cone: number;
@@ -58,12 +59,4 @@ export function coneOffsets(dir: number): ReadonlyArray<readonly [number, number
     coneCache[dir] = c;
   }
   return c;
-}
-
-/** How far a straight SCAN ray in `dir` stays inside the shape. */
-export function rayRange(s: SensorShape, dir: number): number {
-  const [dx, dy] = DIR_VEC[dir];
-  let d = 0;
-  while (shapeContains(s, dx * (d + 1), dy * (d + 1))) d++;
-  return d;
 }
