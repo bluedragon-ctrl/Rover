@@ -485,9 +485,13 @@ Rules:
   `PROG_DONE`, `PROG_FAULT`, `PROG_HALTED`) and `@PROG_RESULT` (the value of `END value`).
 * **Program faults** return to the firmware with `PROG_FAULT` instead of a watchdog
   reboot. `BRK` in a program halts only the program; *Continue* resumes it.
-* **Default firmware stays small:** housekeeping, give the program time slices (none while
-  charging), log the outcome (`PROG done = 3`), acknowledge. Anything smarter is the
-  player's to add by editing the firmware.
+* **Default firmware = a small core + optional comfort features.** The core: housekeeping,
+  give the program time slices (none while charging), log the outcome (`PROG done = 3`),
+  acknowledge. On top, beginner-friendly features in clearly marked, removable blocks,
+  e.g. indicator lamps showing the program state (running / done / fault / charging),
+  `@POST` codes, a battery heartbeat. Each block is commented with its flash cost
+  (the editor's byte gutter shows it), so an experienced player can delete what they do
+  not need and give the bytes to their program. Anything smarter is the player's to add.
 * **Console:** *Run again* restarts the program without re-uploading it.
 * **Editor:** the Code tab edits the program by default; the firmware editor is marked
   advanced. Templates become programs.

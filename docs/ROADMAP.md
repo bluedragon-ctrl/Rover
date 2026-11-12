@@ -233,10 +233,13 @@ Spec: [SPEC §3.9](SPEC.md). Decided with the owner (2026-11-12), after M9:
 - **`RUN ticks`** gives the program a time slice and resumes it next time; program ends
   with `END value`; `@PROG_STATE` / `@PROG_RESULT`; program faults return to the
   firmware instead of a watchdog reboot; `BRK` halts only the program.
-- **Default firmware stays small**; players improve it themselves.
+- **Default firmware = small core + optional comfort blocks** (status lamps for the
+  program state, `@POST` codes, heartbeat), each marked with its flash cost so
+  experienced players can strip them to free memory for programs.
 - Program upload is cheap (program bytes only) and does not reboot; Console *Run again*.
 
-To settle when the detailed plan is written: compiler/flash layout of the two slots,
+To settle when the detailed plan is written: compiler/flash layout of the two slots, which comfort blocks ship and their byte cost
+(the core must leave a useful program budget on Mk-I 128 B),
 dumps per slot, save format, how shipped templates split, migration of old saves (old
 firmware becomes the firmware slot, no program).
 
