@@ -17,10 +17,10 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | M5 | Tools, cargo, spectrometer, science, first goals | ✅ done |
 | M6 | Save/load + autosave, storyteller with prerequisites & teaching events, subsystem damage, material repairs, admin console | ✅ done |
 | M7 | Upgrades bought with credits, delivered as supply crates, seismic scanner, save v2 | ✅ done |
-| **M8** | **Visual overhaul (SPEC §7)** | 🚧 in progress: asset preview, indicator lamps, **game renderer switched to v2**, frame-time HUD + geometry baseline; ⏭ next: owner GPU numbers (P HUD), then LOD by zoom |
+| **M8** | **Visual overhaul (SPEC §7)** | 🚧 in progress: asset preview, indicator lamps, **game renderer switched to v2**, frame-time HUD + geometry baseline, pan leash; performance fine on PC, remaining items (LOD, fat lines, zoom range, atmosphere) deferred to the next visual pass |
 | M8.1 | Radar `SCAN` vs. light-limited operator view; headlight cone; `@HEADING` | ✅ done |
 | Flash bytes | Program size in machine-code bytes instead of lines (SPEC §5.7) | ✅ core done; editor byte gutter awaiting preview approval |
-| **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | 📝 designed; ⏭ next after M8; photo POC in `preview.html?photos=1` |
+| **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | 📝 designed; ⏭ **next**: slice 1 (link layer + `LOG`); photo POC in `preview.html?photos=1` |
 | M10 | Multiple rovers (after single-rover tuning) | planned |
 
 ## Done: Flash measured in bytes
@@ -101,7 +101,7 @@ ore mounds (new `mound` shape), buried silicon crystals; **indicator lamps** `@I
       the shader except under a radar wave. v1 `drawTile` / `buildRoverMesh` removed.
       Dev builds expose `window.__rover = { engine, scene, rover }` for console/screenshots.
       The world-info line shows fps (details in the frame-time HUD, P).
-- [ ] Owner playtest of the switched renderer (feel of pan/orbit defaults, start zoom 14,
+- [x] Owner playtest of the switched renderer (feel of pan/orbit defaults, start zoom 14,
       bloom strength, dust). Cost: see the geometry baseline below (hidden geometry +14%).
 
 Remaining:
@@ -120,8 +120,9 @@ tests must stay untouched. Do it in small PRs, checking frame time at each step.
       estimated earlier). Budgets: <12k line verts and <4.5k fill tris per chunk. A chunk
       build takes ~4 ms, so rebuilds are now time-budgeted (`buildBudgetMs` 6, at least one
       per frame) instead of a flat 4 per frame (up to ~16 ms hitches while panning).
-- [ ] **Baseline on real GPUs** (owner): note the HUD numbers at the default view, zoomed
-      out to the max, and at night, on a desktop and a laptop. Decide LOD from that.
+- [x] **Baseline on real GPUs** (owner, 2026-11-12): tested on a PC, performance is not an
+      issue. **Decision:** LOD, fat lines and other optimizations wait for the next visual
+      pass; M9 goes first.
 - [x] **Pan leash** (owner): the camera focus stays within `PAN_LEASH` = 24 tiles of the
       followed rover (else the first rover); dragging further stops at the edge. Bounds
       what the renderer must build around the rover (`CameraRig.leash`, `tests/camera.test.ts`).
