@@ -1,7 +1,7 @@
 import { PORTS } from '../core/ports';
 import { builtinConstants, formatSig, OPCODES } from '../core/vm/Compiler';
 import type { WorldRegistry } from '../core/WorldRegistry';
-import { CHASSIS_MK1 } from '../core/balance';
+import { CHASSIS_MK1, ENCODING as E } from '../core/balance';
 import { TOOLS } from '../core/tools';
 
 const NOTES: Record<string, string> = {
@@ -21,8 +21,13 @@ export function renderReference(el: HTMLElement, registry: WorldRegistry): void 
     .join(' ');
   el.innerHTML = `
     <p>One instruction per line. <code>label:</code> marks a jump target, <code>;</code> starts a comment.
-    <code>ALIAS r0 name</code> and <code>CONST NAME 5</code> cost no Flash. The program loops back to the top when it runs off the end.
+    The program loops back to the top when it runs off the end.
     Compute instructions are fast (several per tick); hardware instructions (<code>SCAN STEP SLEEP ACT USE</code>) end the tick and take time.</p>
+    <p><b>Program size</b> (Flash, in bytes): opcode ${E.opcode} B; register ${E.register} B; port ${E.port} B;
+    number 0–${E.shortImmMax} ${E.shortImm} B, −128…127 ${E.imm8} B, up to ±32767 ${E.imm16} B, larger ${E.imm32} B; label used as a jump/call target ${E.label} B.
+    Constants cost what their value costs (<code>NORTH</code> 1 B, <code>IRON_ORE</code> 1 B).
+    Labels, comments, <code>ALIAS r0 name</code> and <code>CONST NAME 5</code> themselves cost nothing.
+    Example: <code>JLE @BAT 20 home</code> = ${E.opcode}+${E.port}+${E.imm8}+${E.label} = ${E.opcode + E.port + E.imm8 + E.label} B.</p>
     <h4>Instructions</h4><table>${ops}</table>
     <h4>Tools (Mk-I hardpoints; TOOL_3 can be fitted with an upgrade)</h4><table>${CHASSIS_MK1.tools
       .map((t, i) => (t ? `<tr><td><code>ACT TOOL_${i} &lt;${TOOLS[t].arg}&gt;</code></td><td>${TOOLS[t].name}: ${TOOLS[t].description} ${TOOLS[t].ticks} ticks, ${TOOLS[t].energy / 1000}% battery.</td></tr>` : `<tr><td><code>ACT TOOL_${i}</code></td><td>empty hardpoint: ERR_NO_TOOL</td></tr>`))

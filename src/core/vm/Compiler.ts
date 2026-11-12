@@ -1,4 +1,4 @@
-import type { ChassisDef } from '../balance';
+import { ENCODING, type ChassisDef } from '../balance';
 import { getPort } from '../ports';
 import { Alert, Dir, LightColor, Status, SystemId } from '../types';
 
@@ -37,7 +37,35 @@ export interface CompileError {
 export interface CompileResult {
   program: Program | null;
   errors: CompileError[];
+  /** Program size in bytes (machine code, docs/SPEC.md §5.7). */
   flashUsed: number;
+  /** Bytes per source line (1-based) that holds an instruction; a best estimate on lines with errors. */
+  lineBytes: Record<number, number>;
+}
+
+/** Encoded size of an integer immediate. */
+export function immBytes(v: number): number {
+  if (v >= 0 && v <= ENCODING.shortImmMax) return ENCODING.shortImm;
+  if (v >= -128 && v <= 127) return ENCODING.imm8;
+  if (v >= -32768 && v <= 32767) return ENCODING.imm16;
+  return ENCODING.imm32;
+}
+
+export function operandBytes(o: Operand): number {
+  switch (o.k) {
+    case 'reg':
+      return ENCODING.register;
+    case 'port':
+      return ENCODING.port;
+    case 'label':
+      return ENCODING.label;
+    case 'imm':
+      return immBytes(o.v);
+  }
+}
+
+export function instrBytes(i: Instr): number {
+  return i.args.reduce<number>((n, o) => n + operandBytes(o), ENCODING.opcode);
 }
 
 /**
@@ -184,11 +212,22 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
     ip++;
   }
 
-  if (ip > chassis.flashLines) err(code[chassis.flashLines]?.line ?? 1, `Program uses ${ip} Flash lines; ${chassis.name} has ${chassis.flashLines}`);
 
   // Pass 2: instructions.
   const instrs: Instr[] = [];
   const lineToIp: Record<number, number> = {};
+  const lineBytes: Record<number, number> = {};
+
+  /** Size of an operand token without reporting errors (so lines with errors still get a size). */
+  const tokenBytes = (tok: string, kind: string): number => {
+    const up = tok.toUpperCase();
+    if (kind === 'l') return ENCODING.label;
+    if (up.startsWith('@')) return ENCODING.port;
+    if (up in aliases || REG.test(tok)) return ENCODING.register;
+    const n = parseNumber(tok) ?? constants[up];
+    if (n !== undefined) return immBytes(n);
+    return up in labels ? ENCODING.label : ENCODING.imm8;
+  };
 
   const parseOperand = (tok: string, kind: string, line: number): Operand | null => {
     const up = tok.toUpperCase();
@@ -237,6 +276,10 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
 
   for (const l of code) {
     const opTok = l.tokens[0].toUpperCase();
+    const sigOf = SIGNATURES[opTok as Op] as string[] | undefined;
+    lineBytes[l.line] = l.tokens
+      .slice(1)
+      .reduce<number>((n, tok, i) => n + tokenBytes(tok, (sigOf?.[Math.min(i, sigOf.length - 1)] ?? 'v')[0]), ENCODING.opcode);
     if (!(opTok in SIGNATURES)) {
       err(l.line, `Unknown instruction '${l.tokens[0]}'`);
       continue;
@@ -267,10 +310,19 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
     instrs.push({ op, args, line: l.line });
   }
 
+  let flashUsed = 0;
+  let overLine = 0;
+  for (const l of code) {
+    flashUsed += lineBytes[l.line];
+    if (!overLine && flashUsed > chassis.flashBytes) overLine = l.line;
+  }
+  if (overLine) err(overLine, `Program is ${flashUsed} bytes; ${chassis.name} has ${chassis.flashBytes} bytes of Flash`);
+
   return {
     program: errors.length ? null : { instrs, labels, lineToIp },
     errors,
-    flashUsed: ip,
+    flashUsed,
+    lineBytes,
   };
 }
 

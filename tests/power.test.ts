@@ -119,17 +119,17 @@ describe('comms', () => {
     const eng = new SimulationEngine({ seed: 1 });
     const u = eng.spawnUnit('t');
     u.antennaAngle = eng.orbitAzimuth;
-    const good = eng.uploadCost(u, 20);
+    const good = eng.uploadCost(u, 80);
     u.antennaAngle = (eng.orbitAzimuth + 180) % 360;
-    const bad = eng.uploadCost(u, 20);
+    const bad = eng.uploadCost(u, 80);
     expect(bad).toBe(good * 10);
-    u.energy = eng.uploadCost(u, 1) - 1;
+    u.energy = eng.uploadCost(u, 2) - 1; // SLEEP 1 = 2 bytes
     const r = eng.upload(u, 'SLEEP 1');
     expect(r.rejected).toMatch(/battery/);
     u.antennaAngle = eng.orbitAzimuth;
     const ok = eng.upload(u, 'SLEEP 1');
     expect(ok.rejected).toBeUndefined();
-    expect(ok.cost).toBe(eng.uploadCost(u, 1));
+    expect(ok.cost).toBe(eng.uploadCost(u, 2));
   });
 });
 

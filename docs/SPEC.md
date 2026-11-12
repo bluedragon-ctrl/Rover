@@ -55,7 +55,7 @@ Each rover owns a copy of its chassis stats; upgrades (§3.7) modify that copy.
 
 | Stat | Mk-I | Notes |
 | :--- | :--- | :--- |
-| Flash | 32 instruction lines | Comments, blank lines, labels, `ALIAS`, `CONST` are free. |
+| Flash | 128 bytes | Machine-code size (§5.7). Comments, blank lines, label definitions, `ALIAS`, `CONST` are free. |
 | Registers | 4 (`r0`–`r3`) | Signed 32-bit, wrap on overflow. |
 | Data stack | 8 entries | `PUSH`/`POP`, `CALL` arguments. |
 | Call stack | 8 frames | Return addresses only. |
@@ -121,8 +121,8 @@ The rover and the player "see" differently:
 `IP = 0`, all registers zeroed, both stacks cleared, any in-flight action aborted,
 `@STATUS = OK`. Physical state (position, battery, hull, cargo, actuator ports) is kept.
 
-Upload cost **[M4]**: `ceil((500 + 50 × lines) × 100 / max(10, @SIGNAL_STR))` energy
-(≈ 1.5 % for a 20-line program at full signal, 10× that with the dish misaligned).
+Upload cost **[M4]**: `ceil((500 + 12 × bytes) × 100 / max(10, @SIGNAL_STR))` energy
+(≈ 1.5 % for an 85-byte program at full signal, 10× that with the dish misaligned).
 If the battery cannot pay, or the rover is powered off, the upload is rejected and the
 old program keeps running. New rovers ship with factory firmware installed for free.
 
@@ -255,7 +255,7 @@ on pickup and needs no cargo slot. Ports: `@DROPS` (landed crates waiting), `@DR
 
 | Upgrade | Cost | Effect | Requires |
 | :--- | :--- | :--- | :--- |
-| Flash 48 / Flash 64 | 40 / 90 | Program memory 48 / 64 lines | – / Flash 48 |
+| Flash 192 B / Flash 256 B | 40 / 90 | Program memory 192 / 256 bytes | – / Flash 192 B |
 | Register file r0–r5 / r0–r7 | 40 / 80 | 6 / 8 registers (values kept) | – / r0–r5 |
 | CPU overclock I / II | 50 / 100 | 6 / 8 cycles per tick | – / I |
 | Cargo racks | 35 | 6 cargo slots | – |
@@ -317,7 +317,7 @@ unaffected (it already fits). Goal *Upgraded*: install a first upgrade.
 **Every value operand accepts a register, port, immediate or constant**, including
 directions, tool slots and cargo slots (`STEP r0`, `PEEK r1 -> r2`).
 
-### 5.3 Directives (0 Flash lines)
+### 5.3 Directives (0 bytes)
 
 | Directive | Meaning |
 | :--- | :--- |
@@ -394,6 +394,30 @@ compute instructions leave it alone.
 | `@SCIENCE_READY` | R | science packets waiting for uplink | M5 |
 
 Writes are clamped to the port's range; angle ports wrap modulo 360.
+
+### 5.7 Program size (Flash bytes)
+
+A program's size is its machine code: each instruction is one opcode byte plus its
+operands. Only the instruction lines count; comments, blank lines, label definitions,
+`ALIAS` and `CONST` exist at compile time only and emit nothing. Size does not affect
+speed (every compute instruction is still 1 cycle). Numbers live in `ENCODING`
+(`src/core/balance.ts`).
+
+| Element | Bytes | Notes |
+| :--- | :--- | :--- |
+| Opcode | 1 | |
+| Register / alias | 1 | Operand byte: addressing mode + register index. |
+| Port | 1 | Operand byte: addressing mode + port number. |
+| Immediate 0…15 | 1 | Packed into the operand byte (short immediate). |
+| Immediate −128…127 | 2 | Operand byte + 1 data byte. |
+| Immediate −32768…32767 | 3 | + 2 data bytes. |
+| Larger immediate | 5 | + 4 data bytes (registers are 32-bit). |
+| Label reference | 2 | Absolute address of a jump / `CALL` target. |
+
+Constants cost what their value costs: `NORTH`, `RED`, `TOOL_1` are 1 byte; a tile ID
+above 15 or `CONST SPEED 90` is 2. Examples: `RET` = 1, `MOV r0 r1` = 3,
+`JLE @BAT 20 home` = 1 + 1 + 2 + 2 = 6. The compiler reports the size per line and the
+first line that no longer fits.
 
 ## 6. Milestones
 
