@@ -18,6 +18,8 @@ export interface RoverPose {
   /** CPU: 'run' | 'idle' | 'fault' | 'off'. */
   cpu: 'run' | 'idle' | 'fault' | 'off';
   beaconHex: number;
+  /** Indicator lamp colours (hex), left to right. */
+  indicators: number[];
   headlight: boolean;
   drilling: boolean;
   /** Sensor range in tiles (for the ring). */
@@ -72,6 +74,7 @@ export class RoverAnimator {
     m.model.position.y = p.moving ? Math.abs(Math.sin(t * 13)) * 0.012 : 0;
 
     m.beacon.color.setHex(p.beaconHex);
+    p.indicators.forEach((hex, i) => m.indicators[i]?.color.setHex(hex));
     m.headLamp.color.setHex(p.headlight ? 0xf0f8ff : 0x1e293b);
     m.beam.visible = p.headlight;
 

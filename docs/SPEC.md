@@ -1,4 +1,4 @@
-# Rover — Game & Language Specification (`v1.3`)
+# Rover — Game & Language Specification (`v1.4`)
 
 This document supersedes `v1.2` of the architecture/language review. It fixes the
 inconsistencies found in review and pins down the numbers the code relies on.
@@ -112,6 +112,11 @@ old program keeps running. New rovers ship with factory firmware installed for f
   20-tick deploy/stow. Actuator state is physical: it survives reboots.
 * **Movement lock:** `STEP` fails with `ERR_DEPLOYED` while the array is commanded open
   or not fully stowed.
+* **Indicator lamps [M8]:** three lamps on the cabin roof, `@IND1`, `@IND2`, `@IND3`
+  (left to right), each takes a light colour constant (`OFF`, `RED`, `GREEN`, `BLUE`,
+  `AMBER`, 0–4). They are purely a visual channel for the player: free, no gameplay
+  effect, no `@STATUS`. Like the beacon they are physical and survive reboots; they go
+  dark while the rover is powered off.
 * **TX:** writing `@TX_DATA` sends a packet if `@SIGNAL_STR >= 50` and sets `@STATUS`
   (`OK`, `ERR_NO_SIGNAL`, `ERR_LOW_POWER`). This is the one port write that touches
   `@STATUS`.
@@ -200,7 +205,7 @@ prerequisites and count neither toward goals nor toward "seen" prerequisites.
 
 ## 3.6 Persistence **[M6]**
 
-`SaveManager.serialize/deserialize` (headless). A save (`version: 2`; v1 files are migrated
+`SaveManager.serialize/deserialize` (headless). A save (`version: 3`; v1/v2 files are migrated
 by `migrate()`) holds the seed, supply drops, installed upgrades,
 tick, credits, stats, cheats, storyteller state (RNG, schedule, completed goals), full
 unit and VM state (firmware source is recompiled on load), and **only chunks that are
@@ -345,6 +350,7 @@ compute instructions leave it alone.
 | `@LIGHT_COLOR` | RW | 0–4 | M1–M3 |
 | `@LIGHT_BLINK` | RW | 0/1 | M1–M3 |
 | `@HEADLIGHT` | RW | 0/1 | M4 (costs energy, extends night range) |
+| `@IND1`, `@IND2`, `@IND3` | RW | 0–4 (`OFF`…`AMBER`) | M8 (indicator lamps, visual only) |
 | `@SENSOR_RANGE` | R | current SCAN range | M4 |
 | `@SUN_AZIMUTH`, `@SUN_ELEV`, `@SUN_LIGHT` | R | 0–359, −70..70, 0–100 | M4 |
 | `@SOLAR_OPEN` | RW | 0/1 | M4 |

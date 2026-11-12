@@ -11,7 +11,7 @@ import { PostFx } from '../render/PostFx';
 import { RoverAnimator, type RoverPose } from '../render/RoverRig';
 import { TileLighting } from '../render/TileLighting';
 import { FxOverlay } from '../render/FxOverlay';
-import { buildRoverRig, drawFogTile, drawTileVec, FillBatch, LineBatch, LIGHT_HEX } from '../render/VectorFactory';
+import { buildRoverRig, drawFogTile, drawTileVec, FillBatch, indicatorHex, LineBatch, LIGHT_HEX } from '../render/VectorFactory';
 
 const view = document.getElementById('view')!;
 const labelsEl = document.getElementById('labels')!;
@@ -106,7 +106,7 @@ const anim = new RoverAnimator(rover);
 
 const state = {
   sun: 100, cycle: false, headlight: false, solar: false, drill: false, drive: false, dishSweep: true,
-  facing: 0, led: 2, cpu: 0, damaged: false, bloom: true, crt: true, labels: true, follow: true,
+  facing: 0, led: 2, ind: [1, 2, 0], cpu: 0, damaged: false, bloom: true, crt: true, labels: true, follow: true,
   x: 0, y: 0, moveT: 0, angle: 0,
 };
 const CPU: RoverPose['cpu'][] = ['run', 'idle', 'fault', 'off'];
@@ -150,6 +150,8 @@ button('STEP', 'Drive', () => state.drive, () => (state.drive = !state.drive));
 button('@FACING', 'Turn 90° CW', () => FACING[state.facing], () => (state.facing = (state.facing + 1) % 4));
 button('@ANTENNA', 'Dish sweep', () => state.dishSweep, () => (state.dishSweep = !state.dishSweep));
 button('@LIGHT', 'Status LED', () => ['OFF', 'RED', 'GREEN', 'BLUE', 'AMBER'][state.led], () => (state.led = (state.led % 4) + 1));
+for (let i = 0; i < 3; i++)
+  button(`@IND${i + 1}`, `Indicator ${i + 1}`, () => ['OFF', 'RED', 'GREEN', 'BLUE', 'AMBER'][state.ind[i]], () => (state.ind[i] = (state.ind[i] + 1) % 5));
 button('CPU', 'vMCU state', () => CPU[state.cpu].toUpperCase(), () => (state.cpu = (state.cpu + 1) % 4));
 button('HEALTH', 'Damaged dish/solar', () => state.damaged, () => (state.damaged = !state.damaged));
 button('SCAN', 'Scan pulse', () => false, () => {
@@ -274,6 +276,7 @@ function frame(now: number): void {
       dishHealth: state.damaged ? 45 : 100,
       cpu: CPU[state.cpu],
       beaconHex: blinkOff ? 0x222222 : LIGHT_HEX[state.led],
+      indicators: state.ind.map((v) => indicatorHex(state.cpu === 3 ? 0 : v)),
       headlight: state.headlight && state.cpu !== 3,
       drilling: state.drill,
       sensorRange: sensor,

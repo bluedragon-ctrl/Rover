@@ -93,6 +93,16 @@ export const PORTS: PortDef[] = [
   // Lights
   { name: 'LIGHT_COLOR', description: 'Status beacon color 0–4', min: 0, max: 4, read: (u) => u.lightColor, write: (u, v) => (u.lightColor = v) },
   { name: 'LIGHT_BLINK', description: 'Beacon blink 0/1', min: 0, max: 1, read: (u) => u.lightBlink, write: (u, v) => (u.lightBlink = v) },
+  ...[1, 2, 3].map(
+    (n): PortDef => ({
+      name: `IND${n}`,
+      description: `Indicator lamp ${n} on the cabin roof: OFF, RED, GREEN, BLUE, AMBER (0–4). Visual only, free, survives reboots`,
+      min: 0,
+      max: 4,
+      read: (u) => u.indicators[n - 1],
+      write: (u, v) => (u.indicators[n - 1] = v),
+    }),
+  ),
   {
     name: 'HEADLIGHT',
     description: `Headlight 0/1: night SCAN range ${BALANCE.headlightSensorRange} instead of ${BALANCE.nightSensorRange}`,

@@ -154,10 +154,14 @@ export function buildCapsuleMesh(): THREE.LineSegments {
 }
 
 export const LIGHT_HEX = [0x333333, 0xff3030, 0x30ff60, 0x3080ff, 0xffb020];
+/** Colour of an indicator lamp (`@IND1..3`); OFF is a dark lens. */
+export const indicatorHex = (v: number): number => (v > 0 ? LIGHT_HEX[v] ?? 0xffffff : 0x1a2230);
 
 export interface RoverMesh {
   group: THREE.Group;
   beacon: THREE.LineBasicMaterial;
+  /** Three indicator lamps on the deck (@IND1..@IND3), left to right. */
+  indicators: THREE.LineBasicMaterial[];
   headlight: THREE.LineSegments;
   /** Turntable carrying the solar array; rotate to the panel bearing, scale with deployment. */
   solar: THREE.Group;
@@ -235,6 +239,15 @@ export function buildRoverMesh(): RoverMesh {
   beaconMesh.geometry.deleteAttribute('color');
   group.add(beaconMesh);
 
+  const indicators: THREE.LineBasicMaterial[] = [];
+  for (let i = 0; i < 3; i++) {
+    const m = new THREE.LineBasicMaterial({ color: indicatorHex(0) });
+    const g = new LineBatch().color(0xffffff).octa(-0.12 + i * 0.12, 0.36, -0.22, 0.035, 0.035).build();
+    g.deleteAttribute('color');
+    group.add(new THREE.LineSegments(g, m));
+    indicators.push(m);
+  }
+
   const hl = new LineBatch().color(0xfff2b0, 0.8);
   hl.seg(-0.05, 0.35, -0.4, -1.6, 0.0, -5.0).seg(0.05, 0.35, -0.4, 1.6, 0.0, -5.0).seg(-1.6, 0, -5, 1.6, 0, -5);
   const headlight = lines(hl, { transparent: true, opacity: 0.55 });
@@ -251,7 +264,7 @@ export function buildRoverMesh(): RoverMesh {
     new THREE.LineDashedMaterial({ color: 0x3affc8, transparent: true, opacity: 0.25, dashSize: 0.3, gapSize: 0.25 }),
   );
   sensorRing.computeLineDistances();
-  return { group, beacon, headlight, solar, dish, sensorRing, solarMat, dishMat };
+  return { group, beacon, indicators, headlight, solar, dish, sensorRing, solarMat, dishMat };
 }
 
 // ============================================================================================
@@ -648,6 +661,8 @@ export interface RoverRigMesh {
   dish: THREE.Group;
   dishMats: THREE.LineBasicMaterial[];
   beacon: THREE.MeshBasicMaterial;
+  /** Indicator lamp lenses on the cabin roof (@IND1..@IND3), left to right. */
+  indicators: THREE.MeshBasicMaterial[];
   headLamp: THREE.MeshBasicMaterial;
   /** Ground beam (tile units, not scaled with the model). */
   beam: THREE.Group;
@@ -775,6 +790,22 @@ export function buildRoverRig(): RoverRigMesh {
   led.position.set(-0.28, 1.08, -0.2);
   body.add(led);
 
+  // Indicator lamp bar on the cabin roof, in front of the dish: three lenses in housings.
+  const indicators: THREE.MeshBasicMaterial[] = [];
+  const bar = vectorPart(new THREE.BoxGeometry(0.5, 0.04, 0.14), 0x64748b);
+  bar.obj.position.set(0.1, 1.01, -0.22);
+  body.add(bar.obj);
+  for (let i = 0; i < 3; i++) {
+    const lensMat = new THREE.MeshBasicMaterial({ color: indicatorHex(0) });
+    const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 0.07, 8), lensMat);
+    lens.position.set(-0.05 + i * 0.15, 1.065, -0.22);
+    body.add(lens);
+    const rim = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.CylinderGeometry(0.06, 0.06, 0.02, 8)), new THREE.LineBasicMaterial({ color: 0x64748b }));
+    rim.position.set(-0.05 + i * 0.15, 1.04, -0.22);
+    body.add(rim);
+    indicators.push(lensMat);
+  }
+
   // Ventral drill.
   const drillBit = new THREE.Group();
   drillBit.position.set(0, 0.3, -0.1);
@@ -831,6 +862,7 @@ export function buildRoverRig(): RoverRigMesh {
     dish,
     dishMats: [cone.edgeMat, mast.edgeMat],
     beacon,
+    indicators,
     headLamp,
     beam,
     beamMats: [beamFill, beamLines.material as THREE.Material],
