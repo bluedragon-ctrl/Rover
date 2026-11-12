@@ -42,6 +42,8 @@ export const PORTS: PortDef[] = [
     description: 'Hazard level of terrain under rover 0–2',
     read: (u, c) => c.registry.get(c.world.getTile(u.x, u.y, 0))?.hazardLevel ?? 0,
   },
+  { name: 'CARGO_FREE', description: 'Number of empty cargo slots', read: (u) => u.cargo.filter((c) => c === 0).length },
+  { name: 'SCIENCE_READY', description: 'Analyzed science packets waiting for uplink', read: (u) => u.scienceReady },
   { name: 'SENSOR_RANGE', description: 'Current SCAN range in tiles (drops at night)', read: (u, c) => c.sensorRange(u) },
 
   // Sun & solar
@@ -74,7 +76,7 @@ export const PORTS: PortDef[] = [
     write: (u, v) => (u.antennaTarget = v),
   },
   { name: 'SIGNAL_STR', description: 'Uplink quality 0–100 (dish vs orbiter alignment)', read: (u, c) => signalStrength(u.antennaAngle, c.orbitAzimuth) },
-  { name: 'TX_DATA', description: `Write to transmit a packet (needs @SIGNAL_STR >= ${BALANCE.txMinSignal}; sets @STATUS)`, write: (u, v, c) => c.transmit(u, v) },
+  { name: 'TX_DATA', description: `Write to transmit a packet (needs @SIGNAL_STR >= ${BALANCE.txMinSignal}; sets @STATUS). Carries 1 science packet if @SCIENCE_READY > 0`, write: (u, v, c) => c.transmit(u, v) },
 
   // Lights
   { name: 'LIGHT_COLOR', description: 'Status beacon color 0–4', min: 0, max: 4, read: (u) => u.lightColor, write: (u, v) => (u.lightColor = v) },

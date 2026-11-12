@@ -2,6 +2,8 @@ import { BALANCE, CHASSIS_MK1, type ChassisDef } from './balance';
 import { ChunkedWorld } from './ChunkedWorld';
 import { EventBus } from './EventBus';
 import { MapGenerator } from './MapGenerator';
+import { EventDirector } from './EventDirector';
+import { TOOLS, type ToolDef } from './tools';
 import { Environment, signalStrength, solarGain, wrapDeg, angleDiff, type SunState } from './Environment';
 import { getPort, writePortClamped, type PortContext } from './ports';
 import { CpuState, DIR_VEC, Layer, Status } from './types';
@@ -33,6 +35,19 @@ export class SimulationEngine {
   readonly units: Unit[] = [];
   readonly env = new Environment();
   readonly cheats = { freeUpload: false };
+  readonly director: EventDirector;
+  /** World-wide counters used by goals and the UI. */
+  readonly stats = {
+    packetsSent: 0,
+    scienceDelivered: 0,
+    oreMined: 0,
+    itemsCollected: 0,
+    itemsAnalyzed: 0,
+    maxDistance: 0,
+    sunrisesPowered: 0,
+  };
+  /** Science credits: delivered science + goal rewards. Currency for M7 upgrades. */
+  credits = 0;
   tick = 0;
   sun: SunState;
   orbitAzimuth: number;
@@ -43,6 +58,7 @@ export class SimulationEngine {
     this.registry = opts.registry ?? createDefaultRegistry();
     this.world = new ChunkedWorld(new MapGenerator(opts.seed));
     this.world.onTileChanged = (x, y, layer, id) => this.events.emit('TILE_CHANGED', { x, y, layer, id });
+    this.director = new EventDirector(this);
     this.sun = this.env.sun(0);
     this.orbitAzimuth = this.env.orbitAzimuth(0);
     const self = this;
@@ -175,7 +191,9 @@ export class SimulationEngine {
   private beginTick(): void {
     this.tick++;
     this.world.now = this.tick;
+    const wasNight = this.sun.elevation <= 0;
     this.sun = this.env.sun(this.tick);
+    if (wasNight && this.sun.elevation > 0) for (const u of this.units) if (u.powered) this.stats.sunrisesPowered++;
     this.orbitAzimuth = this.env.orbitAzimuth(this.tick);
     for (const u of this.units) {
       this.world.touchRadius(u.x, u.y, BALANCE.chunkBubbleRadius);
@@ -185,6 +203,7 @@ export class SimulationEngine {
       u.cyclesLeft = u.vm.state === CpuState.RUNNING ? u.chassis.cyclesPerTick : 0;
     }
     if (this.tick % 100 === 0) this.world.evictStale(BALANCE.chunkEvictAfterTicks);
+    if (this.tick % 10 === 0) this.director.update();
     this.events.emit('TICK', { tick: this.tick });
   }
 
@@ -256,13 +275,21 @@ export class SimulationEngine {
     if (signal < BALANCE.txMinSignal) status = Status.ERR_NO_SIGNAL;
     else if (u.energy < BALANCE.txEnergy) status = Status.ERR_LOW_POWER;
     const ok = status === Status.OK;
+    let science = false;
     if (ok) {
       this.drain(u, BALANCE.txEnergy);
       u.packetsSent++;
+      this.stats.packetsSent++;
+      if (u.scienceReady > 0) {
+        u.scienceReady--;
+        this.stats.scienceDelivered++;
+        this.credits++;
+        science = true;
+      }
     }
     u.lastTx = { tick: this.tick, value, ok };
     this.setStatus(u, status);
-    this.events.emit('UPLINK_PULSE', { unitId: u.id, x: u.x, y: u.y, value, ok });
+    this.events.emit('UPLINK_PULSE', { unitId: u.id, x: u.x, y: u.y, value, ok, science });
   }
 
   private updateUnitPhysics(u: Unit): void {
@@ -291,6 +318,13 @@ export class SimulationEngine {
       return;
     }
 
+    if (act.kind === 'TOOL') {
+      const st = TOOLS[act.tool].complete(this, u, act.arg);
+      this.finishAction(u, st);
+      this.events.emit('TOOL_DONE', { unitId: u.id, tool: act.tool, status: st });
+      return;
+    }
+
     // STEP: arrive on the tile.
     u.x = act.toX;
     u.y = act.toY;
@@ -302,6 +336,7 @@ export class SimulationEngine {
       this.finishAction(u, Status.ERR_HAZARD);
       return;
     }
+    this.stats.maxDistance = Math.max(this.stats.maxDistance, Math.abs(u.x) + Math.abs(u.y));
     if (act.tilesLeft <= 0) {
       this.finishAction(u, Status.OK);
       return;
@@ -339,6 +374,21 @@ export class SimulationEngine {
     u.motion = { fromX: u.x, fromY: u.y, toX: tx, toY: ty, startTick: this.tick, endTick: this.tick + ticks };
     this.events.emit('UNIT_MOVED', { unitId: u.id, ...u.motion });
     return Status.OK;
+  }
+
+  /** Validate, pay and start a tool action; the effect applies when it completes. */
+  private startTool(u: Unit, tool: ToolDef, arg: number): void {
+    let st = tool.check(this, u, arg);
+    if (st === Status.OK && u.energy < tool.energy) st = Status.ERR_LOW_POWER;
+    this.setStatus(u, st);
+    if (st !== Status.OK) return;
+    this.drain(u, tool.energy);
+    if (!u.powered) return;
+    u.action = { kind: 'TOOL', tool: tool.id, arg, ticksLeft: tool.ticks };
+    u.vm.block();
+    const t = tool.target?.(u, arg) ?? null;
+    if (tool.arg === 'dir' && arg >= 0 && arg <= 3) u.heading = arg;
+    this.events.emit('TOOL_USED', { unitId: u.id, tool: tool.id, x: u.x, y: u.y, targetX: t?.[0] ?? null, targetY: t?.[1] ?? null, ticks: tool.ticks });
   }
 
   private drain(u: Unit, amount: number): void {
@@ -436,9 +486,22 @@ export class SimulationEngine {
         if (st === Status.OK) u.vm.block();
         return;
       }
-      case 'ACT':
+      case 'ACT': {
+        const slot = v[0];
+        if (slot < 0 || slot >= u.chassis.tools.length) {
+          this.setStatus(u, Status.ERR_INVALID);
+          return;
+        }
+        const id = u.chassis.tools[slot];
+        if (!id) {
+          this.setStatus(u, Status.ERR_NO_TOOL);
+          return;
+        }
+        this.startTool(u, TOOLS[id], v.length > 1 ? v[1] : 0);
+        return;
+      }
       case 'USE':
-        this.setStatus(u, Status.ERR_NO_TOOL); // Tools arrive in M5.
+        this.startTool(u, TOOLS.USE_ITEM, v[0]);
         return;
       case 'PEEK': {
         const slot = v[0];

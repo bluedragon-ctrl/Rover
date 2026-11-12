@@ -3,6 +3,7 @@ import { PORTS } from '../core/ports';
 import type { SimulationEngine } from '../core/SimulationEngine';
 import { CpuState, Dir, Status } from '../core/types';
 import type { Unit } from '../core/Unit';
+import { TOOLS } from '../core/tools';
 
 const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!);
 
@@ -30,6 +31,7 @@ export class DebuggerPanel {
     }).join('');
     let action = 'idle';
     if (u.action?.kind === 'WAIT') action = `waiting ${u.action.ticksLeft}t`;
+    else if (u.action?.kind === 'TOOL') action = `${u.action.tool} ${u.action.ticksLeft}t`;
     else if (u.action?.kind === 'STEP') action = `STEP ${Dir[u.action.dir]} (${u.action.tilesLeft} left, ${u.action.ticksLeft}t)`;
     const batPct = (u.energy * 100) / BALANCE.batteryCapacity;
 
@@ -45,6 +47,10 @@ export class DebuggerPanel {
         <div class="meter"><label>HULL ${u.hull}</label><div><i style="width:${u.hull}%;background:${u.hull < 30 ? '#ff4d4d' : '#5ad0ff'}"></i></div></div>
       </div>
       <div class="dim small" style="margin-top:4px">solar ${u.solarDeployed ? `+${u.lastSolarGain}/tick` : u.solarDeploy > 0 ? 'moving…' : 'stowed'} · signal ${this.engine.signalOf(u)} · TX packets ${u.packetsSent}${u.lastTx ? ` · last TX ${u.lastTx.value} ${u.lastTx.ok ? 'ok' : 'failed'} @t${u.lastTx.tick}` : ''}</div>
+      <h4>Cargo <small>${u.cargo.filter((c) => !c).length} free · science ready ${u.scienceReady}</small></h4>
+      <div class="stack">${u.cargo.map((c, i) => `<span class="slot cargo ${c ? 'full' : ''}" title="slot ${i}">${c ? esc(this.engine.registry.get(c)?.constName ?? String(c)) : '·'}</span>`).join('')}</div>
+      <h4>Hardpoints</h4>
+      <div class="stack">${u.chassis.tools.map((t, i) => `<span class="slot tool ${t ? 'full' : ''} ${u.action?.kind === 'TOOL' && u.action.tool === t ? 'busy' : ''}" title="TOOL_${i}">${i}:${t ? esc(TOOLS[t].name) : 'empty'}</span>`).join('')}</div>
       <h4>Registers</h4><div class="grid4">${regs}</div>
       <h4>Data stack <small>${vm.dataStack.length}/${u.chassis.dataStack}</small></h4><div class="stack">${stack(vm.dataStack, u.chassis.dataStack, String)}</div>
       <h4>Call stack <small>${vm.callStack.length}/${u.chassis.callStack}</small></h4><div class="stack">${stack(vm.callStack, u.chassis.callStack, ipLine)}</div>

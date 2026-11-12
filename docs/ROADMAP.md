@@ -14,59 +14,64 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | M2 | Registry, chunked infinite world, generator, engine (`STEP`/`SCAN`/energy) | ✅ done |
 | M3 | Three.js wireframe viewport, CodeMirror editor, debugger, speed controls, admin | ✅ done |
 | M4 | Sun, solar, antenna, upload cost, headlight, fog of war, factory firmware | ✅ done |
-| **M5** | **Tools, cargo, spectrometer, science, first goals** | ⏭ next |
-| M6 | Save/load, storyteller (events, eclipses, squalls), admin console | planned |
-| M7 | Upgrades & chassis tiers (Flash, registers, cycles, cargo, `TOOL_3`) | planned |
+| M5 | Tools, cargo, spectrometer, science, first goals | ✅ done |
+| **M6** | **Save/load, storyteller (events, eclipses, squalls), admin console** | ⏭ next |
+| M7 | Upgrades & chassis tiers (Flash, registers, cycles, cargo, `TOOL_3`), spend credits | planned |
 | M8 | Visual overhaul: bloom, fat lines, LOD, zoom, camera, atmosphere (SPEC §7) | planned |
 
-## Next: M5 — Tools, cargo & science (detailed plan)
+## Next: M6 — Persistence & storyteller (detailed plan)
 
-Goal: give exploration a purpose. The rover can mine, pick up and analyze things, and
-send science home. A first set of goals gives the sandbox direction.
+Goal: progress survives a page reload, and the world starts *happening* to the rover,
+so programs need to react (stow panels in a squall, sleep through an eclipse).
 
-### Simulation (`src/core/`)
-- [ ] **Cargo bay** on `Unit` (4 slots, item IDs). `@CARGO_FREE` port.
-- [ ] `PEEK slot -> dst` returns the item ID (already routed to the host; just validate).
-- [ ] **`ACT TOOL_0 dir` — drill:** adjacent tile in `dir` must have a tile with
-      `tool: 'DRILL'` on layer 1. Blocks 8 ticks, costs energy; removes the vein
-      (`setTile` → chunk dirty), puts the ore item in the first free slot.
-      Errors: `ERR_INVALID` (nothing drillable), `ERR_FULL`, `ERR_LOW_POWER`, `ERR_DEPLOYED`?
-- [ ] **`ACT TOOL_1 dir` — grabber:** picks a layer-2 item (`tool: 'GRABBER'`) from the
-      adjacent tile in `dir` (decide: also allow the tile under the rover?). 2 ticks.
-- [ ] **`ACT TOOL_2 slot` — spectrometer:** analyzes the item in `slot`, frees it, adds
-      science packets (`SAMPLE` 3, ore 1). ~30 ticks. `@SCIENCE_READY` port.
-- [ ] `TOOL_3` empty → `ERR_NO_TOOL`.
-- [ ] **`USE slot`:** `REPAIR_KIT` restores hull (+30); other items `ERR_INVALID`.
-- [ ] **Science uplink:** writing `@TX_DATA` while `@SCIENCE_READY > 0` sends one science
-      packet (decrements it, adds to the world's science score). See open decision 1.
-- [ ] Tool definitions declarative (tool table: ticks, energy, handler) so new tools need
-      no VM changes; generate `TOOL_n` docs from it.
-- [ ] **Goals v1** (`EventDirector` skeleton, deterministic): e.g. *First contact*
-      (send a packet), *Surveyor* (map 500 tiles), *Prospector* (mine 3 ore),
-      *Scientist* (deliver 5 science), *Night owl* (survive a night powered).
-      Emits `GOAL_COMPLETED` events.
-- [ ] Tests for every tool path, error codes, goals; determinism test still green.
+### Persistence (`src/core/SaveManager.ts` headless + `src/ui/` glue)
+- [ ] `serialize(engine) → SaveSnapshot` (versioned JSON, `version: 1`):
+      seed, tick, credits, stats, completed goals, director state + RNG state,
+      units (position, heading, energy, hull, cargo, science, actuators, lights,
+      source code, VM: ip, regs, stacks, state, status, watchdog, current `action`),
+      **only dirty/explored chunks**: changed layers (RLE or sparse diff vs. regenerated
+      chunk) + fog RLE.
+- [ ] `deserialize(snapshot) → SimulationEngine` (recompile source → program; the VM
+      state is restored on top). Reject/upgrade unknown versions.
+- [ ] Round-trip test: run N ticks, save, load, run M more ticks ⇒ identical to an
+      uninterrupted N+M run (determinism guarantee).
+- [ ] UI: autosave to `localStorage` every ~30 s and on page hide; "Save to file"
+      (`<a download>`), "Load from file" (`<input type=file>`), "New world" confirms
+      before discarding. Load the autosave on startup if present.
 
-### Presentation (`src/render/`, `src/ui/`)
-- [ ] Cargo panel (4 slots with item names) and science counter in the debugger.
-- [ ] Goals panel/tab with progress; toast on completion.
-- [ ] FX: drill sparks, grab beam, spectrometer glow on the rover.
-- [ ] Reference tab: tool table and new ports (auto-generated).
-- [ ] New template firmware: "Prospector" (find ore, mine, analyze, transmit).
+### Storyteller (`EventDirector`)
+- [ ] Seeded `Rng` in the director (state saved). Scheduler that rolls events per sol.
+- [ ] **Solar eclipse:** `env.lightFactor` ramps to 0 for ~150 ticks mid-day; announced
+      ~200 ticks ahead via a new port `@ALERT` (0 none, 1 eclipse, 2 squall) and a log line.
+- [ ] **Micrometeorite squall:** for ~100 ticks, rovers take hull damage per tick unless
+      the solar array is stowed and the rover is not moving (or damage doubles with the
+      panels open). Rewards `REPAIR_KIT` use.
+- [ ] Event goals: *Survive an eclipse powered*, *Weather a squall with hull > 50*.
+- [ ] Renderer: eclipse darkening, squall streaks; event banner in the HUD.
+- [ ] Tests: event schedule is deterministic per seed; eclipse zeroes `@SUN_LIGHT`;
+      squall damage rules.
+
+### Admin console
+- [ ] Admin tab: trigger eclipse/squall now, set time of day, give credits, teleport
+      rover to a clicked tile, toggle invulnerability.
 
 ### Docs
-- [ ] SPEC: tools, cargo, science, goals sections; ports table; status markers.
-- [ ] This file: tick the boxes, move M5 to done, write the M6 detailed plan.
+- [ ] SPEC: save format, events, `@ALERT`; ROADMAP: tick boxes, M7 detailed plan.
+
+## Resolved decisions (M5)
+
+1. Science delivery: **automatic** with every successful `@TX_DATA` write.
+2. Grabber reach: **adjacent tile only**.
+3. Science credits: **currency** for M7 upgrades (delivered science + goal rewards).
+4. Explorer firmware dish: **unchanged** (aligns only while charging; the Prospector
+   template shows continuous tracking).
 
 ## Open decisions
 
-1. **Science delivery:** automatic on any successful `@TX_DATA` write, or a dedicated
-   port (e.g. `@TX_SCIENCE`)? Proposal: automatic, simplest for players.
-2. **Grabber reach:** adjacent tile only, or also the tile under the rover?
-3. **Score meaning:** is science a currency for M7 upgrades, or only a score? Proposal:
-   currency (gives the sandbox a progression loop).
-4. **Explorer firmware dish:** it only aligns the dish while charging, so uploads are
-   often expensive. Keep as a teaching moment, or align the dish every loop?
+1. Save slots: a single autosave + file export, or several named slots in `localStorage`?
+2. Squall rule: damage only when the array is open, or always unless the rover is still?
+3. Balance: the Prospector earns ~75 credits in its first 1.5 sols. Fine for now; revisit
+   once M7 prices exist.
 
 ## Backlog / ideas
 
@@ -81,4 +86,5 @@ send science home. A first set of goals gives the sandbox direction.
 
 | Date | PR / branch | Summary |
 | :--- | :--- | :--- |
-| 2026-11-12 | `ccr-fb6a40ee-nae64a` | M0–M4 implemented; spec v1.3; M8 visual roadmap added. |
+| 2026-11-12 | `ccr-fb6a40ee-nae64a` | M0–M4 implemented; spec v1.3; M8 visual roadmap added. Branch later renamed to `main`. |
+| 2026-11-12 | `ccr-fb6a40ee-nae64a` → PR | M5: tools, cargo, spectrometer, science credits, goals, Prospector template. |

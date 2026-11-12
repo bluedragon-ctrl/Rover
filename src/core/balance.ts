@@ -1,3 +1,5 @@
+import type { ToolId } from './tools';
+
 /** All tunable gameplay numbers. See docs/SPEC.md §2–§3. */
 export const BALANCE = {
   defaultTickHz: 10,
@@ -48,6 +50,8 @@ export interface ChassisDef {
   cyclesPerTick: number;
   sensorRange: number;
   cargoSlots: number;
+  /** Tool mounted in each hardpoint TOOL_0..TOOL_3 (null = empty). */
+  tools: ReadonlyArray<ToolId | null>;
 }
 
 export const CHASSIS_MK1: ChassisDef = {
@@ -59,4 +63,5 @@ export const CHASSIS_MK1: ChassisDef = {
   cyclesPerTick: 4,
   sensorRange: 6,
   cargoSlots: 4,
+  tools: ['DRILL', 'GRABBER', 'SPECTROMETER', null],
 };

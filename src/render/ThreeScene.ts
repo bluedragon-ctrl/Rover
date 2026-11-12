@@ -29,6 +29,8 @@ export class ThreeScene {
   private raycaster = new THREE.Raycaster();
   private groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
+  /** Effective simulation ticks per real second (set by the app) for FX timing. */
+  ticksPerSecond = 10;
   /** Camera focus in world tile coordinates (float). */
   focusX = 0.5;
   focusY = 0.5;
@@ -55,7 +57,13 @@ export class ThreeScene {
       const color = e.hit ? (engine.registry.get(e.hit)?.color ?? 0xffffff) : 0x3affc8;
       this.fx.scan(e.x, e.y, e.dir, e.dist, color, performance.now());
     });
-    engine.events.on('UPLINK_PULSE', (e) => this.fx.uplink(e.x, e.y, e.ok, engine.orbitAzimuth, performance.now()));
+    engine.events.on('UPLINK_PULSE', (e) => this.fx.uplink(e.x, e.y, e.ok, engine.orbitAzimuth, performance.now(), e.science));
+    const toolColor: Record<string, number> = { DRILL: 0xff8a3a, GRABBER: 0x3affc8, SPECTROMETER: 0xd4a0ff, USE_ITEM: 0xffffff };
+    engine.events.on('TOOL_USED', (e) => {
+      // Real-time length of the action at the current speed, so the effect lasts as long as the tool.
+      const ms = Math.min(4000, (e.ticks * 1000) / Math.max(1, this.ticksPerSecond));
+      this.fx.tool(e.x, e.y, e.targetX, e.targetY, toolColor[e.tool] ?? 0xffffff, ms, performance.now());
+    });
   }
 
   setViewMode(mode: ViewMode): void {

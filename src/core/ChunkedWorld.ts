@@ -30,6 +30,8 @@ export function worldToChunk(x: number, y: number): { cx: number; cy: number; lx
 /** Infinite sparse tile storage. Layer 3 (actors) is not stored here; see SimulationEngine. */
 export class ChunkedWorld {
   private chunks = new Map<string, WorldChunk>();
+  /** Total tiles mapped by fog-of-war reveals (for goals/stats). */
+  mappedTiles = 0;
   /** Current tick, used for eviction bookkeeping. */
   now = 0;
   onTileChanged?: (x: number, y: number, layer: number, id: number) => void;
@@ -93,6 +95,7 @@ export class ChunkedWorld {
         if (c.fog[i] === 0) {
           c.fog[i] = 1;
           c.explored = true;
+          this.mappedTiles++;
           c.version++;
         }
       }

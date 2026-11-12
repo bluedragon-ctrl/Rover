@@ -33,8 +33,32 @@ export class FxOverlay {
     this.fx.push({ obj, wx: x + 0.5, wy: y + 0.5, born: now, life: 450 });
   }
 
+  /** Tool beam from the rover to its target tile (drill/grabber), or a halo (internal tools). */
+  tool(x: number, y: number, tx: number | null, ty: number | null, color: number, lifeMs: number, now: number): void {
+    const pts: number[] = [];
+    if (tx !== null && ty !== null) {
+      const dx = tx - x, dz = -(ty - y);
+      for (let i = 0; i < 6; i++) {
+        const j = (i * 0.37) % 0.3 - 0.15;
+        pts.push(0, 0.3, 0, dx + j, 0.25 + (i % 3) * 0.12, dz - j);
+      }
+    } else {
+      for (let i = 0; i < 16; i++) {
+        const a0 = (i / 16) * Math.PI * 2, a1 = ((i + 1) / 16) * Math.PI * 2;
+        pts.push(Math.cos(a0) * 0.55, 0.45, Math.sin(a0) * 0.55, Math.cos(a1) * 0.55, 0.45, Math.sin(a1) * 0.55);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    const obj = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color, transparent: true }));
+    obj.frustumCulled = false;
+    obj.userData.flicker = true;
+    this.root.add(obj);
+    this.fx.push({ obj, wx: x + 0.5, wy: y + 0.5, born: now, life: lifeMs });
+  }
+
   /** Uplink: expanding ring plus a beam toward the orbiter bearing. */
-  uplink(x: number, y: number, ok: boolean, bearing: number, now: number): void {
+  uplink(x: number, y: number, ok: boolean, bearing: number, now: number, science = false): void {
     const pts: number[] = [];
     const n = 32;
     for (let i = 0; i < n; i++) {
@@ -47,7 +71,7 @@ export class FxOverlay {
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-    const obj = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: ok ? 0x5ad0ff : 0xff4d4d, transparent: true }));
+    const obj = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: !ok ? 0xff4d4d : science ? 0xffd23a : 0x5ad0ff, transparent: true }));
     obj.frustumCulled = false;
     obj.userData.grow = true;
     this.root.add(obj);
@@ -65,6 +89,7 @@ export class FxOverlay {
       }
       (f.obj.material as THREE.LineBasicMaterial).opacity = 1 - t;
       if (f.obj.userData.grow) f.obj.scale.setScalar(0.3 + t * 1.6);
+      if (f.obj.userData.flicker) (f.obj.material as THREE.LineBasicMaterial).opacity = Math.floor(now / 60) % 2 ? 1 : 0.35;
       f.obj.position.set(f.wx - focusX, 0, -(f.wy - focusY));
       return true;
     });
