@@ -129,6 +129,14 @@ export const PORTS: PortDef[] = [
     }),
   ),
   {
+    name: 'POST',
+    description: 'Two-digit hex display on the back of the cabin, like a PC POST card (0–255, shown as 00–FF). Visual only, free, no @STATUS, survives reboots; the operator reads it when the rover is in view',
+    min: 0,
+    max: 255,
+    read: (u) => u.post,
+    write: (u, v) => (u.post = v),
+  },
+  {
     name: 'HEADLIGHT',
     description: `Headlight 0/1 (${BALANCE.headlightPerTick} energy/tick): at night lights a cone ${BALANCE.headlightSensorRange} tiles along @HEADING (3 wide, then 5) so the operator can see and map it. SCAN does not need it`,
     min: 0,

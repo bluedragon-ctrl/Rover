@@ -241,7 +241,7 @@ prerequisites and count neither toward goals nor toward "seen" prerequisites.
 
 ## 3.6 Persistence **[M6]**
 
-`SaveManager.serialize/deserialize` (headless). A save (`version: 6`; v1–v5 files are migrated
+`SaveManager.serialize/deserialize` (headless). A save (`version: 7`; v1–v6 files are migrated
 by `migrate()`) holds the seed, supply drops, installed upgrades, each rover's downlink
 (log FIFO, transmitter budget, `@LOG_LOST`, recorder descriptors and progress, sequence
 number, dump replies waiting), the console's last 200 received frames, the gallery's last 100 products,
@@ -285,8 +285,8 @@ unaffected (it already fits). Goal *Upgraded*: install a first upgrade.
 Built so far: the link (§3.8.1) with the log FIFO, log and boot frames (§3.8.2), `LOG`,
 `@LOG_FREE`, `@LOG_LOST`, `@TX_DATA` as `LOG 0` and the Console tab (§3.8.3) (slice 1);
 the science recorder, science frames, spectra, `@REC_FREE` and the Gallery tab
-(§3.8.5) (slice 2); dumps, `BRK`, `HALTED` and the admin-only debugger (§3.8.4) (slice 3).
-Still planned: `@POST`, the camera and the upgrades.
+(§3.8.5) (slice 2); dumps, `BRK`, `HALTED` and the admin-only debugger (§3.8.4) (slice 3);
+`@POST` (§3.8.3) (slice 4). Still planned: the camera and the upgrades.
 
 Design principle: **mission control knows only what the rover sent**, plus the program
 it uploaded itself. There is no live view of registers, stacks or ports for the player
@@ -356,10 +356,13 @@ kind 1 = science frame   size = 0; followed by 1 sequence byte, then the product
   ("⚠ 3 frames lost"): the transmitter counts drops and reports the count with the next
   frame that gets through (link-layer bookkeeping, not part of the frame bytes). The
   console keeps the last 200 frames (saved).
-* **`@POST` (RW, 0–255):** a two-digit hexadecimal display on the rover body, like a PC
-  POST card. Free, no link needed, no `@STATUS`; physical (survives reboots), dark while
-  powered off. The player can read it only while the rover is inside their view
-  (§3.1.1): at night, near the rover or in the headlight cone.
+* **`@POST` (RW, 0–255) [M9]:** a two-digit hexadecimal display (red seven-segment
+  digits, `00`–`FF`, `b` and `d` lower case) on a bezel at the **back of the cabin**, like a
+  PC POST card. Free, no link needed, no `@STATUS`; writes clamp to 0–255; physical
+  (survives reboots), dark while powered off. Mission control does not receive it: the
+  operator reads it in the 3D view. The view is centred on the followed rover, so its own
+  display is always in view; with more rovers (M12) another rover's display is readable
+  only while that rover is inside the operator's view (§3.1.1).
 
 ### 3.8.4 Memory dumps and `BRK`
 
@@ -456,6 +459,45 @@ gallery keeps the last 100 products (saved). Old saves: science points still wai
 | Colour filter wheel | 60 | Camera mode 3 | – |
 | Hi-res sensor | 80 | Camera mode 4 | Recorder 2 KB |
 | Colour sensor | 100 | Camera mode 5 | Colour filter wheel, Recorder 2 KB |
+
+## 3.9 Firmware and programs **[M10, planned]**
+
+Design agreed with the owner (2026-11-12); details are settled while building M10.
+
+The rover runs two pieces of code on its one CPU, like a spacecraft's flight software
+running uplinked command sequences, or a small OS starting user programs:
+
+* **Firmware** keeps the rover alive (sun, dish, squalls, low battery) and decides when
+  the program runs. The factory firmware ships with every rover. Advanced players may
+  edit and upload it (full upload cost, hard reboot), as today.
+* **Program**: the player's task (Explorer, Prospector, Fetch, ...). Beginners only write
+  programs. *Upload program* pays only for the program's bytes and does **not** reboot.
+
+Rules:
+
+* **Shared flash, separate contexts.** Firmware + program together must fit the chassis
+  flash (Mk-I 128 B): a lean firmware leaves room for bigger programs. Each has its own
+  IP, registers and stacks, so a program cannot clobber the firmware's variables.
+* **One CPU, one thread of control.** The program runs only inside the firmware's
+  `RUN ticks`: it runs until it ends, faults or the slice is used up, then control returns
+  to the firmware; the next `RUN` resumes it. The slice is checked between instructions,
+  so a long `SLEEP` or `STEP` in the program runs to completion first (as in any
+  cooperative system). No actuator ownership rules are needed: the firmware tidies up
+  between slices.
+* **Registry ports:** `@PROG_STATE` (`PROG_NONE`, `PROG_READY`, `PROG_RUNNING`,
+  `PROG_DONE`, `PROG_FAULT`, `PROG_HALTED`) and `@PROG_RESULT` (the value of `END value`).
+* **Program faults** return to the firmware with `PROG_FAULT` instead of a watchdog
+  reboot. `BRK` in a program halts only the program; *Continue* resumes it.
+* **Default firmware = a small core + optional comfort features.** The core: housekeeping,
+  give the program time slices (none while charging), log the outcome (`PROG done = 3`),
+  acknowledge. On top, beginner-friendly features in clearly marked, removable blocks,
+  e.g. indicator lamps showing the program state (running / done / fault / charging),
+  `@POST` codes, a battery heartbeat. Each block is commented with its flash cost
+  (the editor's byte gutter shows it), so an experienced player can delete what they do
+  not need and give the bytes to their program. Anything smarter is the player's to add.
+* **Console:** *Run again* restarts the program without re-uploading it.
+* **Editor:** the Code tab edits the program by default; the firmware editor is marked
+  advanced. Templates become programs.
 
 ## 4. World
 
@@ -587,7 +629,7 @@ compute instructions leave it alone.
 | `@LOG_FREE` | R | free bytes in the log FIFO | M9 |
 | `@LOG_LOST` | RW | log frames dropped (saturates at 255) | M9 |
 | `@REC_FREE` | R | free bytes in the science recorder | M9 |
-| `@POST` | RW | 0–255, two-digit hex display on the rover | M9, planned |
+| `@POST` | RW | 0–255, two-digit hex display on the back of the cabin | M9 |
 
 Writes are clamped to the port's range; angle ports wrap modulo 360.
 

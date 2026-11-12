@@ -42,3 +42,33 @@ describe('indicator lamps @IND1..@IND3', () => {
     expect(deserialize(v2).units[0].indicators).toEqual([0, 0, 0]);
   });
 });
+
+describe('@POST display (SPEC §3.8.3)', () => {
+  it('is a free 0–255 port that leaves @STATUS alone and survives reboots', async () => {
+    const { SimulationEngine } = await import('../src/core/SimulationEngine');
+    const { Status } = await import('../src/core/types');
+    const e = new SimulationEngine({ seed: 2 });
+    const u = e.spawnUnit('t');
+    e.upload(u, 'MOV @POST 0x1F\nMOV r0 @POST\nMOV @POST 999\nMOV r1 @POST\nMOV @POST -5\nMOV r2 @POST\nMOV @POST 0xA5\nidle: JMP idle', { factory: true });
+    u.vm.status = Status.ERR_FULL;
+    for (let i = 0; i < 5; i++) e.advanceTick();
+    expect([u.vm.regs[0], u.vm.regs[1], u.vm.regs[2]]).toEqual([0x1f, 255, 0]);
+    expect(u.post).toBe(0xa5);
+    expect(u.vm.status).toBe(Status.ERR_FULL); // @POST writes do not touch @STATUS
+    e.upload(u, 'SLEEP 100', { factory: true });
+    expect(u.post).toBe(0xa5); // physical: survives the reboot
+  });
+
+  it('is saved, and v6 saves migrate to 00', async () => {
+    const { SimulationEngine } = await import('../src/core/SimulationEngine');
+    const { serialize, deserialize } = await import('../src/core/SaveManager');
+    const e = new SimulationEngine({ seed: 2 });
+    const u = e.spawnUnit('t');
+    u.post = 0x42;
+    expect(deserialize(JSON.parse(JSON.stringify(serialize(e)))).units[0].post).toBe(0x42);
+    const v6 = serialize(e) as unknown as Record<string, any>;
+    v6.version = 6;
+    for (const s of v6.units) delete s.post;
+    expect(deserialize(v6).units[0].post).toBe(0);
+  });
+});

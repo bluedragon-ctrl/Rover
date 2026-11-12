@@ -33,6 +33,8 @@ export class Unit {
   lightBlink = 0;
   /** Three programmable indicator lamps on the cabin roof (LightColor each). Purely visual. */
   indicators: number[] = [0, 0, 0];
+  /** @POST: two-digit hex display on the back of the cabin (0–255). Visual only, survives reboots. */
+  post = 0;
   headlight = 0;
   /** Commanded solar state 0/1 (@SOLAR_OPEN). */
   solarOpen = 0;

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { RoverRigMesh } from './VectorFactory';
+import { POST_DARK, POST_LIT, SEVEN_SEG, type RoverRigMesh } from './VectorFactory';
 
 /** Everything the rover model shows, in renderer terms (no sim types, so the preview can drive it). */
 export interface RoverPose {
@@ -20,6 +20,8 @@ export interface RoverPose {
   beaconHex: number;
   /** Indicator lamp colours (hex), left to right. */
   indicators: number[];
+  /** @POST value 0–255 shown as two hex digits; null = dark (powered off, or not visible). */
+  post?: number | null;
   headlight: boolean;
   drilling: boolean;
   /** Sensor range in tiles (for the ring). */
@@ -75,6 +77,11 @@ export class RoverAnimator {
 
     m.beacon.color.setHex(p.beaconHex);
     p.indicators.forEach((hex, i) => m.indicators[i]?.color.setHex(hex));
+    if (m.postSegs.length) {
+      const v = p.post ?? null;
+      const pats = v === null ? [0, 0] : [SEVEN_SEG[(v >> 4) & 15], SEVEN_SEG[v & 15]];
+      m.postSegs.forEach((mat, i) => mat.color.setHex((pats[Math.floor(i / 7)] >> i % 7) & 1 ? POST_LIT : POST_DARK));
+    }
     m.headLamp.color.setHex(p.headlight ? 0xf0f8ff : 0x1e293b);
     m.beam.visible = p.headlight;
 
