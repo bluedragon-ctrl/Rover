@@ -26,6 +26,9 @@ export function radarFront(age: number, range: number): number {
  * therefore light up as crisp cells, the same cells the operator sees and maps: the disc and
  * cone here mirror `src/core/sensors.ts` (cone numbers are injected from HEADLIGHT_CONE).
  *
+ * Geometry flagged `hidden` (unmapped tiles) is discarded except where a radar wave
+ * passes, so a SCAN briefly outlines unexplored terrain without mapping it.
+ *
  * At night unlit tiles fade to a cold, desaturated grey ("remembered terrain") instead of
  * black; lit tiles keep their full colour and a slight boost so they bloom.
  */
@@ -92,6 +95,7 @@ export class TileLighting {
 const VERT = /* glsl */ `
 #define MAX_LIGHTS ${MAX_LIGHTS}
 attribute vec2 tile;
+attribute float hidden;
 uniform int uLightCount;
 uniform vec4 uLights[MAX_LIGHTS];
 uniform vec4 uBeams[MAX_LIGHTS];
@@ -100,6 +104,7 @@ uniform float uDay;
 varying vec3 vColor;
 varying float vLit;
 varying float vRadar;
+varying float vHidden;
 #include <fog_pars_vertex>
 
 void main() {
@@ -136,6 +141,7 @@ void main() {
   }
   vLit = max(lit, uDay);
   vRadar = radar;
+  vHidden = hidden;
   vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
   gl_Position = projectionMatrix * mvPosition;
   #include <fog_vertex>
@@ -149,9 +155,12 @@ uniform vec3 uRadar;
 varying vec3 vColor;
 varying float vLit;
 varying float vRadar;
+varying float vHidden;
 #include <fog_pars_fragment>
 
 void main() {
+  // Unmapped terrain: only the radar wave shows it, as a red silhouette.
+  if (vHidden > 0.5 && vRadar < 0.02) discard;
   float g = dot(vColor, vec3(0.299, 0.587, 0.114));
 #ifdef FILL
   vec3 dark = uNight * g * 0.8;
@@ -165,6 +174,13 @@ void main() {
 #else
   col = mix(col, uRadar * (0.55 + g * 0.9), vRadar * 0.9);
 #endif
+  if (vHidden > 0.5) {
+#ifdef FILL
+    col = uRadar * 0.12 * vRadar;
+#else
+    col = uRadar * (0.4 + g * 0.8) * vRadar;
+#endif
+  }
   gl_FragColor = vec4(col, 1.0);
   #include <fog_fragment>
 }

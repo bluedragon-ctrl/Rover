@@ -17,7 +17,7 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | M5 | Tools, cargo, spectrometer, science, first goals | ✅ done |
 | M6 | Save/load + autosave, storyteller with prerequisites & teaching events, subsystem damage, material repairs, admin console | ✅ done |
 | M7 | Upgrades bought with credits, delivered as supply crates, seismic scanner, save v2 | ✅ done |
-| **M8** | **Visual overhaul (SPEC §7)** | 🚧 in progress: asset preview + indicator lamps done; ⏭ next: switch the game renderer |
+| **M8** | **Visual overhaul (SPEC §7)** | 🚧 in progress: asset preview, indicator lamps, **game renderer switched to v2**; ⏭ next: owner playtest of the new renderer, then frame-time baseline + LOD |
 | M8.1 | Radar `SCAN` vs. light-limited operator view; headlight cone; `@HEADING` | ✅ done |
 | Flash bytes | Program size in machine-code bytes instead of lines (SPEC §5.7) | ✅ core done; editor byte gutter awaiting preview approval |
 | **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | 📝 designed; ⏭ next after M8; photo POC in `preview.html?photos=1` |
@@ -89,20 +89,32 @@ with sparks, wheels, CPU core); rock walls with strata, flat pebbles, volcano ve
 ore mounds (new `mound` shape), buried silicon crystals; **indicator lamps** `@IND1..3`
 (already live in the game, see SPEC §3.3.1).
 
+- [x] **Switch the game renderer** to the v2 assets: `ThreeScene` now uses `CameraRig`
+      (left-drag pan, right/Ctrl-drag orbit, wheel zoom to cursor, Q/E rotate 90°, V
+      angled ↔ top-down, double-click / F follow), `PostFx` bloom (B toggles), `TileLighting`
+      (day/dusk grading, night view disc + headlight cone from `engine.viewShape`),
+      `buildRoverRig` + `RoverAnimator` (solar wings, dish, CPU core, indicators, wheels,
+      drill with sparks), fog + dust like the preview. Compass rotates with camera yaw.
+      `uPulses` driven by `SCAN_PULSE` + `engine.sensorRange(u)`. `ChunkPool` builds a
+      line + fill mesh per chunk; **unmapped tiles get their real geometry flagged
+      `hidden`** (new `hidden` vertex attribute in `LineBatch` / `FillBatch`), discarded by
+      the shader except under a radar wave. v1 `drawTile` / `buildRoverMesh` removed.
+      Dev builds expose `window.__rover = { engine, scene, rover }` for console/screenshots.
+      The world-info line shows chunk meshes, line vertices and fps.
+- [ ] Owner playtest of the switched renderer (feel of pan/orbit defaults, start zoom 14,
+      bloom strength, dust). Cost note: hidden geometry roughly doubles line vertices in
+      unexplored areas (~250k line vertices at the default view, 25 chunks).
+
 Remaining:
-- [ ] **Switch the game renderer** to the v2 assets (`drawTileVec`, `buildRoverRig`,
-      `TileLighting`, `CameraRig`, `PostFx`); compass must rotate with camera yaw.
-      Drive `uPulses` from `SCAN_PULSE` + `engine.sensorRange(u)`. The radar wave must
-      also briefly show **unmapped** tiles, so chunks need (hidden) geometry for them that
-      only the wave makes visible.
 
 
 Everything lives in `src/render/` (the renderer only reads the simulation), so gameplay
 tests must stay untouched. Do it in small PRs, checking frame time at each step.
 
 - [ ] **Frame-time HUD** (toggle): fps, ms/frame, chunk meshes, line vertices. Baseline first.
-- [ ] **Bloom:** `EffectComposer` + `UnrealBloomPass`, selective (grid stays crisp; ore,
-      beacons, scan/uplink FX, vents, supply crates glow). Settings toggle for slow GPUs.
+      (Partly done: the world-info line under the viewport shows all four; no toggle yet,
+      no baseline measured on real GPUs.)
+- [x] **Bloom:** `PostFx` (threshold bloom keeps the grid crisp), B toggles it.
 - [ ] **Fat lines:** `LineSegments2` + `LineMaterial` for rover, ore, crates and FX;
       width scales with zoom. Keep 1 px for the terrain grid (cost).
 - [ ] **LOD by zoom:** far = grid + silhouettes; near = pebbles, rock strata, detailed rover
@@ -250,3 +262,4 @@ window with a fixed dish?
 | 2026-11-12 | `ccr-4522f0b5-0m8b66` | M8.1: `SCAN` is radar (day and night); the player's view needs light (night ring + headlight cone, shared `sensors.ts`, TileLighting); `@HEADING` port; Long-range radar upgrade. |
 | 2026-11-12 | `ccr-27c44841-89sznb` | Flash measured in machine-code bytes (SPEC §5.7): encoding table, 128/192/256 B, upload cost per byte, Reference tab; editor byte gutter in preview. |
 | 2026-11-12 | `ccr-31b53af7-npq5g8` | M9 designed (SPEC §3.8 v1.5): byte downlink, `LOG` debug channel, admin-only debugger, dumps/`BRK`, `@POST`, science recorder, spectra and camera photos with upgrade tiers; photo POC `preview.html?photos=1`; multiple rovers renumbered to M10. |
+| 2026-11-12 | `ccr-a25966c0-1wr43t` | M8: game renderer switched to the v2 assets (CameraRig, PostFx bloom, TileLighting, rover rig + animator, dust/fog); radar wave outlines unmapped terrain via hidden chunk geometry; compass rotates with the camera; Q/E/B keys; v1 shapes removed. |

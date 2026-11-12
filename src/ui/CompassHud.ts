@@ -3,7 +3,7 @@ import type { SimulationEngine } from '../core/SimulationEngine';
 import type { Unit } from '../core/Unit';
 
 /**
- * Sky compass (north up): sun, relay orbiter, and where the rover's solar array and
+ * Sky compass, rotated with the camera (screen-up = the direction the camera looks): sun, relay orbiter, and where the rover's solar array and
  * dish are pointing. Lets players see alignment at a glance.
  */
 export class CompassHud {
@@ -20,14 +20,15 @@ export class CompassHud {
     this.ctx.scale(dpr, dpr);
   }
 
-  update(u: Unit): void {
+  /** `yaw`: camera yaw in radians (0 = looking north), so bearings match the 3D view. */
+  update(u: Unit, yaw = 0): void {
     const g = this.ctx;
     const s = this.size;
     const c = s / 2;
     const R = c - 16;
     const sun = this.engine.sun;
     const pt = (bearing: number, r: number): [number, number] => {
-      const a = (bearing * Math.PI) / 180;
+      const a = (bearing * Math.PI) / 180 - yaw;
       return [c + Math.sin(a) * r, c - Math.cos(a) * r];
     };
     g.clearRect(0, 0, s, s);
