@@ -100,6 +100,19 @@ export const PORTS: PortDef[] = [
   },
   { name: 'SIGNAL_STR', description: 'Uplink quality 0–100 (dish alignment × dish health)', read: (u, c) => Math.floor((signalStrength(u.antennaAngle, c.orbitAzimuth) * u.antennaHealth) / 100) },
   { name: 'TX_DATA', description: `Write to transmit a packet (needs @SIGNAL_STR >= ${BALANCE.txMinSignal}; sets @STATUS). Carries 1 science packet if @SCIENCE_READY > 0`, write: (u, v, c) => c.transmit(u, v) },
+  {
+    name: 'LOG_FREE',
+    description: 'Free bytes in the log FIFO (LOG frames wait here for the downlink)',
+    read: (u) => u.link.free(u.chassis.logFifoBytes),
+  },
+  {
+    name: 'LOG_LOST',
+    description: 'LOG frames dropped because the FIFO was full, since boot (saturates at 255; write to set, usually 0)',
+    min: 0,
+    max: 255,
+    read: (u) => u.link.lost,
+    write: (u, v) => (u.link.lost = v),
+  },
 
   // Lights
   { name: 'LIGHT_COLOR', description: 'Status beacon color 0–4', min: 0, max: 4, read: (u) => u.lightColor, write: (u, v) => (u.lightColor = v) },

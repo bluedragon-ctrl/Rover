@@ -10,6 +10,7 @@ const NOTES: Record<string, string> = {
   JMP: 'jump', JEQ: 'jump if a == b', JNE: 'jump if a != b', JLT: 'jump if a < b', JGT: 'jump if a > b', JLE: 'jump if a <= b', JGE: 'jump if a >= b',
   CALL: 'push args, call', RET: 'return',
   SLEEP: 'wait N ticks', SCAN: 'ray: dest1 = tile type, dest2 = distance', STEP: 'drive [tiles] in dir', ACT: 'fire tool in hardpoint (see Tools)', PEEK: 'dest = item ID in cargo slot', USE: 'repair [system] (default SYS_HULL) by consuming the material in cargo slot (see Tools)',
+  LOG: 'queue a log frame for the downlink (Console tab). tag: number or CONST 0–14 (15 = system). 1 cycle, no @STATUS; dropped if the FIFO is full (@LOG_LOST)',
 };
 
 /** Generated language reference: always in sync with the compiler and port table. */
@@ -34,6 +35,6 @@ export function renderReference(el: HTMLElement, registry: WorldRegistry): void 
       .join('')}<tr><td><code>ACT TOOL_3 &lt;dir&gt;</code></td><td>with the upgrade: ${TOOLS.SEISMIC.name}: ${TOOLS.SEISMIC.description}</td></tr><tr><td><code>USE &lt;slot&gt; [system]</code></td><td>${TOOLS.USE_ITEM.name}: ${TOOLS.USE_ITEM.description} ${TOOLS.USE_ITEM.ticks} ticks, ${TOOLS.USE_ITEM.energy / 1000}% battery.</td></tr></table>
     <h4>Ports</h4><table>${ports}</table>
     <h4>Constants</h4><p class="consts">${consts}</p>
-    <h4>Keys</h4><p><code>Ctrl+Enter</code> upload · <code>Space</code> pause (outside editor) · <code>.</code> step instruction · <code>V</code> camera view · <code>F</code> follow rover</p>
+    <h4>Keys</h4><p><code>Ctrl+Enter</code> upload · <code>Space</code> pause (outside editor) · <code>.</code> step instruction · <code>V</code> camera view · <code>F</code> follow rover · <code>Q</code>/<code>E</code> rotate · <code>B</code> bloom · <code>P</code> frame-time HUD</p>
   `;
 }

@@ -23,7 +23,7 @@
       <div class="group small" id="credits" title="Science credits: delivered science + goal rewards"></div>
       <div class="group small" id="clock"></div>
       <div class="group">
-        <button id="btn-view" title="Toggle angled / top-down (V). Drag: pan · right-drag: orbit · wheel: zoom to cursor · Q/E: rotate 90° · B: bloom · double-click: follow">View</button>
+        <button id="btn-view" title="Toggle angled / top-down (V). Drag: pan · right-drag: orbit · wheel: zoom to cursor · Q/E: rotate 90° · B: bloom · pan stays within 24 tiles of the rover · double-click: follow">View</button>
         <button id="btn-follow" title="Follow rover (F)">Follow</button>
         <button id="btn-new" title="Start a new world with a random seed">New world</button>
       </div>
@@ -40,6 +40,7 @@
       <aside id="side">
         <div class="tabs">
           <button class="tab active" data-tab="code">Code</button>
+          <button class="tab" data-tab="console">Console</button>
           <button class="tab" data-tab="goals">Goals</button>
           <button class="tab" data-tab="upgrades">Upgrades</button>
           <button class="tab" data-tab="ref">Reference</button>
@@ -58,6 +59,7 @@
           <div id="editor"></div>
           <div id="debugger"></div>
         </div>
+        <div class="tabpane" id="tab-console"><div id="console"></div></div>
         <div class="tabpane" id="tab-goals"><div id="goals"></div></div>
         <div class="tabpane" id="tab-upgrades"><div id="upgrades"></div></div>
         <div class="tabpane" id="tab-ref"><div id="reference"></div></div>

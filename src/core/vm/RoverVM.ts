@@ -12,6 +12,8 @@ export interface VmHost {
    * The host decides whether the CPU becomes BLOCKED (via vm.block()).
    */
   hardware(instr: Instr, values: number[]): number[] | void;
+  /** LOG: queue a log frame (compute instruction, no @STATUS). */
+  log?(tag: number, value: number | null): void;
 }
 
 export type StepResult = 'continue' | 'endTick';
@@ -193,6 +195,9 @@ export class RoverVM {
         next = r;
         break;
       }
+      case 'LOG':
+        host.log?.((a[0] as { v: number }).v, a.length > 1 ? val(a[1]) : null);
+        break;
       case 'PEEK': {
         // Cargo is [later]; route through host so it can implement it without VM changes.
         const out = host.hardware(ins, [val(a[0])]) ?? [];

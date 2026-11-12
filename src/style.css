@@ -60,6 +60,9 @@ main { display: flex; height: calc(100% - 44px); }
 #reference table { border-collapse: collapse; width: 100%; } #reference td { border-bottom: 1px solid var(--line); padding: 3px 4px; vertical-align: top; }
 #reference h4 { margin: 12px 0 4px; color: var(--accent); }
 .consts code { display: inline-block; margin: 1px 2px; }
+#console-list { font-family: var(--mono); font-size: 11px; max-height: 60vh; overflow: auto; border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; margin: 6px 0; }
+#console-list .hex { color: #5d7a9a; }
+#console-list .warn { color: var(--warn); }
 #compass { position: absolute; top: 8px; right: 8px; pointer-events: auto; }
 select { background: #131a26; color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; font: inherit; }
 input[type=checkbox] { width: auto; }

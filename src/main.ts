@@ -12,6 +12,7 @@ import { renderReference } from './ui/ReferencePanel';
 import { PerfHud } from './ui/PerfHud';
 import { CompassHud } from './ui/CompassHud';
 import { GoalsPanel } from './ui/GoalsPanel';
+import { ConsolePanel } from './ui/ConsolePanel';
 import { UpgradesPanel } from './ui/UpgradesPanel';
 import { UPGRADE_BY_ID } from './core/upgrades';
 import { clearAutosave, downloadSave, tryLoadAutosave, writeAutosave, writeAutosaveRaw } from './ui/persistence';
@@ -51,6 +52,7 @@ const debuggerPanel = new DebuggerPanel($('#debugger'), engine);
 if (import.meta.env.DEV) Object.assign(window, { __rover: { engine, scene, rover } });
 const compass = new CompassHud($<HTMLCanvasElement>('#compass'), engine);
 const goalsPanel = new GoalsPanel($('#goals'), engine);
+const consolePanel = new ConsolePanel($('#console'), engine, () => rover);
 const upgradesPanel = new UpgradesPanel($('#upgrades'), engine, () => rover, (err, id) => {
   if (err) log('warn', `Cannot buy ${UPGRADE_BY_ID[id]?.title}: ${err}.`);
 });
@@ -284,6 +286,7 @@ function frame(now: number): void {
     compass.update(rover, scene.yaw);
     updateBanner();
     goalsPanel.update();
+    consolePanel.update();
     upgradesPanel.update();
     creditsEl.textContent = `◆ ${engine.credits} credits`;
     const cost = engine.uploadCost(rover, editorFlash);

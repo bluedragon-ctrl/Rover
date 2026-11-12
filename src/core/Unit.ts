@@ -2,6 +2,7 @@ import { BALANCE, cloneChassis, type ChassisDef } from './balance';
 import { CpuState, LightColor } from './types';
 import type { ToolId } from './tools';
 import { RoverVM } from './vm/RoverVM';
+import { Downlink } from './downlink';
 
 export type UnitAction =
   | { kind: 'WAIT'; ticksLeft: number }
@@ -46,6 +47,8 @@ export class Unit {
   /** Analyzed science waiting to be transmitted. */
   scienceReady = 0;
   lastTx: { tick: number; value: number; ok: boolean } | null = null;
+  /** Byte downlink: log FIFO + transmitter (M9). */
+  link = new Downlink();
   /** Energy gained from solar last tick (for UI). */
   lastSolarGain = 0;
   /** Cache key of the last fog reveal (x, y, range). */
