@@ -4,7 +4,7 @@ This document supersedes `v1.2` of the architecture/language review. It fixes th
 inconsistencies found in review and pins down the numbers the code relies on.
 All tunable numbers live in `src/core/balance.ts`; this document lists defaults.
 
-Status markers: **[M1–M3]** implemented in the first milestone, **[later]** designed
+Status markers: **[M1–M3]**, **[M4]** implemented in that milestone, **[later]** designed
 but not yet implemented.
 
 ---
@@ -26,7 +26,7 @@ but not yet implemented.
 | :--- | :--- | :--- |
 | Tick rate | 10 ticks/s at `1x` | Tunable in the UI (1–60 Hz). Speed multipliers: `0x` (pause), `1x`, `5x`, `20x`. |
 | CPU cycles per tick | 4 (Mk-I) | Chassis stat; upgrades raise it. |
-| Day length | 2400 ticks | 4 min real time at 10 Hz, `1x`. **[later: sun]** |
+| Day length | 2400 ticks | 4 min real time at 10 Hz, `1x`. The game starts shortly after sunrise. **[M4]** |
 
 The simulation is a fixed-timestep loop independent of rendering. Every random choice
 uses a seeded PRNG; the core uses no `Math.random`, no wall-clock time and no
@@ -60,7 +60,7 @@ complete (unblocking its CPU), (3) passive energy drain, (4) each CPU spends its
 | Battery | 100 000 energy units | Exposed as `@BAT` = 0–100 (%). |
 | Hull | 100 | `@HULL`. |
 | Cargo | 4 slots | **[later]** |
-| Sensor range | 6 tiles | Night range rules **[later]** |
+| Sensor range | 6 tiles | 1 at night, 5 at night with headlight. **[M4]** |
 
 ### 3.1 Energy costs (defaults)
 
@@ -71,8 +71,10 @@ complete (unblocking its CPU), (3) passive energy drain, (4) each CPU spends its
 | `STEP` onto `ROUGH_GRAVEL` | 6 / tile | 120 / tile |
 | `STEP` onto `ACID_VENT` | 4 / tile | 60 / tile + 10 hull damage |
 | `SCAN` | 1 | 10 |
-| Headlight on **[later]** | per tick | 20 |
-| Solar charge **[later]** | per tick | up to 60 × sun × alignment |
+| Headlight on | per tick | 8 |
+| Actuator moving (array deploy, panel or dish slew) | per tick, each | 1 |
+| `@TX_DATA` packet | instant | 30 |
+| Solar charge | per tick | `floor(60 × SUN_LIGHT/100 × cos(panel − sun azimuth))`, only when fully deployed |
 
 ### 3.2 CPU states
 
@@ -89,14 +91,32 @@ complete (unblocking its CPU), (3) passive energy drain, (4) each CPU spends its
 `IP = 0`, all registers zeroed, both stacks cleared, any in-flight action aborted,
 `@STATUS = OK`. Physical state (position, battery, hull, cargo, actuator ports) is kept.
 
-Upload cost **[later, M4]**: `ceil(UPLOAD_BASE + UPLOAD_PER_LINE × lines) × 100 / max(10, @SIGNAL_STR)`.
-If the battery cannot pay, the upload is rejected and the old program keeps running.
+Upload cost **[M4]**: `ceil((500 + 50 × lines) × 100 / max(10, @SIGNAL_STR))` energy
+(≈ 1.5 % for a 20-line program at full signal, 10× that with the dish misaligned).
+If the battery cannot pay, or the rover is powered off, the upload is rejected and the
+old program keeps running. New rovers ship with factory firmware installed for free.
+
+### 3.3.1 Sky, solar array and antenna **[M4]**
+
+* **Sun:** azimuth and elevation are pure functions of the tick (integer trig tables).
+  Sunrise is in the east (90°), noon in the south (180°) at 70°, sunset in the west.
+  `@SUN_LIGHT = sin(elevation) × 100`, 0 at night (and during eclipses, M6).
+* **Relay orbiter:** circles the sky once per 1800 ticks; `@ORBIT_AZIMUTH`.
+* **Signal:** `@SIGNAL_STR = 100 × cos⁴(dish − orbiter)`; ≈ 50 at 33° off, 0 beyond 90°.
+* **Motors:** writing `@SOLAR_ANGLE` / `@ANTENNA_ANGLE` sets a target; the turntable slews
+  3°/tick and reading the port returns the *current* angle. Writing `@SOLAR_OPEN` starts a
+  20-tick deploy/stow. Actuator state is physical: it survives reboots.
+* **Movement lock:** `STEP` fails with `ERR_DEPLOYED` while the array is commanded open
+  or not fully stowed.
+* **TX:** writing `@TX_DATA` sends a packet if `@SIGNAL_STR >= 50` and sets `@STATUS`
+  (`OK`, `ERR_NO_SIGNAL`, `ERR_LOW_POWER`). This is the one port write that touches
+  `@STATUS`.
 
 ### 3.4 Power-off and solar recovery
 
 When energy reaches 0 the CPU powers off and any action is aborted. If the solar array
 is deployed and charging, the rover **cold-boots** (hard reboot) once the battery
-reaches 5 %. If the array was stowed, the rover is stuck: the admin console
+reaches 5 % **[M4]**. If the array was stowed, the rover is stuck: the admin console
 (`forceCharge`, `forceRepair`, `respawnAtOrigin`) is the escape hatch.
 
 ## 4. World
@@ -104,17 +124,20 @@ reaches 5 %. If the array was stowed, the rover is stuck: the admin console
 * Infinite, signed integer coordinates. **`NORTH` = +Y, `EAST` = +X.**
 * 16×16 chunks in a sparse `Map<"cx,cy", WorldChunk>`;
   `cx = floor(x / 16)`, `lx = ((x % 16) + 16) % 16`.
-* Each chunk: four `Uint16Array(256)` layers, a `Uint8Array(256)` fog mask **[fog later]**,
-  `dirty` flag (any modification vs. the generated state), `lastTouched` tick.
+* Each chunk: four `Uint16Array(256)` layers, a `Uint8Array(256)` fog mask, a `dirty`
+  flag (any tile modified vs. generation), an `explored` flag, and `lastTouched`.
+* **Fog of war [M4]:** tiles within the current sensor range of a rover become *mapped*
+  (permanent). "Currently visible" is derived from rover positions, not stored. Unmapped
+  tiles render as faint survey marks.
 * Layers: 0 terrain · 1 obstacles & veins · 2 surface items · 3 actors.
 * **Units are authoritative** for their own position; layer 3 is not stored and is
   computed from the `UnitRegistry` when queried.
 * Generation is a pure function of `(seed, x, y)` built from integer hashing plus value
   noise, so chunk borders are seamless regardless of generation order. A 5×5 clear
   `FLAT_SAND` landing zone surrounds `(0, 0)`.
-* Chunks within a 3×3 radius of any rover stay loaded. Clean (non-dirty) chunks that
-  nothing has touched for a while are evicted and regenerated on demand. Dirty chunks
-  and fog are never evicted (they are part of the save).
+* Chunks within a 3×3 radius of any rover stay loaded. Chunks that are neither dirty
+  nor explored and that nothing has touched for a while are evicted and regenerated on
+  demand. Dirty and explored chunks stay (they are part of the save).
 * Tile ID `0` is `NONE` in every layer. Tiles are declared in `WorldRegistry`; each
   declaration's `constName` automatically becomes a language constant.
 
@@ -183,7 +206,7 @@ compute instructions leave it alone.
 
 * Directions: `NORTH=0`, `EAST=1`, `SOUTH=2`, `WEST=3`.
 * Status: `OK=0`, `ERR_INVALID=1`, `ERR_FULL=2`, `ERR_LOW_POWER=3`, `ERR_BLOCKED=4`,
-  `ERR_NO_TOOL=5`, `ERR_NO_SIGNAL=6`, `ERR_HAZARD=7`.
+  `ERR_NO_TOOL=5`, `ERR_NO_SIGNAL=6`, `ERR_HAZARD=7`, `ERR_DEPLOYED=8`.
 * Tools: `TOOL_0`…`TOOL_3`.
 * Colors: `OFF=0`, `RED=1`, `GREEN=2`, `BLUE=3`, `AMBER=4`.
 * Tiles: `NONE=0` plus every `constName` in `WorldRegistry` (`FLAT_SAND`, `IRON_ORE`, `ROVER`, ...).
@@ -201,15 +224,17 @@ compute instructions leave it alone.
 | `@GROUND_HAZARD` | R | 0–2 | M1–M3 |
 | `@LIGHT_COLOR` | RW | 0–4 | M1–M3 |
 | `@LIGHT_BLINK` | RW | 0/1 | M1–M3 |
-| `@HEADLIGHT` | RW | 0/1 | M1–M3 (visual; cost later) |
+| `@HEADLIGHT` | RW | 0/1 | M4 (costs energy, extends night range) |
+| `@SENSOR_RANGE` | R | current SCAN range | M4 |
+| `@SUN_AZIMUTH`, `@SUN_ELEV`, `@SUN_LIGHT` | R | 0–359, −70..70, 0–100 | M4 |
+| `@SOLAR_OPEN` | RW | 0/1 | M4 |
+| `@SOLAR_ANGLE` | RW | 0–359 (write = target, read = current) | M4 |
+| `@ORBIT_AZIMUTH`, `@SIGNAL_STR` | R | 0–359, 0–100 | M4 |
+| `@ANTENNA_ANGLE` | RW | 0–359 (write = target, read = current) | M4 |
+| `@TX_DATA` | W | any int | M4 |
 | `@CARGO_FREE`, `@SCIENCE_READY` | R | | later |
-| `@SUN_AZIMUTH`, `@SUN_ELEV`, `@SUN_LIGHT` | R | | later |
-| `@SOLAR_OPEN`, `@SOLAR_ANGLE` | RW | | later |
-| `@ORBIT_AZIMUTH`, `@SIGNAL_STR` | R | | later |
-| `@ANTENNA_ANGLE` | RW | | later |
-| `@TX_DATA` | W | | later |
 
-Writes are clamped to the port's range.
+Writes are clamped to the port's range; angle ports wrap modulo 360.
 
 ## 6. Milestones
 
@@ -219,7 +244,32 @@ Writes are clamped to the port's range.
 | **M1** | Compiler + VM (cycle budget, faults, watchdog), unit tests. |
 | **M2** | Registry, chunked world, generator, engine with `STEP`/`SCAN`/energy. |
 | **M3** | Three.js wireframe viewport, CodeMirror editor, debugger, speed controls, admin buttons. |
-| M4 | Sun, solar, antenna, signal-scaled upload, headlight cost, fog of war, baseline idle script. |
+| **M4** | Sun, solar, antenna, signal-scaled upload, headlight cost, fog of war, baseline idle script. |
 | M5 | Tools, cargo, spectrometer, science, first goals. |
 | M6 | Save/load, storyteller events, admin console UI. |
-| M7 | Upgrades, chunk pooling, polish. |
+| M7 | Upgrades (Flash, registers, cycles, cargo, `TOOL_3`), chassis tiers. |
+| **M8** | **Visual overhaul** (see §7). |
+
+## 7. Visual overhaul roadmap (M8)
+
+The renderer is a read-only consumer of the simulation, and every shape is drawn in
+`src/render/VectorFactory.ts`, so this whole milestone can happen without touching
+gameplay, saves or tests.
+
+* **Bloom / glow:** `EffectComposer` + `UnrealBloomPass` on emissive lines (ore crystals,
+  scan rays, beacon, headlight, acid vents). Selective bloom so the grid stays crisp.
+* **Fat lines:** `Line2` / `LineSegments2` + `LineMaterial` for real pixel widths
+  (WebGL lines are 1 px). Width can scale with zoom and importance.
+* **Level of detail:** two or three geometry tiers per chunk keyed on zoom: far = grid +
+  silhouettes, near = pebbles, rock strata, contour lines, detailed rover (spinning
+  wheels, unfolding panels, rotating dish, suspension bounce).
+* **Wider zoom range:** from a single tile up to a strategic map view; far zoom switches
+  to a simplified minimap-style rendering.
+* **Camera:** optional perspective mode, zoom-to-cursor, smooth orbit/rotation, cinematic
+  follow.
+* **Atmosphere:** day/night color grading, distance fade, dust particles, CRT /
+  scanline post-effect toggle, animated hazards and pickups.
+* **Terrain height:** if elevation is added to the simulation, render it as wireframe
+  relief.
+* **Performance budget:** LOD + per-frame build limits keep far zoom affordable; measure
+  with a frame-time HUD.

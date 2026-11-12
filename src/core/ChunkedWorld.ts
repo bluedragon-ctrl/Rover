@@ -6,9 +6,12 @@ export const CHUNK_AREA = CHUNK * CHUNK;
 
 export class WorldChunk {
   readonly layers: [Uint16Array, Uint16Array, Uint16Array, Uint16Array];
-  /** 0 unexplored, 1 mapped, 2 visible. [later: fog of war] */
+  /** Fog of war: 0 unexplored, 1 mapped. (What is *currently* visible is derived from rover positions.) */
   readonly fog = new Uint8Array(CHUNK_AREA);
+  /** Any tile modified vs. generation. */
   dirty = false;
+  /** Any fog revealed. Explored chunks are kept in memory and saved. */
+  explored = false;
   lastTouched = 0;
   /** Bumped on every change; renderers compare it to rebuild meshes. */
   version = 0;
@@ -73,17 +76,40 @@ export class ChunkedWorld {
     this.onTileChanged?.(x, y, layer, id);
   }
 
+  isMapped(x: number, y: number): boolean {
+    const { cx, cy, lx, ly } = worldToChunk(x, y);
+    return this.getChunk(cx, cy).fog[ly * CHUNK + lx] !== 0;
+  }
+
+  /** Mark all tiles within `radius` (Euclidean) of (x, y) as mapped. */
+  revealCircle(x: number, y: number, radius: number): void {
+    const r2 = radius * radius + radius; // slightly rounder discs
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        if (dx * dx + dy * dy > r2) continue;
+        const { cx, cy, lx, ly } = worldToChunk(x + dx, y + dy);
+        const c = this.getChunk(cx, cy);
+        const i = ly * CHUNK + lx;
+        if (c.fog[i] === 0) {
+          c.fog[i] = 1;
+          c.explored = true;
+          c.version++;
+        }
+      }
+    }
+  }
+
   /** Keep chunks around (x, y) loaded. */
   touchRadius(x: number, y: number, radius: number): void {
     const { cx, cy } = worldToChunk(x, y);
     for (let dy = -radius; dy <= radius; dy++) for (let dx = -radius; dx <= radius; dx++) this.getChunk(cx + dx, cy + dy);
   }
 
-  /** Drop clean chunks untouched for `maxAge` ticks. They regenerate identically on demand. */
+  /** Drop clean, unexplored chunks untouched for `maxAge` ticks. They regenerate identically on demand. */
   evictStale(maxAge: number): number {
     let n = 0;
     for (const [key, c] of this.chunks) {
-      if (!c.dirty && this.now - c.lastTouched > maxAge) {
+      if (!c.dirty && !c.explored && this.now - c.lastTouched > maxAge) {
         this.chunks.delete(key);
         n++;
       }

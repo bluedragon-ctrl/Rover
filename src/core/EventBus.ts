@@ -5,6 +5,7 @@ export interface SimEvents {
   UNIT_MOVED: { unitId: number; fromX: number; fromY: number; toX: number; toY: number; startTick: number; endTick: number };
   TILE_CHANGED: { x: number; y: number; layer: number; id: number };
   SCAN_PULSE: { unitId: number; x: number; y: number; dir: number; dist: number; hit: number };
+  UPLINK_PULSE: { unitId: number; x: number; y: number; value: number; ok: boolean };
   UNIT_STATE: { unitId: number; state: CpuState };
   UNIT_STATUS: { unitId: number; status: Status };
   LOG: { unitId: number; level: 'info' | 'warn' | 'error'; message: string };

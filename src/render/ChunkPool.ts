@@ -17,6 +17,8 @@ interface Entry {
 export class ChunkPool {
   private entries = new Map<string, Entry>();
   private material = new THREE.LineBasicMaterial({ vertexColors: true });
+  /** Debug/admin: ignore fog of war. */
+  private revealAll = false;
   /** Chunks rebuilt per frame, to avoid hitches when panning fast. */
   maxBuildsPerFrame = 6;
 
@@ -69,6 +71,17 @@ export class ChunkPool {
     }
   }
 
+  setRevealAll(v: boolean): void {
+    if (v === this.revealAll) return;
+    this.revealAll = v;
+    for (const e of this.entries.values()) e.version = -1; // force rebuild
+  }
+
+  /** Day/night dimming of the whole terrain. */
+  setBrightness(f: number): void {
+    this.material.color.setScalar(f);
+  }
+
   get size(): number {
     return this.entries.size;
   }
@@ -79,6 +92,11 @@ export class ChunkPool {
     for (let ly = 0; ly < CHUNK; ly++) {
       for (let lx = 0; lx < CHUNK; lx++) {
         const i = ly * CHUNK + lx;
+        if (!this.revealAll && c.fog[i] === 0) {
+          // Unexplored: a faint survey cross on the tile corner only.
+          b.color(0x2a3a52, 0.5).seg(lx - 0.08, 0, -ly, lx + 0.08, 0, -ly).seg(lx, 0, -ly - 0.08, lx, 0, -ly + 0.08);
+          continue;
+        }
         const variant = hash3(7, c.cx * CHUNK + lx, c.cy * CHUNK + ly) & 0xff;
         for (let layer = 0; layer < 3; layer++) {
           const id = c.layers[layer][i];

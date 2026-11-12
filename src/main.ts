@@ -1,6 +1,6 @@
 import './style.css';
 import { BALANCE } from './core/balance';
-import { DEMO_EXPLORER } from './core/programs';
+import { FACTORY_IDLE, TEMPLATES } from './core/programs';
 import { SimClock } from './core/SimClock';
 import { SimulationEngine } from './core/SimulationEngine';
 import { CpuState, Layer } from './core/types';
@@ -9,6 +9,7 @@ import { ThreeScene } from './render/ThreeScene';
 import { DebuggerPanel } from './ui/DebuggerPanel';
 import { EditorPanel } from './ui/EditorPanel';
 import { renderReference } from './ui/ReferencePanel';
+import { CompassHud } from './ui/CompassHud';
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 
@@ -17,7 +18,7 @@ const params = new URLSearchParams(location.search);
 const seed = Number(params.get('seed')) || Math.floor(Math.random() * 1e9);
 const engine = new SimulationEngine({ seed });
 const rover: Unit = engine.spawnUnit('Rover-1', 0, 0);
-engine.upload(rover, DEMO_EXPLORER);
+engine.upload(rover, FACTORY_IDLE, { factory: true });
 
 const clock = new SimClock();
 clock.tickHz = BALANCE.defaultTickHz;
@@ -26,15 +27,19 @@ clock.tickHz = BALANCE.defaultTickHz;
 const scene = new ThreeScene($('#viewport'), engine);
 scene.centerOn(rover);
 const debuggerPanel = new DebuggerPanel($('#debugger'), engine);
+const compass = new CompassHud($<HTMLCanvasElement>('#compass'), engine);
 renderReference($('#reference'), engine.registry);
 
 const flashEl = $('#flash');
+const costEl = $('#upload-cost');
+let editorFlash = 0;
 const editor = new EditorPanel({
   parent: $('#editor'),
   initial: rover.sourceCode,
   compile: (src) => engine.compileFor(rover, src),
   onUpload: () => upload(),
   onChange: (src, res) => {
+    editorFlash = res.flashUsed;
     flashEl.textContent = `Flash ${res.flashUsed}/${rover.chassis.flashLines}${res.errors.length ? ` · ${res.errors.length} error(s)` : ''}`;
     flashEl.classList.toggle('over', res.flashUsed > rover.chassis.flashLines || res.errors.length > 0);
     flashEl.classList.toggle('dirty', src !== rover.sourceCode);
@@ -44,6 +49,7 @@ const editor = new EditorPanel({
 function upload(): void {
   const res = engine.upload(rover, editor.source);
   if (!res.program) log('error', `Upload rejected: ${res.errors.length} compile error(s). First: line ${res.errors[0].line}: ${res.errors[0].message}`);
+  else if (res.rejected) log('error', `Upload failed: ${res.rejected} Align the dish with @ANTENNA_ANGLE, or charge first.`);
   flashEl.classList.toggle('dirty', editor.source !== rover.sourceCode);
 }
 
@@ -87,7 +93,14 @@ hzInput.addEventListener('change', () => {
 });
 $('#btn-upload').addEventListener('click', upload);
 $('#btn-revert').addEventListener('click', () => editor.setSource(rover.sourceCode));
-$('#btn-demo').addEventListener('click', () => editor.setSource(DEMO_EXPLORER));
+const templateSel = $<HTMLSelectElement>('#template');
+for (const name of Object.keys(TEMPLATES)) templateSel.add(new Option(name, name));
+templateSel.addEventListener('change', () => {
+  if (templateSel.value) editor.setSource(TEMPLATES[templateSel.value]);
+  templateSel.value = '';
+});
+$<HTMLInputElement>('#adm-free').addEventListener('change', (e) => (engine.cheats.freeUpload = (e.target as HTMLInputElement).checked));
+$<HTMLInputElement>('#adm-reveal').addEventListener('change', (e) => scene.setRevealAll((e.target as HTMLInputElement).checked));
 $('#btn-view').addEventListener('click', () => scene.setViewMode(scene.mode === 'angled' ? 'top' : 'angled'));
 $('#btn-follow').addEventListener('click', () => scene.centerOn(rover));
 $('#btn-new').addEventListener('click', () => {
@@ -142,8 +155,15 @@ function frame(now: number): void {
     debuggerPanel.update(rover);
     const running = rover.vm.state === CpuState.RUNNING || rover.vm.state === CpuState.BLOCKED;
     editor.setExecLine(running || rover.vm.state === CpuState.FAULT ? rover.vm.nextLine : 0);
-    const day = Math.floor(engine.tick / 2400) + 1;
-    clockEl.textContent = `sol ${day} · tick ${engine.tick}`;
+    const sun = engine.sun;
+    clockEl.textContent = `sol ${engine.env.dayNumber(engine.tick)} · ${sun.elevation > 0 ? '☀ day' : '☾ night'} · tick ${engine.tick}`;
+    compass.update(rover);
+    const cost = engine.uploadCost(rover, editorFlash);
+    const sig = engine.signalOf(rover);
+    costEl.textContent = engine.cheats.freeUpload
+      ? 'Upload cost: free (admin)'
+      : `Upload cost ≈ ${(cost / 1000).toFixed(1)}% battery · signal ${sig}`;
+    costEl.classList.toggle('bad', sig < 50 || cost >= rover.energy);
     hud.textContent = `${rover.name}  (${rover.x}, ${rover.y})  BAT ${rover.batteryPercent}%  HULL ${rover.hull}`;
     if (scene.hover) {
       const { x, y } = scene.hover;

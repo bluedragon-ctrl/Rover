@@ -1,12 +1,17 @@
 import type { ChunkedWorld } from './ChunkedWorld';
+import { type SunState, signalStrength, wrapDeg } from './Environment';
 import type { Unit } from './Unit';
 import type { WorldRegistry } from './WorldRegistry';
 import { BALANCE } from './balance';
 
 export interface PortContext {
-  tick: number;
+  readonly tick: number;
+  readonly sun: SunState;
+  readonly orbitAzimuth: number;
   world: ChunkedWorld;
   registry: WorldRegistry;
+  sensorRange(u: Unit): number;
+  transmit(u: Unit, value: number): void;
 }
 
 export interface PortDef {
@@ -16,17 +21,20 @@ export interface PortDef {
   write?: (u: Unit, v: number, ctx: PortContext) => void;
   min?: number;
   max?: number;
+  /** Angle port: writes wrap modulo 360 instead of clamping. */
+  angle?: boolean;
 }
 
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 
 /** Memory-mapped I/O. Add a port here and it is instantly usable from Rover-ASM. */
 export const PORTS: PortDef[] = [
+  // Telemetry
   { name: 'BAT', description: 'Battery 0–100 %', read: (u) => Math.floor((u.energy * 100) / BALANCE.batteryCapacity) },
   { name: 'HULL', description: 'Hull integrity 0–100', read: (u) => u.hull },
   { name: 'X', description: 'World X (east +)', read: (u) => u.x },
   { name: 'Y', description: 'World Y (north +)', read: (u) => u.y },
-  { name: 'STATUS', description: 'Result of last hardware op (OK, ERR_*)', read: (u) => u.vm.status },
+  { name: 'STATUS', description: 'Result of last hardware op / TX (OK, ERR_*)', read: (u) => u.vm.status },
   { name: 'TICK', description: 'Ticks since world start', read: (_u, c) => c.tick },
   { name: 'GROUND', description: 'Terrain tile under rover', read: (u, c) => c.world.getTile(u.x, u.y, 0) },
   {
@@ -34,9 +42,51 @@ export const PORTS: PortDef[] = [
     description: 'Hazard level of terrain under rover 0–2',
     read: (u, c) => c.registry.get(c.world.getTile(u.x, u.y, 0))?.hazardLevel ?? 0,
   },
+  { name: 'SENSOR_RANGE', description: 'Current SCAN range in tiles (drops at night)', read: (u, c) => c.sensorRange(u) },
+
+  // Sun & solar
+  { name: 'SUN_AZIMUTH', description: 'Sun bearing 0–359 (0 = north, 90 = east)', read: (_u, c) => c.sun.azimuth },
+  { name: 'SUN_ELEV', description: 'Sun elevation in degrees; <= 0 is night', read: (_u, c) => c.sun.elevation },
+  { name: 'SUN_LIGHT', description: 'Illumination 0–100 (0 at night / eclipse)', read: (_u, c) => c.sun.light },
+  {
+    name: 'SOLAR_OPEN',
+    description: 'Solar array 0 = stow, 1 = deploy (takes 20 ticks; blocks STEP unless fully stowed)',
+    min: 0,
+    max: 1,
+    read: (u) => u.solarOpen,
+    write: (u, v) => (u.solarOpen = v),
+  },
+  {
+    name: 'SOLAR_ANGLE',
+    description: 'Panel bearing 0–359. Write sets target; read gives current (slews 3°/tick)',
+    angle: true,
+    read: (u) => u.solarAngle,
+    write: (u, v) => (u.solarTarget = v),
+  },
+
+  // Comms
+  { name: 'ORBIT_AZIMUTH', description: 'Relay orbiter bearing 0–359', read: (_u, c) => c.orbitAzimuth },
+  {
+    name: 'ANTENNA_ANGLE',
+    description: 'Dish bearing 0–359. Write sets target; read gives current (slews 3°/tick)',
+    angle: true,
+    read: (u) => u.antennaAngle,
+    write: (u, v) => (u.antennaTarget = v),
+  },
+  { name: 'SIGNAL_STR', description: 'Uplink quality 0–100 (dish vs orbiter alignment)', read: (u, c) => signalStrength(u.antennaAngle, c.orbitAzimuth) },
+  { name: 'TX_DATA', description: `Write to transmit a packet (needs @SIGNAL_STR >= ${BALANCE.txMinSignal}; sets @STATUS)`, write: (u, v, c) => c.transmit(u, v) },
+
+  // Lights
   { name: 'LIGHT_COLOR', description: 'Status beacon color 0–4', min: 0, max: 4, read: (u) => u.lightColor, write: (u, v) => (u.lightColor = v) },
   { name: 'LIGHT_BLINK', description: 'Beacon blink 0/1', min: 0, max: 1, read: (u) => u.lightBlink, write: (u, v) => (u.lightBlink = v) },
-  { name: 'HEADLIGHT', description: 'Headlight 0/1', min: 0, max: 1, read: (u) => u.headlight, write: (u, v) => (u.headlight = v) },
+  {
+    name: 'HEADLIGHT',
+    description: `Headlight 0/1: night SCAN range ${BALANCE.headlightSensorRange} instead of ${BALANCE.nightSensorRange}`,
+    min: 0,
+    max: 1,
+    read: (u) => u.headlight,
+    write: (u, v) => (u.headlight = v),
+  },
 ];
 
 const byName = new Map(PORTS.map((p) => [p.name, p]));
@@ -47,5 +97,5 @@ export function getPort(name: string): PortDef | undefined {
 
 export function writePortClamped(p: PortDef, u: Unit, v: number, ctx: PortContext): void {
   if (!p.write) return;
-  p.write(u, clamp(v, p.min ?? -2147483648, p.max ?? 2147483647), ctx);
+  p.write(u, p.angle ? wrapDeg(v) : clamp(v, p.min ?? -2147483648, p.max ?? 2147483647), ctx);
 }

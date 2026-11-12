@@ -6,7 +6,7 @@ import { CpuState, Status } from '../src/core/types';
 function setup(src: string) {
   const eng = new SimulationEngine({ seed: 1 });
   const u = eng.spawnUnit('t');
-  const r = eng.upload(u, src);
+  const r = eng.upload(u, src, { factory: true });
   expect(r.errors).toEqual([]);
   return { eng, u };
 }
@@ -100,6 +100,7 @@ describe('RoverVM', () => {
     const { eng, u } = setup('MOV r0 5\nPUSH 1\nSLEEP 100');
     eng.advanceTick();
     u.energy = 1234;
+    eng.cheats.freeUpload = true;
     eng.upload(u, 'SLEEP 1');
     expect(u.vm.regs[0]).toBe(0);
     expect(u.vm.dataStack).toEqual([]);

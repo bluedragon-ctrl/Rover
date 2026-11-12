@@ -134,7 +134,7 @@ describe('demo firmware', () => {
     const { DEMO_EXPLORER } = await import('../src/core/programs');
     const eng = new SimulationEngine({ seed: 12345 });
     const u = eng.spawnUnit('t');
-    expect(eng.upload(u, DEMO_EXPLORER).errors).toEqual([]);
+    expect(eng.upload(u, DEMO_EXPLORER, { factory: true }).errors).toEqual([]);
     const visited = new Set<string>();
     for (let i = 0; i < 5000; i++) {
       eng.advanceTick();

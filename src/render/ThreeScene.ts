@@ -4,12 +4,10 @@ import { CpuState } from '../core/types';
 import type { Unit } from '../core/Unit';
 import { ChunkPool } from './ChunkPool';
 import { FxOverlay } from './FxOverlay';
-import { buildRoverMesh, LIGHT_HEX } from './VectorFactory';
+import { BALANCE } from '../core/balance';
+import { buildRoverMesh, LIGHT_HEX, type RoverMesh } from './VectorFactory';
 
-interface RoverView {
-  group: THREE.Group;
-  beacon: THREE.LineBasicMaterial;
-  headlight: THREE.LineSegments;
+interface RoverView extends RoverMesh {
   angle: number;
 }
 
@@ -57,6 +55,7 @@ export class ThreeScene {
       const color = e.hit ? (engine.registry.get(e.hit)?.color ?? 0xffffff) : 0x3affc8;
       this.fx.scan(e.x, e.y, e.dir, e.dist, color, performance.now());
     });
+    engine.events.on('UPLINK_PULSE', (e) => this.fx.uplink(e.x, e.y, e.ok, engine.orbitAzimuth, performance.now()));
   }
 
   setViewMode(mode: ViewMode): void {
@@ -167,6 +166,7 @@ export class ThreeScene {
         const m = buildRoverMesh();
         v = { ...m, angle: 0 };
         this.worldRoot.add(m.group);
+        this.worldRoot.add(m.sensorRing);
         this.rovers.set(u.id, v);
       }
       const [x, y] = this.unitPos(u, simTime);
@@ -178,12 +178,27 @@ export class ThreeScene {
       v.angle += d * 0.25;
       v.group.rotation.y = v.angle;
 
+      // Turntables use compass bearings (0 = north = -Z), relative to the body.
+      const bearing = (deg: number) => (-deg * Math.PI) / 180 - v!.angle;
+      const deploy = u.solarDeploy / BALANCE.solarDeployTicks;
+      v.solar.visible = deploy > 0;
+      v.solar.scale.set(Math.max(0.05, deploy), 1, Math.max(0.05, deploy));
+      v.solar.rotation.y = bearing(u.solarAngle);
+      v.dish.rotation.y = bearing(u.antennaAngle);
+      const range = this.engine.sensorRange(u) + 0.5;
+      v.sensorRing.position.set(x - this.focusX, 0, -(y - this.focusY));
+      v.sensorRing.scale.setScalar(range);
+
       const dead = u.vm.state === CpuState.POWER_OFF || u.vm.state === CpuState.DESTROYED;
       const blinkOff = u.lightBlink && Math.floor(now / 300) % 2 === 1;
       const fault = u.vm.state === CpuState.FAULT;
       v.beacon.color.setHex(dead || blinkOff ? 0x222222 : fault ? (Math.floor(now / 120) % 2 ? 0xff00ff : 0x220022) : LIGHT_HEX[u.lightColor] ?? 0xffffff);
       v.headlight.visible = !!u.headlight && !dead;
     }
+
+    // Day/night: dim the terrain with sunlight; never fully black.
+    const light = this.engine.sun.light / 100;
+    this.chunks.setBrightness(0.3 + 0.7 * Math.sqrt(light));
 
     this.fx.update(this.focusX, this.focusY, now);
     this.renderer.render(this.scene, this.camera);
@@ -193,6 +208,10 @@ export class ThreeScene {
     this.followUnitId = u.id;
     this.focusX = u.x + 0.5;
     this.focusY = u.y + 0.5;
+  }
+
+  setRevealAll(v: boolean): void {
+    this.chunks.setRevealAll(v);
   }
 
   get chunkMeshCount(): number {

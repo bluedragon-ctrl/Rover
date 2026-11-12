@@ -26,6 +26,21 @@ export class Unit {
   lightColor: number = LightColor.GREEN;
   lightBlink = 0;
   headlight = 0;
+  /** Commanded solar state 0/1 (@SOLAR_OPEN). */
+  solarOpen = 0;
+  /** Deployment progress, 0 (stowed) .. BALANCE.solarDeployTicks (fully open). */
+  solarDeploy = 0;
+  /** Current/target panel bearing; motors slew toward the target. */
+  solarAngle = 0;
+  solarTarget = 0;
+  antennaAngle = 0;
+  antennaTarget = 0;
+  packetsSent = 0;
+  lastTx: { tick: number; value: number; ok: boolean } | null = null;
+  /** Energy gained from solar last tick (for UI). */
+  lastSolarGain = 0;
+  /** Cache key of the last fog reveal (x, y, range). */
+  lastRevealKey = '';
   action: UnitAction | null = null;
   motion: UnitMotion | null = null;
   /** Cycles left in the current tick (lets the debugger single-step mid-tick). */
@@ -40,6 +55,14 @@ export class Unit {
 
   get batteryPercent(): number {
     return Math.floor((this.energy * 100) / BALANCE.batteryCapacity);
+  }
+
+  get solarDeployed(): boolean {
+    return this.solarDeploy >= BALANCE.solarDeployTicks;
+  }
+
+  get solarStowed(): boolean {
+    return this.solarDeploy === 0;
   }
 
   get powered(): boolean {

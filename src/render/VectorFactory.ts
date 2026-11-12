@@ -117,8 +117,23 @@ export function drawTile(b: LineBatch, shape: TileShape, color: number, lx: numb
 
 export const LIGHT_HEX = [0x333333, 0xff3030, 0x30ff60, 0x3080ff, 0xffb020];
 
-/** Wireframe rover. Faces -Z (north) at rotation 0. Returns the group and its beacon material. */
-export function buildRoverMesh(): { group: THREE.Group; beacon: THREE.LineBasicMaterial; headlight: THREE.LineSegments } {
+export interface RoverMesh {
+  group: THREE.Group;
+  beacon: THREE.LineBasicMaterial;
+  headlight: THREE.LineSegments;
+  /** Turntable carrying the solar array; rotate to the panel bearing, scale with deployment. */
+  solar: THREE.Group;
+  /** Dish turntable; rotate to the antenna bearing. */
+  dish: THREE.Group;
+  /** Sensor-range ring (unit radius, scale to range). Not parented to the rotating group. */
+  sensorRing: THREE.LineLoop;
+}
+
+const lines = (b: LineBatch, opts: THREE.LineBasicMaterialParameters = {}) =>
+  new THREE.LineSegments(b.build(), new THREE.LineBasicMaterial({ vertexColors: true, ...opts }));
+
+/** Wireframe rover. Faces -Z (north) at rotation 0. */
+export function buildRoverMesh(): RoverMesh {
   const group = new THREE.Group();
   const b = new LineBatch();
   const c = 0x3affc8;
@@ -127,15 +142,45 @@ export function buildRoverMesh(): { group: THREE.Group; beacon: THREE.LineBasicM
   // wheels
   b.color(c, 0.7);
   for (const [wx, wz] of [[-0.38, -0.3], [0.28, -0.3], [-0.38, 0.14], [0.28, 0.14]]) b.box(wx, 0, wz, 0.1, 0.18, 0.16);
-  // mast + dish
+  // mast
   b.color(c, 0.85).seg(0.12, 0.3, 0.2, 0.12, 0.55, 0.2);
-  b.loop([[0.0, 0.55, 0.2], [0.12, 0.62, 0.2], [0.24, 0.55, 0.2], [0.12, 0.6, 0.28]]);
   // camera head (front)
   b.color(c, 0.9).box(-0.08, 0.3, -0.3, 0.16, 0.1, 0.1);
-  // solar panel stowed outline
-  b.color(0x4466ff, 0.8).loop([[-0.24, 0.31, -0.15], [0.24, 0.31, -0.15], [0.24, 0.31, 0.1], [-0.24, 0.31, 0.1]]);
-  const body = new THREE.LineSegments(b.build(), new THREE.LineBasicMaterial({ vertexColors: true }));
-  group.add(body);
+  // stowed panel outline on the deck
+  b.color(0x4466ff, 0.6).loop([[-0.24, 0.31, -0.15], [0.24, 0.31, -0.15], [0.24, 0.31, 0.1], [-0.24, 0.31, 0.1]]);
+  group.add(lines(b));
+
+  // Solar array: a wide panel tilted toward its bearing (local -Z), with cell grid.
+  const solar = new THREE.Group();
+  solar.position.set(0, 0.34, -0.02);
+  const sp = new LineBatch().color(0x5a7dff, 1);
+  const W = 0.75, D = 0.42, tilt = 0.18;
+  const y = (z: number) => tilt * (z / D); // back edge higher than front
+  sp.loop([[-W, y(-D), -D], [W, y(-D), -D], [W, y(D), D], [-W, y(D), D]]);
+  sp.color(0x5a7dff, 0.55);
+  for (let i = -2; i <= 2; i++) if (i) sp.seg((i * W) / 3, y(-D), -D, (i * W) / 3, y(D), D);
+  sp.seg(-W, 0, 0, W, 0, 0);
+  sp.color(0x5a7dff, 0.8).seg(0, 0, 0, 0, -0.04, 0);
+  solar.add(lines(sp));
+  group.add(solar);
+
+  // Dish on the mast.
+  const dish = new THREE.Group();
+  dish.position.set(0.12, 0.58, 0.2);
+  const db = new LineBatch().color(c, 0.95);
+  const ring: [number, number, number][] = [];
+  for (let i = 0; i < 10; i++) {
+    const a = (i / 10) * Math.PI * 2;
+    ring.push([Math.cos(a) * 0.14, 0.06 + Math.sin(a) * 0.14, -0.06]);
+  }
+  db.loop(ring);
+  for (let i = 0; i < 10; i += 2.5) {
+    const p = ring[Math.floor(i)];
+    db.seg(0, 0.06, 0.04, p[0], p[1], p[2]);
+  }
+  db.color(c, 0.6).seg(0, 0.06, -0.06, 0, 0.06, -0.2);
+  dish.add(lines(db));
+  group.add(dish);
 
   const beaconB = new LineBatch().color(0xffffff).octa(-0.15, 0.48, 0.22, 0.06, 0.08);
   const beacon = new THREE.LineBasicMaterial({ color: LIGHT_HEX[2] });
@@ -144,9 +189,20 @@ export function buildRoverMesh(): { group: THREE.Group; beacon: THREE.LineBasicM
   group.add(beaconMesh);
 
   const hl = new LineBatch().color(0xfff2b0, 0.8);
-  hl.seg(-0.05, 0.35, -0.4, -0.9, 0.0, -3.0).seg(0.05, 0.35, -0.4, 0.9, 0.0, -3.0).seg(-0.9, 0, -3, 0.9, 0, -3);
-  const headlight = new THREE.LineSegments(hl.build(), new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.6 }));
+  hl.seg(-0.05, 0.35, -0.4, -1.6, 0.0, -5.0).seg(0.05, 0.35, -0.4, 1.6, 0.0, -5.0).seg(-1.6, 0, -5, 1.6, 0, -5);
+  const headlight = lines(hl, { transparent: true, opacity: 0.55 });
   headlight.visible = false;
   group.add(headlight);
-  return { group, beacon, headlight };
+
+  const ringPts: THREE.Vector3[] = [];
+  for (let i = 0; i < 64; i++) {
+    const a = (i / 64) * Math.PI * 2;
+    ringPts.push(new THREE.Vector3(Math.cos(a), 0.01, Math.sin(a)));
+  }
+  const sensorRing = new THREE.LineLoop(
+    new THREE.BufferGeometry().setFromPoints(ringPts),
+    new THREE.LineDashedMaterial({ color: 0x3affc8, transparent: true, opacity: 0.25, dashSize: 0.3, gapSize: 0.25 }),
+  );
+  sensorRing.computeLineDistances();
+  return { group, beacon, headlight, solar, dish, sensorRing };
 }

@@ -30,6 +30,7 @@
     <main>
       <section id="viewport">
         <div id="hud"></div>
+        <canvas id="compass" title="Sky compass: sun (yellow), relay orbiter (cyan triangle), solar array (blue), dish (dashed)"></canvas>
         <div id="hover"></div>
       </section>
       <aside id="side">
@@ -42,8 +43,11 @@
           <div class="toolbar">
             <button id="btn-upload" class="primary" title="Ctrl+Enter">Upload &amp; reboot</button>
             <button id="btn-revert" title="Load the firmware currently on the rover">Revert</button>
-            <button id="btn-demo" title="Load the demo firmware">Demo</button>
+            <select id="template" title="Load a firmware template into the editor"><option value="">Templates…</option></select>
             <span id="flash" class="small"></span>
+          </div>
+          <div class="toolbar small dim">
+            <span id="upload-cost"></span>
           </div>
           <div id="editor"></div>
           <div id="debugger"></div>
@@ -56,6 +60,8 @@
             <button id="adm-repair">Force repair</button>
             <button id="adm-respawn">Respawn at origin</button>
           </div>
+          <label class="small"><input type="checkbox" id="adm-free" /> Free uploads (ignore signal &amp; battery cost)</label>
+          <label class="small"><input type="checkbox" id="adm-reveal" /> Reveal map (disable fog of war)</label>
           <p class="small dim" id="world-info"></p>
         </div>
         <div id="log"></div>

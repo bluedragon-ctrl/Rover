@@ -22,6 +22,7 @@ export enum Status {
   ERR_NO_TOOL = 5,
   ERR_NO_SIGNAL = 6,
   ERR_HAZARD = 7,
+  ERR_DEPLOYED = 8,
 }
 
 export enum LightColor {

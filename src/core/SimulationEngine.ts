@@ -2,6 +2,7 @@ import { BALANCE, CHASSIS_MK1, type ChassisDef } from './balance';
 import { ChunkedWorld } from './ChunkedWorld';
 import { EventBus } from './EventBus';
 import { MapGenerator } from './MapGenerator';
+import { Environment, signalStrength, solarGain, wrapDeg, angleDiff, type SunState } from './Environment';
 import { getPort, writePortClamped, type PortContext } from './ports';
 import { CpuState, DIR_VEC, Layer, Status } from './types';
 import { Unit } from './Unit';
@@ -14,6 +15,13 @@ export interface EngineOptions {
   registry?: WorldRegistry;
 }
 
+export interface UploadResult extends CompileResult {
+  /** Energy charged for the upload (0 if rejected or free). */
+  cost: number;
+  /** Set when the program compiled but the rover could not accept it. */
+  rejected?: string;
+}
+
 /**
  * Headless, deterministic simulation. No DOM, no Three.js, no wall-clock time.
  * Drive it with tick() (or a SimClock) and observe it through `events`.
@@ -23,21 +31,35 @@ export class SimulationEngine {
   readonly registry: WorldRegistry;
   readonly world: ChunkedWorld;
   readonly units: Unit[] = [];
+  readonly env = new Environment();
+  readonly cheats = { freeUpload: false };
   tick = 0;
+  sun: SunState;
+  orbitAzimuth: number;
   private nextUnitId = 1;
-  private readonly portCtx: PortContext;
+  readonly portCtx: PortContext;
 
   constructor(readonly opts: EngineOptions) {
     this.registry = opts.registry ?? createDefaultRegistry();
     this.world = new ChunkedWorld(new MapGenerator(opts.seed));
     this.world.onTileChanged = (x, y, layer, id) => this.events.emit('TILE_CHANGED', { x, y, layer, id });
+    this.sun = this.env.sun(0);
+    this.orbitAzimuth = this.env.orbitAzimuth(0);
     const self = this;
     this.portCtx = {
       get tick() {
         return self.tick;
       },
+      get sun() {
+        return self.sun;
+      },
+      get orbitAzimuth() {
+        return self.orbitAzimuth;
+      },
       world: this.world,
       registry: this.registry,
+      sensorRange: (u) => this.sensorRange(u),
+      transmit: (u, v) => this.transmit(u, v),
     };
   }
 
@@ -51,6 +73,7 @@ export class SimulationEngine {
     u.y = y;
     this.units.push(u);
     this.world.touchRadius(x, y, BALANCE.chunkBubbleRadius);
+    this.revealAround(u);
     return u;
   }
 
@@ -66,15 +89,48 @@ export class SimulationEngine {
     return compile(source, unit.chassis, this.registry.constants());
   }
 
-  /** Compile and flash new firmware; hard reboot on success. */
-  upload(unit: Unit, source: string): CompileResult {
-    const res = this.compileFor(unit, source);
+  signalOf(u: Unit): number {
+    return signalStrength(u.antennaAngle, this.orbitAzimuth);
+  }
+
+  sensorRange(u: Unit): number {
+    if (this.sun.elevation > 0) return u.chassis.sensorRange;
+    return u.headlight && u.powered ? BALANCE.headlightSensorRange : BALANCE.nightSensorRange;
+  }
+
+  /** Energy needed to flash `lines` instructions at the current signal strength. */
+  uploadCost(u: Unit, lines: number): number {
+    if (this.cheats.freeUpload) return 0;
+    const base = BALANCE.uploadBase + BALANCE.uploadPerLine * lines;
+    return Math.ceil((base * 100) / Math.max(BALANCE.uploadSignalFloor, this.signalOf(u)));
+  }
+
+  /**
+   * Compile and flash new firmware over the uplink; hard reboot on success.
+   * `factory` installs firmware for free (new rovers, admin tools).
+   */
+  upload(unit: Unit, source: string, opts: { factory?: boolean } = {}): UploadResult {
+    const res: UploadResult = { ...this.compileFor(unit, source), cost: 0 };
     if (!res.program) return res;
+    if (!opts.factory) {
+      if (!unit.powered) {
+        res.rejected = `Rover is ${unit.vm.state}: it cannot receive firmware.`;
+        return res;
+      }
+      const cost = this.uploadCost(unit, res.flashUsed);
+      if (unit.energy <= cost) {
+        res.rejected = `Upload needs ${(cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(unit)}; rover has ${(unit.energy / 1000).toFixed(1)}%.`;
+        return res;
+      }
+      unit.energy -= cost;
+      res.cost = cost;
+    }
     unit.sourceCode = source;
     unit.action = null;
     unit.vm.load(res.program);
     unit.cyclesLeft = 0;
-    this.log(unit, 'info', `Firmware flashed (${res.flashUsed}/${unit.chassis.flashLines} lines). Rebooting.`);
+    const costMsg = res.cost ? `, cost ${(res.cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(unit)}` : '';
+    this.log(unit, 'info', `Firmware flashed (${res.flashUsed}/${unit.chassis.flashLines} lines${costMsg}). Rebooting.`);
     return res;
   }
 
@@ -119,9 +175,13 @@ export class SimulationEngine {
   private beginTick(): void {
     this.tick++;
     this.world.now = this.tick;
+    this.sun = this.env.sun(this.tick);
+    this.orbitAzimuth = this.env.orbitAzimuth(this.tick);
     for (const u of this.units) {
       this.world.touchRadius(u.x, u.y, BALANCE.chunkBubbleRadius);
+      this.updatePower(u);
       this.updateUnitPhysics(u);
+      this.revealAround(u);
       u.cyclesLeft = u.vm.state === CpuState.RUNNING ? u.chassis.cyclesPerTick : 0;
     }
     if (this.tick % 100 === 0) this.world.evictStale(BALANCE.chunkEvictAfterTicks);
@@ -143,12 +203,71 @@ export class SimulationEngine {
     }
   }
 
+  private revealAround(u: Unit): void {
+    const r = this.sensorRange(u);
+    const key = `${u.x},${u.y},${r}`;
+    if (key === u.lastRevealKey) return;
+    u.lastRevealKey = key;
+    this.world.revealCircle(u.x, u.y, r);
+  }
+
+  /** Solar, actuators, lights and passive drain. Runs before actions each tick. */
+  private updatePower(u: Unit): void {
+    if (u.vm.state === CpuState.DESTROYED) return;
+    const B = BALANCE;
+
+    // Solar charging works even when powered off: that is how a dead rover recovers.
+    u.lastSolarGain = u.solarDeployed ? solarGain(u.solarAngle, this.sun) : 0;
+    u.energy = Math.min(B.batteryCapacity, u.energy + u.lastSolarGain);
+
+    if (u.vm.state === CpuState.POWER_OFF) {
+      if (u.energy * 100 >= B.coldBootPercent * B.batteryCapacity) {
+        u.vm.state = CpuState.RUNNING;
+        u.vm.reboot();
+        this.log(u, 'warn', 'Solar cold boot: battery recovered, firmware restarted.');
+        this.events.emit('UNIT_STATE', { unitId: u.id, state: u.vm.state });
+      }
+      return;
+    }
+
+    let drain = B.idleDrainPerTick;
+    if (u.headlight) drain += B.headlightPerTick;
+    // Motors: deploy/stow array, slew panel and dish toward their targets.
+    const deployTarget = u.solarOpen ? B.solarDeployTicks : 0;
+    if (u.solarDeploy !== deployTarget) {
+      u.solarDeploy += u.solarDeploy < deployTarget ? 1 : -1;
+      drain += B.actuatorEnergyPerTick;
+    }
+    const slew = (cur: number, target: number): number => {
+      const d = angleDiff(cur, target);
+      if (d === 0) return cur;
+      drain += B.actuatorEnergyPerTick;
+      const step = Math.min(d, B.actuatorSlewDegPerTick);
+      return wrapDeg(wrapDeg(target - cur) <= 180 ? cur + step : cur - step);
+    };
+    u.solarAngle = slew(u.solarAngle, u.solarTarget);
+    u.antennaAngle = slew(u.antennaAngle, u.antennaTarget);
+    this.drain(u, drain);
+  }
+
+  private transmit(u: Unit, value: number): void {
+    const signal = this.signalOf(u);
+    let status = Status.OK;
+    if (signal < BALANCE.txMinSignal) status = Status.ERR_NO_SIGNAL;
+    else if (u.energy < BALANCE.txEnergy) status = Status.ERR_LOW_POWER;
+    const ok = status === Status.OK;
+    if (ok) {
+      this.drain(u, BALANCE.txEnergy);
+      u.packetsSent++;
+    }
+    u.lastTx = { tick: this.tick, value, ok };
+    this.setStatus(u, status);
+    this.events.emit('UPLINK_PULSE', { unitId: u.id, x: u.x, y: u.y, value, ok });
+  }
+
   private updateUnitPhysics(u: Unit): void {
     const vm = u.vm;
     if (vm.state === CpuState.DESTROYED) return;
-
-    // Passive drain.
-    if (u.powered) this.drain(u, BALANCE.idleDrainPerTick);
 
     if (vm.state === CpuState.FAULT) {
       if (--vm.watchdog <= 0) {
@@ -160,7 +279,7 @@ export class SimulationEngine {
       return;
     }
 
-    if (vm.state === CpuState.POWER_OFF) return; // Solar cold-boot arrives with M4.
+    if (vm.state === CpuState.POWER_OFF) return;
 
     const act = u.action;
     if (!act) return;
@@ -207,6 +326,7 @@ export class SimulationEngine {
     const [dx, dy] = DIR_VEC[dir];
     const tx = u.x + dx;
     const ty = u.y + dy;
+    if (u.solarOpen || !u.solarStowed) return Status.ERR_DEPLOYED;
     if (this.isBlocked(tx, ty)) return Status.ERR_BLOCKED;
     const terrain = this.registry.get(this.world.getTile(tx, ty, Layer.TERRAIN));
     const ticks = terrain?.moveTicks ?? 3;
@@ -286,7 +406,8 @@ export class SimulationEngine {
         const [dx, dy] = DIR_VEC[dir];
         let hit = 0;
         let dist = 0;
-        for (let d = 1; d <= u.chassis.sensorRange; d++) {
+        const range = this.sensorRange(u);
+        for (let d = 1; d <= range; d++) {
           const x = u.x + dx * d;
           const y = u.y + dy * d;
           hit = this.tileAt(x, y, Layer.ACTOR) || this.tileAt(x, y, Layer.OBSTACLE) || this.tileAt(x, y, Layer.ITEM);
@@ -295,7 +416,7 @@ export class SimulationEngine {
             break;
           }
         }
-        this.events.emit('SCAN_PULSE', { unitId: u.id, x: u.x, y: u.y, dir, dist: dist || u.chassis.sensorRange, hit });
+        this.events.emit('SCAN_PULSE', { unitId: u.id, x: u.x, y: u.y, dir, dist: dist || range, hit });
         this.setStatus(u, Status.OK);
         if (u.powered) {
           u.action = { kind: 'WAIT', ticksLeft: BALANCE.scanTicks };
@@ -358,6 +479,7 @@ export class SimulationEngine {
       u.hull = 100;
       u.vm.state = CpuState.RUNNING;
       u.vm.reboot();
+      this.revealAround(u);
       this.log(u, 'warn', 'ADMIN: respawned at origin.');
     },
   };

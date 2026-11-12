@@ -23,7 +23,7 @@ export class DebuggerPanel {
     const stack = (arr: number[], size: number, fmt: (v: number) => string) =>
       Array.from({ length: size }, (_, i) => `<span class="slot ${i < arr.length ? 'full' : ''}">${i < arr.length ? fmt(arr[i]) : '·'}</span>`).join('');
     const ipLine = (ip: number) => `L${prog?.instrs[ip]?.line ?? (prog?.instrs[0]?.line ?? '?')}`;
-    const ctx = { tick: this.engine.tick, world: this.engine.world, registry: this.engine.registry };
+    const ctx = this.engine.portCtx;
     const ports = PORTS.map((p) => {
       const v = p.read ? p.read(u, ctx) : '—';
       return `<div class="kv" title="${esc(p.description)}"><span>@${p.name}${p.write ? '<i>w</i>' : ''}</span><b>${v}</b></div>`;
@@ -44,6 +44,7 @@ export class DebuggerPanel {
         <div class="meter"><label>BAT ${batPct.toFixed(1)}%</label><div><i style="width:${batPct}%;background:${batPct < 15 ? '#ff4d4d' : '#3affc8'}"></i></div></div>
         <div class="meter"><label>HULL ${u.hull}</label><div><i style="width:${u.hull}%;background:${u.hull < 30 ? '#ff4d4d' : '#5ad0ff'}"></i></div></div>
       </div>
+      <div class="dim small" style="margin-top:4px">solar ${u.solarDeployed ? `+${u.lastSolarGain}/tick` : u.solarDeploy > 0 ? 'moving…' : 'stowed'} · signal ${this.engine.signalOf(u)} · TX packets ${u.packetsSent}${u.lastTx ? ` · last TX ${u.lastTx.value} ${u.lastTx.ok ? 'ok' : 'failed'} @t${u.lastTx.tick}` : ''}</div>
       <h4>Registers</h4><div class="grid4">${regs}</div>
       <h4>Data stack <small>${vm.dataStack.length}/${u.chassis.dataStack}</small></h4><div class="stack">${stack(vm.dataStack, u.chassis.dataStack, String)}</div>
       <h4>Call stack <small>${vm.callStack.length}/${u.chassis.callStack}</small></h4><div class="stack">${stack(vm.callStack, u.chassis.callStack, ipLine)}</div>
