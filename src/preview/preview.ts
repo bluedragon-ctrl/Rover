@@ -105,13 +105,13 @@ dust.frustumCulled = false;
 scene.add(dust);
 
 // ------------------------------------------------------------------ rover
-const rover = buildRoverRig();
+const rover = buildRoverRig({ post: true });
 worldRoot.add(rover.group, rover.sensorRing);
 const anim = new RoverAnimator(rover);
 
 const state = {
   sun: 100, cycle: false, headlight: false, solar: false, drill: false, drive: false, dishSweep: true,
-  facing: 0, led: 2, ind: [1, 2, 0], cpu: 0, damaged: false, bloom: true, crt: true, labels: true, follow: true,
+  facing: 0, led: 2, ind: [1, 2, 0], post: (Number(new URLSearchParams(location.search).get('post') ?? 0x3a) || 0) & 255, postCount: false, cpu: 0, damaged: false, bloom: true, crt: true, labels: true, follow: true,
   x: 0, y: 0, moveT: 0, angle: 0,
 };
 const CPU: RoverPose['cpu'][] = ['run', 'idle', 'fault', 'off'];
@@ -157,6 +157,8 @@ button('@ANTENNA', 'Dish sweep', () => state.dishSweep, () => (state.dishSweep =
 button('@LIGHT', 'Status LED', () => ['OFF', 'RED', 'GREEN', 'BLUE', 'AMBER'][state.led], () => (state.led = (state.led % 4) + 1));
 for (let i = 0; i < 3; i++)
   button(`@IND${i + 1}`, `Indicator ${i + 1}`, () => ['OFF', 'RED', 'GREEN', 'BLUE', 'AMBER'][state.ind[i]], () => (state.ind[i] = (state.ind[i] + 1) % 5));
+button('@POST', 'Hex display (+1)', () => state.post.toString(16).toUpperCase().padStart(2, '0'), () => (state.post = (state.post + 1) & 255));
+button('@POST', 'Count up 0..FF', () => state.postCount, () => (state.postCount = !state.postCount));
 button('CPU', 'vMCU state', () => CPU[state.cpu].toUpperCase(), () => (state.cpu = (state.cpu + 1) % 4));
 button('HEALTH', 'Damaged dish/solar', () => state.damaged, () => (state.damaged = !state.damaged));
 button('SCAN', 'Scan pulse + radar wave', () => false, () => {
@@ -310,6 +312,7 @@ function frame(now: number): void {
       cpu: CPU[state.cpu],
       beaconHex: blinkOff ? 0x222222 : LIGHT_HEX[state.led],
       indicators: state.ind.map((v) => indicatorHex(state.cpu === 3 ? 0 : v)),
+      post: state.cpu === 3 ? null : state.postCount ? Math.floor(t * 4) & 255 : state.post,
       headlight: state.headlight && state.cpu !== 3,
       drilling: state.drill,
       sensorRange: sensor,

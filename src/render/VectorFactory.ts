@@ -487,6 +487,15 @@ function solarSegment(w: number, length: number, color: number): { seg: THREE.Gr
 /** Segments per solar wing (accordion fold). */
 export const SOLAR_SEGMENTS = 3;
 
+/**
+ * Seven-segment patterns for hex digits 0–F, bits a..g = 0..6 (a top, b upper right,
+ * c lower right, d bottom, e lower left, f upper left, g middle). b and d are lower case.
+ */
+export const SEVEN_SEG = [0x3f, 0x06, 0x5b, 0x4f, 0x66, 0x6d, 0x7d, 0x07, 0x7f, 0x6f, 0x77, 0x7c, 0x39, 0x5e, 0x79, 0x71];
+/** @POST display colours: lit LED segment, unlit (ghost) segment. */
+export const POST_LIT = 0xff4a1c;
+export const POST_DARK = 0x2a0e08;
+
 export const ROVER_AMBER = 0xf59e0b;
 export const ROVER_CYAN = 0x38bdf8;
 
@@ -511,6 +520,8 @@ export interface RoverRigMesh {
   beacon: THREE.MeshBasicMaterial;
   /** Indicator lamp lenses on the cabin roof (@IND1..@IND3), left to right. */
   indicators: THREE.MeshBasicMaterial[];
+  /** @POST display (M9, preview): 14 segment materials, digit-major (high digit first), a..g. Empty if not built. */
+  postSegs: THREE.MeshBasicMaterial[];
   headLamp: THREE.MeshBasicMaterial;
   /** Ground beam (tile units, not scaled with the model). */
   beam: THREE.Group;
@@ -524,7 +535,7 @@ export interface RoverRigMesh {
 }
 
 /** Detailed v2 rover: amber wedge hull, cyan cabin, three-segment folding solar wings, dish, LED, drill. */
-export function buildRoverRig(): RoverRigMesh {
+export function buildRoverRig(opts: { post?: boolean } = {}): RoverRigMesh {
   const group = new THREE.Group();
   const model = new THREE.Group();
   const S = 0.55; // reference model is ~1.8 units long; fit it into one tile
@@ -654,6 +665,34 @@ export function buildRoverRig(): RoverRigMesh {
     indicators.push(lensMat);
   }
 
+  // @POST display: two seven-segment digits on a bezel at the back of the cabin, tilted up
+  // so it reads from the usual orbit camera behind and above the rover.
+  const postSegs: THREE.MeshBasicMaterial[] = [];
+  if (opts.post) {
+    const panel = new THREE.Group();
+    panel.position.set(0, 0.82, 0.575);
+    panel.rotation.x = -0.45;
+    body.add(panel);
+    const bezel = vectorPart(new THREE.BoxGeometry(0.38, 0.26, 0.03), 0x64748b, 0x05080d);
+    panel.add(bezel.obj);
+    const W = 0.1, H = 0.18, T = 0.024;
+    const segs: [number, number, boolean][] = [
+      [0, H / 2, true], [W / 2, H / 4, false], [W / 2, -H / 4, false], [0, -H / 2, true],
+      [-W / 2, -H / 4, false], [-W / 2, H / 4, false], [0, 0, true],
+    ];
+    for (const dx of [-0.075, 0.075]) {
+      for (const [sx, sy, horiz] of segs) {
+        const mat = new THREE.MeshBasicMaterial({ color: POST_DARK });
+        const seg = new THREE.Mesh(new THREE.PlaneGeometry(horiz ? W - T : T, horiz ? T : H / 2 - T), mat);
+        // Slight italic slant, like a real LED display.
+        seg.position.set(dx + sx + sy * 0.12, sy, 0.017);
+        seg.rotation.z = -0.12 * (horiz ? 0 : 1);
+        panel.add(seg);
+        postSegs.push(mat);
+      }
+    }
+  }
+
   // Ventral drill.
   const drillBit = new THREE.Group();
   drillBit.position.set(0, 0.3, -0.1);
@@ -711,6 +750,7 @@ export function buildRoverRig(): RoverRigMesh {
     dishMats: [cone.edgeMat, mast.edgeMat],
     beacon,
     indicators,
+    postSegs,
     headLamp,
     beam,
     beamMats: [beamFill, beamLines.material as THREE.Material],
