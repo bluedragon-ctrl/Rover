@@ -5,7 +5,7 @@ import type { Unit } from '../core/Unit';
 import { ChunkPool } from './ChunkPool';
 import { FxOverlay } from './FxOverlay';
 import { BALANCE } from '../core/balance';
-import { buildCapsuleMesh, buildRoverMesh, LIGHT_HEX, type RoverMesh } from './VectorFactory';
+import { buildCapsuleMesh, buildRoverMesh, indicatorHex, LIGHT_HEX, type RoverMesh } from './VectorFactory';
 
 interface RoverView extends RoverMesh {
   angle: number;
@@ -225,6 +225,7 @@ export class ThreeScene {
       const fault = u.vm.state === CpuState.FAULT;
       v.beacon.color.setHex(dead || blinkOff ? 0x222222 : fault ? (Math.floor(now / 120) % 2 ? 0xff00ff : 0x220022) : LIGHT_HEX[u.lightColor] ?? 0xffffff);
       v.headlight.visible = !!u.headlight && !dead;
+      v.indicators.forEach((m, i) => m.color.setHex(indicatorHex(dead ? 0 : u.indicators[i])));
     }
 
     // Day/night: dim the terrain with sunlight; never fully black.

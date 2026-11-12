@@ -43,6 +43,8 @@ npm run build      # typecheck + production bundle in dist/
   New upgrades: `UPGRADES` in `src/core/upgrades.ts` (modify the rover's own `chassis`;
   never the shared `CHASSIS_MK1`).
 - Shapes are drawn only in `src/render/VectorFactory.ts` (keeps M8 visual work local).
+- New or changed visuals go into `preview.html` (`src/preview/`) first; the owner reviews
+  screenshots before they replace what the game renders.
 - Shipped firmware (`src/core/programs.ts`) must compile and is covered by tests.
 
 - **New simulation state must be saved:** add it to `src/core/SaveManager.ts`. The

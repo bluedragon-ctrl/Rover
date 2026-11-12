@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BALANCE } from '../src/core/balance';
 import { FETCH_SUPPLY } from '../src/core/programs';
-import { deserialize, migrate, serialize } from '../src/core/SaveManager';
+import { deserialize, migrate, SAVE_VERSION, serialize } from '../src/core/SaveManager';
 import { SimulationEngine } from '../src/core/SimulationEngine';
 import { Layer, Status } from '../src/core/types';
 import { UPGRADE_BY_ID, UPGRADES } from '../src/core/upgrades';
@@ -155,7 +155,7 @@ describe('fetch template & persistence', () => {
       delete us.seismic;
     }
     const m = migrate(v1);
-    expect(m.version).toBe(2);
+    expect(m.version).toBe(SAVE_VERSION);
     expect(deserialize(v1).units[0].upgrades).toEqual([]);
   });
 

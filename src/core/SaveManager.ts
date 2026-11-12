@@ -6,7 +6,7 @@ import { UPGRADE_BY_ID } from './upgrades';
 import { CpuState, type Status } from './types';
 import type { Unit, UnitAction, UnitMotion } from './Unit';
 
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 
 interface UnitSave {
   id: number;
@@ -30,6 +30,8 @@ interface UnitSave {
   /** v2 */
   upgrades: string[];
   seismic: [type: number, dist: number];
+  /** v3 */
+  indicators: number[];
   action: UnitAction | null;
   motion: UnitMotion | null;
   cyclesLeft: number;
@@ -145,6 +147,7 @@ function saveUnit(u: Unit): UnitSave {
     cargo: [...u.cargo],
     scienceReady: u.scienceReady,
     lights: [u.lightColor, u.lightBlink, u.headlight],
+    indicators: [...u.indicators],
     solar: [u.solarOpen, u.solarDeploy, u.solarAngle, u.solarTarget],
     antenna: [u.antennaAngle, u.antennaTarget],
     packetsSent: u.packetsSent,
@@ -187,6 +190,11 @@ export function migrate(raw: unknown): SaveSnapshot {
       u.seismic = [0, 0];
     }
     v = 2;
+  }
+  if (v === 2) {
+    // v2 -> v3: indicator lamps (@IND1..@IND3) start dark.
+    for (const u of out.units) u.indicators = [0, 0, 0];
+    v = 3;
   }
   if (v !== SAVE_VERSION) throw new SaveError(`Unsupported save version ${s.version}.`);
   out.version = v;
@@ -242,6 +250,7 @@ export function deserialize(raw: unknown): SimulationEngine {
       lightColor: us.lights[0],
       lightBlink: us.lights[1],
       headlight: us.lights[2],
+      indicators: [...us.indicators],
       solarOpen: us.solar[0],
       solarDeploy: us.solar[1],
       solarAngle: us.solar[2],
