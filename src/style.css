@@ -77,3 +77,9 @@ input[type=checkbox] { width: auto; }
 #toasts { position: absolute; top: 150px; right: 10px; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
 .toast { background: #0e3a31ee; border: 1px solid var(--accent); color: var(--text); padding: 6px 10px; border-radius: 4px; font-size: 12px; animation: toast 5s forwards; }
 @keyframes toast { 0% { opacity: 0; transform: translateX(20px); } 8%, 85% { opacity: 1; transform: none; } 100% { opacity: 0; } }
+#event-banner { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); font-family: var(--mono); font-size: 13px; padding: 4px 12px; border-radius: 4px; pointer-events: none; display: none; }
+#event-banner.warn { display: block; background: #3a2a08e0; border: 1px solid var(--warn); color: var(--warn); }
+#event-banner.active { display: block; background: #3a0e0ee0; border: 1px solid var(--bad); color: #ffd0d0; animation: pulse 1s infinite alternate; }
+@keyframes pulse { from { opacity: 1; } to { opacity: 0.65; } }
+#tab-admin h4 { margin: 10px 0 2px; color: var(--accent); }
+.meters { flex-wrap: wrap; } .meter { min-width: 40%; }

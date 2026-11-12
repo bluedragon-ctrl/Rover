@@ -125,6 +125,9 @@ export interface RoverMesh {
   solar: THREE.Group;
   /** Dish turntable; rotate to the antenna bearing. */
   dish: THREE.Group;
+  /** Tinted by subsystem health. */
+  solarMat: THREE.LineBasicMaterial;
+  dishMat: THREE.LineBasicMaterial;
   /** Sensor-range ring (unit radius, scale to range). Not parented to the rotating group. */
   sensorRing: THREE.LineLoop;
 }
@@ -161,7 +164,10 @@ export function buildRoverMesh(): RoverMesh {
   for (let i = -2; i <= 2; i++) if (i) sp.seg((i * W) / 3, y(-D), -D, (i * W) / 3, y(D), D);
   sp.seg(-W, 0, 0, W, 0, 0);
   sp.color(0x5a7dff, 0.8).seg(0, 0, 0, 0, -0.04, 0);
-  solar.add(lines(sp));
+  const solarMat = new THREE.LineBasicMaterial({ color: 0x5a7dff });
+  const solarLines = new THREE.LineSegments(sp.build(), solarMat);
+  solarLines.geometry.deleteAttribute('color');
+  solar.add(solarLines);
   group.add(solar);
 
   // Dish on the mast.
@@ -179,7 +185,10 @@ export function buildRoverMesh(): RoverMesh {
     db.seg(0, 0.06, 0.04, p[0], p[1], p[2]);
   }
   db.color(c, 0.6).seg(0, 0.06, -0.06, 0, 0.06, -0.2);
-  dish.add(lines(db));
+  const dishMat = new THREE.LineBasicMaterial({ color: c });
+  const dishLines = new THREE.LineSegments(db.build(), dishMat);
+  dishLines.geometry.deleteAttribute('color');
+  dish.add(dishLines);
   group.add(dish);
 
   const beaconB = new LineBatch().color(0xffffff).octa(-0.15, 0.48, 0.22, 0.06, 0.08);
@@ -204,5 +213,5 @@ export function buildRoverMesh(): RoverMesh {
     new THREE.LineDashedMaterial({ color: 0x3affc8, transparent: true, opacity: 0.25, dashSize: 0.3, gapSize: 0.25 }),
   );
   sensorRing.computeLineDistances();
-  return { group, beacon, headlight, solar, dish, sensorRing };
+  return { group, beacon, headlight, solar, dish, sensorRing, solarMat, dishMat };
 }

@@ -36,6 +36,19 @@ export const BALANCE = {
   uploadPerLine: 50,
   uploadSignalFloor: 10,
 
+  // Storyteller (docs/SPEC.md §3.5)
+  eventEarliestTick: 1500, // grace period for new worlds
+  eventWarnTicks: 200,
+  eclipseChancePerSol: 0.35,
+  eclipseTicks: 150,
+  eclipseRampTicks: 20,
+  squallChancePerSol: 0.4,
+  squallTicks: 100,
+  squallHullEveryTicks: 10, // 1 hull damage; twice as often while driving
+  squallSolarEveryTicks: 3, // squallSolarDamage every N ticks while the array is not fully stowed
+  squallSolarDamage: 2,
+  squallAntennaEveryTicks: 20, // the dish is always exposed
+
   chunkBubbleRadius: 1, // 3x3 chunks around each rover
   chunkEvictAfterTicks: 600,
   landingZoneRadius: 2, // 5x5

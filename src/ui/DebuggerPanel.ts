@@ -45,6 +45,8 @@ export class DebuggerPanel {
       <div class="meters">
         <div class="meter"><label>BAT ${batPct.toFixed(1)}%</label><div><i style="width:${batPct}%;background:${batPct < 15 ? '#ff4d4d' : '#3affc8'}"></i></div></div>
         <div class="meter"><label>HULL ${u.hull}</label><div><i style="width:${u.hull}%;background:${u.hull < 30 ? '#ff4d4d' : '#5ad0ff'}"></i></div></div>
+        <div class="meter"><label>SOLAR ${u.solarHealth}</label><div><i style="width:${u.solarHealth}%;background:${u.solarHealth < 50 ? '#ff4d4d' : '#5a7dff'}"></i></div></div>
+        <div class="meter"><label>DISH ${u.antennaHealth}</label><div><i style="width:${u.antennaHealth}%;background:${u.antennaHealth < 50 ? '#ff4d4d' : '#3affc8'}"></i></div></div>
       </div>
       <div class="dim small" style="margin-top:4px">solar ${u.solarDeployed ? `+${u.lastSolarGain}/tick` : u.solarDeploy > 0 ? 'moving…' : 'stowed'} · signal ${this.engine.signalOf(u)} · TX packets ${u.packetsSent}${u.lastTx ? ` · last TX ${u.lastTx.value} ${u.lastTx.ok ? 'ok' : 'failed'} @t${u.lastTx.tick}` : ''}</div>
       <h4>Cargo <small>${u.cargo.filter((c) => !c).length} free · science ready ${u.scienceReady}</small></h4>

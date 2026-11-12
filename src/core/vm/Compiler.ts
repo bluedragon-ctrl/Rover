@@ -1,6 +1,6 @@
 import type { ChassisDef } from '../balance';
 import { getPort } from '../ports';
-import { Dir, LightColor, Status } from '../types';
+import { Alert, Dir, LightColor, Status, SystemId } from '../types';
 
 export type Op =
   | 'MOV' | 'PUSH' | 'POP'
@@ -71,7 +71,7 @@ const SIGNATURES: Record<Op, string[]> = {
   STEP: ['v', 'v?'],
   ACT: ['v', 'v?'],
   PEEK: ['v', 'd'],
-  USE: ['v'],
+  USE: ['v', 'v?'],
 };
 
 export const OPCODES = Object.keys(SIGNATURES) as Op[];
@@ -82,6 +82,8 @@ export function builtinConstants(): Record<string, number> {
   for (const [k, v] of Object.entries(Dir)) if (typeof v === 'number') c[k] = v;
   for (const [k, v] of Object.entries(Status)) if (typeof v === 'number') c[k] = v;
   for (const [k, v] of Object.entries(LightColor)) if (typeof v === 'number') c[k] = v;
+  for (const [k, v] of Object.entries(SystemId)) if (typeof v === 'number') c[k] = v;
+  for (const [k, v] of Object.entries(Alert)) if (typeof v === 'number') c[k] = v;
   for (let i = 0; i < 4; i++) c[`TOOL_${i}`] = i;
   return c;
 }

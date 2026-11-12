@@ -1,4 +1,5 @@
 import type { CpuState, Status } from './types';
+import type { WorldEventType } from './EventDirector';
 
 export interface SimEvents {
   TICK: { tick: number };
@@ -9,6 +10,7 @@ export interface SimEvents {
   TOOL_USED: { unitId: number; tool: string; x: number; y: number; targetX: number | null; targetY: number | null; ticks: number };
   TOOL_DONE: { unitId: number; tool: string; status: number };
   GOAL_COMPLETED: { id: string; title: string; reward: number };
+  WORLD_EVENT: { phase: 'ALERT' | 'START' | 'END'; type: WorldEventType; startTick: number; endTick: number };
   UNIT_STATE: { unitId: number; state: CpuState };
   UNIT_STATUS: { unitId: number; status: Status };
   LOG: { unitId: number; level: 'info' | 'warn' | 'error'; message: string };

@@ -26,7 +26,8 @@ export interface TileDef {
   /** Science packets produced when analyzed by the spectrometer. */
   science?: number;
   /** Effect of `USE` on this item from cargo. */
-  useEffect?: { hull?: number };
+  /** Effect of `USE` on this item from cargo: `hull` for SYS_HULL, `system` for other subsystems. */
+  useEffect?: { hull?: number; system?: number };
 }
 
 /**
@@ -89,7 +90,7 @@ export function createDefaultRegistry(): WorldRegistry {
   r.register({ id: T.CLIFF_WALL, constName: 'CLIFF_WALL', name: 'Cliff wall', layer: Layer.OBSTACLE, color: 0xd08a52, shape: 'wall', blocksMove: true });
   r.register({ id: T.IRON_ORE, constName: 'IRON_ORE', name: 'Iron ore vein', layer: Layer.OBSTACLE, color: 0xff5a4a, shape: 'crystal', blocksMove: true, tool: 'DRILL', science: 1 });
   r.register({ id: T.SILICON_ORE, constName: 'SILICON_ORE', name: 'Silicon ore vein', layer: Layer.OBSTACLE, color: 0x5ad0ff, shape: 'crystal', blocksMove: true, tool: 'DRILL', science: 1 });
-  r.register({ id: T.REPAIR_KIT, constName: 'REPAIR_KIT', name: 'Repair kit', layer: Layer.ITEM, color: 0xffffff, shape: 'crate', tool: 'GRABBER', useEffect: { hull: 30 } });
+  r.register({ id: T.REPAIR_KIT, constName: 'REPAIR_KIT', name: 'Repair kit', layer: Layer.ITEM, color: 0xffffff, shape: 'crate', tool: 'GRABBER', useEffect: { hull: 30, system: 40 } });
   r.register({ id: T.SAMPLE, constName: 'SAMPLE', name: 'Geological sample', layer: Layer.ITEM, color: 0xffd23a, shape: 'sample', tool: 'GRABBER', science: 3 });
   r.register({ id: T.ROVER, constName: 'ROVER', name: 'Rover', layer: Layer.ACTOR, color: 0x3affc8, shape: 'rover', blocksMove: true });
   return r;

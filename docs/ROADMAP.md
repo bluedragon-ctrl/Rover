@@ -15,63 +15,64 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | M3 | Three.js wireframe viewport, CodeMirror editor, debugger, speed controls, admin | ✅ done |
 | M4 | Sun, solar, antenna, upload cost, headlight, fog of war, factory firmware | ✅ done |
 | M5 | Tools, cargo, spectrometer, science, first goals | ✅ done |
-| **M6** | **Save/load, storyteller (events, eclipses, squalls), admin console** | ⏭ next |
-| M7 | Upgrades & chassis tiers (Flash, registers, cycles, cargo, `TOOL_3`), spend credits | planned |
+| M6 | Save/load + autosave, storyteller (eclipses, squalls), subsystem damage, admin console | ✅ done |
+| **M7** | **Upgrades & chassis tiers: spend credits** | ⏭ next |
 | M8 | Visual overhaul: bloom, fat lines, LOD, zoom, camera, atmosphere (SPEC §7) | planned |
 
-## Next: M6 — Persistence & storyteller (detailed plan)
+## Next: M7 — Upgrades (detailed plan)
 
-Goal: progress survives a page reload, and the world starts *happening* to the rover,
-so programs need to react (stow panels in a squall, sleep through an eclipse).
+Goal: close the progression loop. Credits (science + goals) buy hardware that removes the
+tight Mk-I limits, so better programs become possible.
 
-### Persistence (`src/core/SaveManager.ts` headless + `src/ui/` glue)
-- [ ] `serialize(engine) → SaveSnapshot` (versioned JSON, `version: 1`):
-      seed, tick, credits, stats, completed goals, director state + RNG state,
-      units (position, heading, energy, hull, cargo, science, actuators, lights,
-      source code, VM: ip, regs, stacks, state, status, watchdog, current `action`),
-      **only dirty/explored chunks**: changed layers (RLE or sparse diff vs. regenerated
-      chunk) + fog RLE.
-- [ ] `deserialize(snapshot) → SimulationEngine` (recompile source → program; the VM
-      state is restored on top). Reject/upgrade unknown versions.
-- [ ] Round-trip test: run N ticks, save, load, run M more ticks ⇒ identical to an
-      uninterrupted N+M run (determinism guarantee).
-- [ ] UI: autosave to `localStorage` every ~30 s and on page hide; "Save to file"
-      (`<a download>`), "Load from file" (`<input type=file>`), "New world" confirms
-      before discarding. Load the autosave on startup if present.
+### Simulation
+- [ ] Per-unit mutable stats: `Unit.chassis` becomes the base `ChassisDef` plus a list of
+      installed upgrade ids; derived stats computed in one place (`effectiveChassis(u)`).
+      Everything that reads `chassis.*` uses it (VM limits, sensor range, cargo, battery).
+- [ ] Upgrade catalogue `src/core/upgrades.ts` (declarative, tiered), e.g.:
+      Flash 32 → 48 → 64 lines · registers 4 → 6 → 8 · cycles/tick 4 → 6 → 8 ·
+      cargo 4 → 6 → 8 · battery 100 % → 150 % · sensor range 6 → 8 · solar efficiency
+      +25 % · dish gain (cos⁴ → cos²) · reinforced hull (squall damage −50 %).
+- [ ] **`TOOL_3` modules** (pick one first): *Seismic scanner* (`ACT TOOL_3 dir` → nearest
+      ore within 12 tiles along the ray, result via a new port) or *Field welder*
+      (repairs a subsystem without a kit, slowly, costs energy).
+- [ ] `engine.buyUpgrade(u, id)`: checks credits and prerequisites; applies on the next
+      reboot (firmware limits change) or instantly (physical). Decision 1 below.
+- [ ] Save format v2 with installed upgrades; v1 saves load with no upgrades
+      (first migration test).
+- [ ] Tests: each upgrade's effect; compiler accepts r4–r7 / longer programs only when
+      installed; save migration; credits never go negative.
 
-### Storyteller (`EventDirector`)
-- [ ] Seeded `Rng` in the director (state saved). Scheduler that rolls events per sol.
-- [ ] **Solar eclipse:** `env.lightFactor` ramps to 0 for ~150 ticks mid-day; announced
-      ~200 ticks ahead via a new port `@ALERT` (0 none, 1 eclipse, 2 squall) and a log line.
-- [ ] **Micrometeorite squall:** for ~100 ticks, rovers take hull damage per tick unless
-      the solar array is stowed and the rover is not moving (or damage doubles with the
-      panels open). Rewards `REPAIR_KIT` use.
-- [ ] Event goals: *Survive an eclipse powered*, *Weather a squall with hull > 50*.
-- [ ] Renderer: eclipse darkening, squall streaks; event banner in the HUD.
-- [ ] Tests: event schedule is deterministic per seed; eclipse zeroes `@SUN_LIGHT`;
-      squall damage rules.
-
-### Admin console
-- [ ] Admin tab: trigger eclipse/squall now, set time of day, give credits, teleport
-      rover to a clicked tile, toggle invulnerability.
+### Presentation
+- [ ] **Upgrades** tab: catalogue with costs, tiers, owned state, buy buttons.
+- [ ] Rover mesh shows installed upgrades (bigger array, extra dish ring, TOOL_3 module).
+- [ ] Reference tab shows the rover's *current* limits.
 
 ### Docs
-- [ ] SPEC: save format, events, `@ALERT`; ROADMAP: tick boxes, M7 detailed plan.
+- [ ] SPEC: upgrades section, chassis stats as base + upgrades; ROADMAP: M8 plan.
+
+## Resolved decisions (M6)
+
+1. Saves: **one autosave** in the browser + file export/import.
+2. Squalls: **damage individual systems**: light hull wear (more while driving), dish wear,
+   heavy damage to an open solar array. Subsystem health scales charging / signal.
+3. Rewards: fine for now, tune later.
 
 ## Resolved decisions (M5)
 
-1. Science delivery: **automatic** with every successful `@TX_DATA` write.
-2. Grabber reach: **adjacent tile only**.
-3. Science credits: **currency** for M7 upgrades (delivered science + goal rewards).
-4. Explorer firmware dish: **unchanged** (aligns only while charging; the Prospector
-   template shows continuous tracking).
+1. Science delivery: automatic with every successful `@TX_DATA` write.
+2. Grabber reach: adjacent tile only.
+3. Science credits: currency for M7 upgrades.
+4. Explorer firmware dish: unchanged.
 
 ## Open decisions
 
-1. Save slots: a single autosave + file export, or several named slots in `localStorage`?
-2. Squall rule: damage only when the array is open, or always unless the rover is still?
-3. Balance: the Prospector earns ~75 credits in its first 1.5 sols. Fine for now; revisit
-   once M7 prices exist.
+1. Upgrade delivery: **instant** purchase, or a **supply drop** (a crate lands near the
+   rover and must be collected with the grabber — more gameplay)?
+2. Flash/register upgrades: apply immediately, or only after the next firmware upload
+   (more realistic, avoids changing limits under a running program)?
+3. Should a second rover be purchasable in M7, or later?
+4. Prospector firmware (31/32 lines) has no room to stow its array on squall alerts. Leave
+   it as a lesson, or wait for the Flash upgrade?
 
 ## Backlog / ideas
 
@@ -87,4 +88,5 @@ so programs need to react (stow panels in a squall, sleep through an eclipse).
 | Date | PR / branch | Summary |
 | :--- | :--- | :--- |
 | 2026-11-12 | `ccr-fb6a40ee-nae64a` | M0–M4 implemented; spec v1.3; M8 visual roadmap added. Branch later renamed to `main`. |
-| 2026-11-12 | `ccr-fb6a40ee-nae64a` → PR | M5: tools, cargo, spectrometer, science credits, goals, Prospector template. |
+| 2026-11-12 | PR #2 (merged) | M5: tools, cargo, spectrometer, science credits, goals, Prospector template. |
+| 2026-11-12 | `ccr-fb6a40ee-nae64a` → PR | M6: save/load + autosave, storyteller events, subsystem damage, admin console. |

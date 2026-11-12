@@ -2,13 +2,16 @@
 
 /** Pre-installed on every new rover: stationary self-management. */
 export const FACTORY_IDLE = `; FACTORY FIRMWARE: stationary self-management.
-; Keeps the solar array on the sun, keeps the dish on the relay
-; orbiter and sends a battery heartbeat. Replace it with your own code!
+; Keeps the solar array on the sun (stowed during squalls), keeps the
+; dish on the relay orbiter and sends a battery heartbeat.
+; Replace it with your own code!
 
 CONST BEAT_TICKS 50         ; ticks between heartbeats
 
 loop:   MOV @SOLAR_OPEN 1
-        MOV @SOLAR_ANGLE @SUN_AZIMUTH      ; motors slew toward targets
+        JNE @ALERT ALERT_SQUALL aim
+        MOV @SOLAR_OPEN 0                  ; squall: micrometeorites wreck open panels
+aim:    MOV @SOLAR_ANGLE @SUN_AZIMUTH      ; motors slew toward targets
         MOV @ANTENNA_ANGLE @ORBIT_AZIMUTH
         MOV @LIGHT_COLOR GREEN             ; green: day
         JGT @SUN_ELEV 0 beat
@@ -51,8 +54,10 @@ go:     MOV @LIGHT_COLOR GREEN
 
 charge: MOV @HEADLIGHT 0
         MOV @LIGHT_COLOR AMBER
-        MOV @SOLAR_OPEN 1
-chg:    MOV @SOLAR_ANGLE @SUN_AZIMUTH
+chg:    MOV @SOLAR_OPEN 1
+        JNE @ALERT ALERT_SQUALL aim
+        MOV @SOLAR_OPEN 0         ; squall warning: keep the array stowed
+aim:    MOV @SOLAR_ANGLE @SUN_AZIMUTH
         MOV @ANTENNA_ANGLE @ORBIT_AZIMUTH
         SLEEP 20
         JLT @BAT FULL_BAT chg

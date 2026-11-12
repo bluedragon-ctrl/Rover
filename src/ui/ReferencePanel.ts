@@ -9,7 +9,7 @@ const NOTES: Record<string, string> = {
   ADD: 'dst += v', SUB: 'dst -= v', MUL: 'dst *= v', DIV: 'dst /= v (truncates)', MOD: 'dst = dst mod v (never negative)',
   JMP: 'jump', JEQ: 'jump if a == b', JNE: 'jump if a != b', JLT: 'jump if a < b', JGT: 'jump if a > b', JLE: 'jump if a <= b', JGE: 'jump if a >= b',
   CALL: 'push args, call', RET: 'return',
-  SLEEP: 'wait N ticks', SCAN: 'ray: dest1 = tile type, dest2 = distance', STEP: 'drive [tiles] in dir', ACT: 'fire tool in hardpoint (see Tools)', PEEK: 'dest = item ID in cargo slot', USE: 'consume cargo item (REPAIR_KIT: +30 hull)',
+  SLEEP: 'wait N ticks', SCAN: 'ray: dest1 = tile type, dest2 = distance', STEP: 'drive [tiles] in dir', ACT: 'fire tool in hardpoint (see Tools)', PEEK: 'dest = item ID in cargo slot', USE: 'consume cargo item; REPAIR_KIT repairs [system] (default SYS_HULL +30; SYS_SOLAR / SYS_ANTENNA +40)',
 };
 
 /** Generated language reference: always in sync with the compiler and port table. */

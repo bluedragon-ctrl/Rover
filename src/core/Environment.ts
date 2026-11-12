@@ -33,6 +33,15 @@ export interface SunState {
 export class Environment {
   lightFactor = 100;
 
+  /** Sun position ignoring eclipses (used by the storyteller to plan). */
+  sunRaw(tick: number): SunState {
+    const f = this.lightFactor;
+    this.lightFactor = 100;
+    const s = this.sun(tick);
+    this.lightFactor = f;
+    return s;
+  }
+
   sun(tick: number): SunState {
     const { dayTicks, sunStartPhase, sunMaxElev } = BALANCE;
     const phaseDeg = Math.floor(((tick + Math.floor((sunStartPhase * dayTicks) / 360)) % dayTicks) * 360 / dayTicks);

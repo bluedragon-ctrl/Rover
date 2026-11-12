@@ -40,6 +40,11 @@ npm run build      # typecheck + production bundle in dist/
 - Shapes are drawn only in `src/render/VectorFactory.ts` (keeps M8 visual work local).
 - Shipped firmware (`src/core/programs.ts`) must compile and is covered by tests.
 
+- **New simulation state must be saved:** add it to `src/core/SaveManager.ts`. The
+  round-trip test (save mid-run, load, continue == uninterrupted run) catches omissions
+  that affect the simulation. Bump `SAVE_VERSION` and add a migration for format changes.
+- Storyteller randomness only through `EventDirector.rng` (seeded, saved).
+
 ## Gotchas
 - Names are case-insensitive: a label `beat` clashes with `CONST BEAT`.
 - Actuator state (solar array, dish, lights) is physical and survives reboots;

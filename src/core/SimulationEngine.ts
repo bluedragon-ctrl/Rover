@@ -34,7 +34,7 @@ export class SimulationEngine {
   readonly world: ChunkedWorld;
   readonly units: Unit[] = [];
   readonly env = new Environment();
-  readonly cheats = { freeUpload: false };
+  readonly cheats = { freeUpload: false, invulnerable: false };
   readonly director: EventDirector;
   /** World-wide counters used by goals and the UI. */
   readonly stats = {
@@ -45,13 +45,15 @@ export class SimulationEngine {
     itemsAnalyzed: 0,
     maxDistance: 0,
     sunrisesPowered: 0,
+    eclipsesSurvived: 0,
+    squallsWeathered: 0,
   };
   /** Science credits: delivered science + goal rewards. Currency for M7 upgrades. */
   credits = 0;
   tick = 0;
   sun: SunState;
   orbitAzimuth: number;
-  private nextUnitId = 1;
+  nextUnitId = 1;
   readonly portCtx: PortContext;
 
   constructor(readonly opts: EngineOptions) {
@@ -75,6 +77,7 @@ export class SimulationEngine {
       world: this.world,
       registry: this.registry,
       sensorRange: (u) => this.sensorRange(u),
+      alert: () => this.director.alert(this.tick),
       transmit: (u, v) => this.transmit(u, v),
     };
   }
@@ -93,6 +96,21 @@ export class SimulationEngine {
     return u;
   }
 
+  /** Save/load: recreate a unit with a known id (no reveal, no program). */
+  restoreUnit(id: number, name: string, chassis: ChassisDef): Unit {
+    const u = new Unit(id, name, chassis);
+    this.units.push(u);
+    return u;
+  }
+
+  /** Recompute state derived from the tick (sun, orbiter, eclipse light) after a load. */
+  refreshDerived(): void {
+    this.director.applyEnvironment(this.tick);
+    this.sun = this.env.sun(this.tick);
+    this.orbitAzimuth = this.env.orbitAzimuth(this.tick);
+    for (const u of this.units) this.world.touchRadius(u.x, u.y, BALANCE.chunkBubbleRadius);
+  }
+
   getUnit(id: number): Unit | undefined {
     return this.units.find((u) => u.id === id);
   }
@@ -106,7 +124,7 @@ export class SimulationEngine {
   }
 
   signalOf(u: Unit): number {
-    return signalStrength(u.antennaAngle, this.orbitAzimuth);
+    return Math.floor((signalStrength(u.antennaAngle, this.orbitAzimuth) * u.antennaHealth) / 100);
   }
 
   sensorRange(u: Unit): number {
@@ -192,18 +210,21 @@ export class SimulationEngine {
     this.tick++;
     this.world.now = this.tick;
     const wasNight = this.sun.elevation <= 0;
+    this.director.tick(this.tick);
     this.sun = this.env.sun(this.tick);
+    const squall = this.director.isActive('SQUALL', this.tick);
     if (wasNight && this.sun.elevation > 0) for (const u of this.units) if (u.powered) this.stats.sunrisesPowered++;
     this.orbitAzimuth = this.env.orbitAzimuth(this.tick);
     for (const u of this.units) {
       this.world.touchRadius(u.x, u.y, BALANCE.chunkBubbleRadius);
       this.updatePower(u);
+      if (squall) this.applySquall(u);
       this.updateUnitPhysics(u);
       this.revealAround(u);
       u.cyclesLeft = u.vm.state === CpuState.RUNNING ? u.chassis.cyclesPerTick : 0;
     }
     if (this.tick % 100 === 0) this.world.evictStale(BALANCE.chunkEvictAfterTicks);
-    if (this.tick % 10 === 0) this.director.update();
+    if (this.tick % 10 === 0) this.director.updateGoals();
     this.events.emit('TICK', { tick: this.tick });
   }
 
@@ -236,7 +257,7 @@ export class SimulationEngine {
     const B = BALANCE;
 
     // Solar charging works even when powered off: that is how a dead rover recovers.
-    u.lastSolarGain = u.solarDeployed ? solarGain(u.solarAngle, this.sun) : 0;
+    u.lastSolarGain = u.solarDeployed ? Math.floor((solarGain(u.solarAngle, this.sun) * u.solarHealth) / 100) : 0;
     u.energy = Math.min(B.batteryCapacity, u.energy + u.lastSolarGain);
 
     if (u.vm.state === CpuState.POWER_OFF) {
@@ -267,6 +288,17 @@ export class SimulationEngine {
     u.solarAngle = slew(u.solarAngle, u.solarTarget);
     u.antennaAngle = slew(u.antennaAngle, u.antennaTarget);
     this.drain(u, drain);
+  }
+
+  /** Micrometeorites: light hull wear (more while driving), dish wear, heavy damage to an exposed array. */
+  private applySquall(u: Unit): void {
+    if (u.vm.state === CpuState.DESTROYED || this.cheats.invulnerable) return;
+    const B = BALANCE;
+    const t = this.tick;
+    const every = u.action?.kind === 'STEP' ? B.squallHullEveryTicks / 2 : B.squallHullEveryTicks;
+    if (t % every === 0) this.damage(u, 1);
+    if (!u.solarStowed && t % B.squallSolarEveryTicks === 0) u.solarHealth = Math.max(0, u.solarHealth - B.squallSolarDamage);
+    if (t % B.squallAntennaEveryTicks === 0) u.antennaHealth = Math.max(0, u.antennaHealth - 1);
   }
 
   private transmit(u: Unit, value: number): void {
@@ -319,7 +351,7 @@ export class SimulationEngine {
     }
 
     if (act.kind === 'TOOL') {
-      const st = TOOLS[act.tool].complete(this, u, act.arg);
+      const st = TOOLS[act.tool].complete(this, u, act.arg, act.arg2);
       this.finishAction(u, st);
       this.events.emit('TOOL_DONE', { unitId: u.id, tool: act.tool, status: st });
       return;
@@ -377,14 +409,14 @@ export class SimulationEngine {
   }
 
   /** Validate, pay and start a tool action; the effect applies when it completes. */
-  private startTool(u: Unit, tool: ToolDef, arg: number): void {
-    let st = tool.check(this, u, arg);
+  private startTool(u: Unit, tool: ToolDef, arg: number, arg2?: number): void {
+    let st = tool.check(this, u, arg, arg2);
     if (st === Status.OK && u.energy < tool.energy) st = Status.ERR_LOW_POWER;
     this.setStatus(u, st);
     if (st !== Status.OK) return;
     this.drain(u, tool.energy);
     if (!u.powered) return;
-    u.action = { kind: 'TOOL', tool: tool.id, arg, ticksLeft: tool.ticks };
+    u.action = { kind: 'TOOL', tool: tool.id, arg, arg2, ticksLeft: tool.ticks };
     u.vm.block();
     const t = tool.target?.(u, arg) ?? null;
     if (tool.arg === 'dir' && arg >= 0 && arg <= 3) u.heading = arg;
@@ -403,6 +435,7 @@ export class SimulationEngine {
   }
 
   private damage(u: Unit, amount: number): void {
+    if (this.cheats.invulnerable) return;
     u.hull = Math.max(0, u.hull - amount);
     if (u.hull === 0) {
       u.vm.state = CpuState.DESTROYED;
@@ -501,7 +534,7 @@ export class SimulationEngine {
         return;
       }
       case 'USE':
-        this.startTool(u, TOOLS.USE_ITEM, v[0]);
+        this.startTool(u, TOOLS.USE_ITEM, v[0], v[1]);
         return;
       case 'PEEK': {
         const slot = v[0];
@@ -527,11 +560,24 @@ export class SimulationEngine {
     },
     forceRepair: (u: Unit) => {
       u.hull = 100;
+      u.solarHealth = 100;
+      u.antennaHealth = 100;
       if (u.vm.state === CpuState.DESTROYED) {
         u.vm.state = CpuState.RUNNING;
         u.vm.reboot();
       }
       this.log(u, 'warn', 'ADMIN: hull repaired.');
+    },
+    teleport: (u: Unit, x: number, y: number): boolean => {
+      if (this.isBlocked(x, y)) return false;
+      u.x = x;
+      u.y = y;
+      u.action = null;
+      u.motion = null;
+      if (u.vm.state === CpuState.BLOCKED) u.vm.unblock();
+      this.revealAround(u);
+      this.log(u, 'warn', `ADMIN: teleported to (${x}, ${y}).`);
+      return true;
     },
     respawnAtOrigin: (u: Unit) => {
       u.x = 0;
@@ -540,6 +586,8 @@ export class SimulationEngine {
       u.motion = null;
       u.energy = BALANCE.batteryCapacity;
       u.hull = 100;
+      u.solarHealth = 100;
+      u.antennaHealth = 100;
       u.vm.state = CpuState.RUNNING;
       u.vm.reboot();
       this.revealAround(u);

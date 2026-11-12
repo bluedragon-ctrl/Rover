@@ -4,7 +4,7 @@ This document supersedes `v1.2` of the architecture/language review. It fixes th
 inconsistencies found in review and pins down the numbers the code relies on.
 All tunable numbers live in `src/core/balance.ts`; this document lists defaults.
 
-Status markers: **[M1–M3]**, **[M4]**, **[M5]** implemented in that milestone, **[later]** designed
+Status markers: **[M1–M3]**, **[M4]**, **[M5]**, **[M6]** implemented in that milestone, **[later]** designed
 but not yet implemented.
 
 ---
@@ -59,6 +59,7 @@ complete (unblocking its CPU), (3) passive energy drain, (4) each CPU spends its
 | Call stack | 8 frames | Return addresses only. |
 | Battery | 100 000 energy units | Exposed as `@BAT` = 0–100 (%). |
 | Hull | 100 | `@HULL`. |
+| Subsystems | solar array 100, dish 100 | `@SOLAR_HEALTH`, `@ANTENNA_HEALTH`. **[M6]** |
 | Cargo | 4 slots | Item IDs (= tile IDs). **[M5]** |
 | Hardpoints | `TOOL_0` drill, `TOOL_1` grabber, `TOOL_2` spectrometer, `TOOL_3` empty | **[M5]** |
 | Sensor range | 6 tiles | 1 at night, 5 at night with headlight. **[M4]** |
@@ -126,7 +127,7 @@ that the target is still there). Tools work with the solar array deployed.
 | `ACT TOOL_1 dir` | Grabber | 2 | 100 | Picks up the adjacent surface item (`SAMPLE`, `REPAIR_KIT`). Adjacent tiles only. |
 | `ACT TOOL_2 slot` | Spectrometer | 30 | 300 | Analyzes the item in `slot` and frees it: `SAMPLE` +3 science, ore +1. |
 | `ACT TOOL_3` | (empty) | – | – | `ERR_NO_TOOL`. |
-| `USE slot` | – | 5 | 0 | Consumes an item: `REPAIR_KIT` +30 hull. |
+| `USE slot [system]` | – | 5 | 0 | Consumes an item: `REPAIR_KIT` +30 hull (`SYS_HULL`, default) or +40 to `SYS_SOLAR` / `SYS_ANTENNA`. |
 
 Errors: `ERR_INVALID` (bad direction/slot, nothing usable there), `ERR_FULL` (no free
 cargo slot), `ERR_LOW_POWER`, `ERR_NO_TOOL`.
@@ -140,12 +141,49 @@ M7 upgrades.
 goals (First contact, Night owl, Surveyor, Trailblazer, Prospector, Collector, Scientist),
 each with a credit reward. Checked every 10 ticks; deterministic.
 
+### 3.3.3 Subsystem damage **[M6]**
+
+Besides the hull, the solar array and the dish have their own integrity (0–100).
+A damaged array charges proportionally less (`gain × @SOLAR_HEALTH / 100`); a damaged
+dish gives proportionally weaker signal (`@SIGNAL_STR × @ANTENNA_HEALTH / 100`), which
+also makes uploads more expensive. Repair with `USE slot SYS_SOLAR` / `SYS_ANTENNA`.
+Hull 0 destroys the rover; a 0 subsystem just stops working.
+
 ### 3.4 Power-off and solar recovery
 
 When energy reaches 0 the CPU powers off and any action is aborted. If the solar array
 is deployed and charging, the rover **cold-boots** (hard reboot) once the battery
 reaches 5 % **[M4]**. If the array was stowed, the rover is stuck: the admin console
 (`forceCharge`, `forceRepair`, `respawnAtOrigin`) is the escape hatch.
+
+## 3.5 Storyteller events **[M6]**
+
+The `EventDirector` rolls once per sol (seeded RNG, state saved) after a grace period of
+1500 ticks. Every event is announced `200` ticks ahead: `@ALERT` reports the most urgent
+announced or active event (`ALERT_NONE=0`, `ALERT_ECLIPSE=1`, `ALERT_SQUALL=2`) and
+`@ALERT_ETA` the ticks until it starts (0 while active).
+
+| Event | Chance / sol | Length | Effect |
+| :--- | :--- | :--- | :--- |
+| Solar eclipse | 35 % | 150 ticks (20-tick ramps) | Daytime only. `@SUN_LIGHT` → 0, so no solar charging; night sensor rules apply only if the sun is down. |
+| Micrometeorite squall | 40 % | 100 ticks | Hull −1 every 10 ticks (every 5 while driving); dish −1 every 20 ticks; solar array −2 every 3 ticks unless fully stowed (≈ −66 for a whole squall). |
+
+Event goals: *Into the dark* (a rover powered through a whole eclipse), *Storm chaser*
+(out of a squall with hull ≥ 50 and solar ≥ 50). Events started from the admin console
+do not count toward goals.
+
+## 3.6 Persistence **[M6]**
+
+`SaveManager.serialize/deserialize` (headless). A save (`version: 1`) holds the seed,
+tick, credits, stats, cheats, storyteller state (RNG, schedule, completed goals), full
+unit and VM state (firmware source is recompiled on load), and **only chunks that are
+dirty or explored**: fog as run lengths plus a sparse `[layer, index, id]` diff against
+the regenerated chunk. A saved-then-loaded world continues **bit-identically** to an
+uninterrupted one (tested). Typical size: a few KB.
+
+The browser keeps one autosave in `localStorage` (every 30 s and on page hide) and resumes
+it on startup unless the URL asks for a different `?seed`. Saves can be exported to and
+imported from JSON files.
 
 ## 4. World
 
@@ -236,6 +274,8 @@ compute instructions leave it alone.
 * Status: `OK=0`, `ERR_INVALID=1`, `ERR_FULL=2`, `ERR_LOW_POWER=3`, `ERR_BLOCKED=4`,
   `ERR_NO_TOOL=5`, `ERR_NO_SIGNAL=6`, `ERR_HAZARD=7`, `ERR_DEPLOYED=8`.
 * Tools: `TOOL_0`…`TOOL_3`.
+* Systems: `SYS_HULL=0`, `SYS_SOLAR=1`, `SYS_ANTENNA=2`.
+* Alerts: `ALERT_NONE=0`, `ALERT_ECLIPSE=1`, `ALERT_SQUALL=2`.
 * Colors: `OFF=0`, `RED=1`, `GREEN=2`, `BLUE=3`, `AMBER=4`.
 * Tiles: `NONE=0` plus every `constName` in `WorldRegistry` (`FLAT_SAND`, `IRON_ORE`, `ROVER`, ...).
 
@@ -261,6 +301,9 @@ compute instructions leave it alone.
 | `@ANTENNA_ANGLE` | RW | 0–359 (write = target, read = current) | M4 |
 | `@TX_DATA` | W | any int | M4 |
 | `@CARGO_FREE` | R | free cargo slots | M5 |
+| `@SOLAR_HEALTH`, `@ANTENNA_HEALTH` | R | 0–100 | M6 |
+| `@ALERT` | R | `ALERT_*` | M6 |
+| `@ALERT_ETA` | R | ticks until the alerted event | M6 |
 | `@SCIENCE_READY` | R | science packets waiting for uplink | M5 |
 
 Writes are clamped to the port's range; angle ports wrap modulo 360.

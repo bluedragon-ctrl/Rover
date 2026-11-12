@@ -1,5 +1,5 @@
 import type { SimulationEngine } from './SimulationEngine';
-import { DIR_VEC, Layer, Status } from './types';
+import { DIR_VEC, Layer, Status, SystemId } from './types';
 import type { Unit } from './Unit';
 
 export type ToolId = 'DRILL' | 'GRABBER' | 'SPECTROMETER' | 'USE_ITEM';
@@ -19,8 +19,8 @@ export interface ToolDef {
   ticks: number;
   energy: number;
   description: string;
-  check(e: SimulationEngine, u: Unit, arg: number): Status;
-  complete(e: SimulationEngine, u: Unit, arg: number): Status;
+  check(e: SimulationEngine, u: Unit, arg: number, arg2?: number): Status;
+  complete(e: SimulationEngine, u: Unit, arg: number, arg2?: number): Status;
   /** World tile the tool acts on (for FX), if any. */
   target?(u: Unit, arg: number): [number, number] | null;
 }
@@ -107,16 +107,18 @@ export const TOOLS: Record<ToolId, ToolDef> = {
     arg: 'slot',
     ticks: 5,
     energy: 0,
-    description: 'Consumes the item in cargo <slot> (REPAIR_KIT: +30 hull).',
-    check(e, u, slot) {
-      if (!validSlot(u, slot)) return Status.ERR_INVALID;
+    description: 'Consumes the item in cargo <slot>. REPAIR_KIT: +30 hull, or +40 to [system] (SYS_SOLAR, SYS_ANTENNA).',
+    check(e, u, slot, system = SystemId.SYS_HULL) {
+      if (!validSlot(u, slot) || system < 0 || system > 2) return Status.ERR_INVALID;
       return e.registry.get(u.cargo[slot])?.useEffect ? Status.OK : Status.ERR_INVALID;
     },
-    complete(e, u, slot) {
-      const st = this.check(e, u, slot);
+    complete(e, u, slot, system = SystemId.SYS_HULL) {
+      const st = this.check(e, u, slot, system);
       if (st !== Status.OK) return st;
       const fx = e.registry.get(u.cargo[slot])!.useEffect!;
-      if (fx.hull) u.hull = Math.min(100, u.hull + fx.hull);
+      if (system === SystemId.SYS_HULL) u.hull = Math.min(100, u.hull + (fx.hull ?? 0));
+      else if (system === SystemId.SYS_SOLAR) u.solarHealth = Math.min(100, u.solarHealth + (fx.system ?? 0));
+      else u.antennaHealth = Math.min(100, u.antennaHealth + (fx.system ?? 0));
       u.cargo[slot] = 0;
       return Status.OK;
     },

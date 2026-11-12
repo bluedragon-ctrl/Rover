@@ -6,7 +6,7 @@ import { RoverVM } from './vm/RoverVM';
 export type UnitAction =
   | { kind: 'WAIT'; ticksLeft: number }
   | { kind: 'STEP'; dir: number; tilesLeft: number; ticksLeft: number; toX: number; toY: number }
-  | { kind: 'TOOL'; tool: ToolId; arg: number; ticksLeft: number };
+  | { kind: 'TOOL'; tool: ToolId; arg: number; arg2?: number; ticksLeft: number };
 
 export interface UnitMotion {
   fromX: number;
@@ -24,6 +24,9 @@ export class Unit {
   heading = 0;
   energy: number = BALANCE.batteryCapacity;
   hull = 100;
+  /** Subsystem integrity 0–100. Damaged systems work proportionally worse. */
+  solarHealth = 100;
+  antennaHealth = 100;
   cargo: number[];
   lightColor: number = LightColor.GREEN;
   lightBlink = 0;
