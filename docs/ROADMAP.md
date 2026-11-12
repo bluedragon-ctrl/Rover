@@ -21,7 +21,9 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | M8.1 | Radar `SCAN` vs. light-limited operator view; headlight cone; `@HEADING` | ✅ done |
 | Flash bytes | Program size in machine-code bytes instead of lines (SPEC §5.7) | ✅ core done; editor byte gutter awaiting preview approval |
 | **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | 🚧 slices 1–3 done (link layer, `LOG`, Console tab; recorder, spectra, Gallery tab; dumps, `BRK`, admin-only debugger; save v6); ⏭ next: slice 4 (`@POST` display, preview first); photo POC in `preview.html?photos=1` |
-| M10 | Multiple rovers (after single-rover tuning) | planned |
+| M10 | Firmware + program slot (SPEC §3.9) | planned: design agreed, plan below |
+| M11 | User interface review (after M10) | planned |
+| M12 | Multiple rovers (after single-rover tuning) | planned |
 
 ## Done: Flash measured in bytes
 
@@ -221,11 +223,35 @@ Later (backlog): `@REC_PEEK` so firmware can inspect recorder bytes (on-board tr
 compression); bit errors at low signal and a checksum lesson; panorama `SNAP` of the
 horizon; unknown minerals identified only by spectrum.
 
+## M10 — Firmware + program slot (outline)
+
+Spec: [SPEC §3.9](SPEC.md). Decided with the owner (2026-11-12), after M9:
+
+- Two pieces of code on one CPU: **firmware** (housekeeping, advanced players edit it)
+  and a **program** (the player's task; beginners only write programs).
+- **Shared flash, separate registers / stacks / IP** per slot.
+- **`RUN ticks`** gives the program a time slice and resumes it next time; program ends
+  with `END value`; `@PROG_STATE` / `@PROG_RESULT`; program faults return to the
+  firmware instead of a watchdog reboot; `BRK` halts only the program.
+- **Default firmware stays small**; players improve it themselves.
+- Program upload is cheap (program bytes only) and does not reboot; Console *Run again*.
+
+To settle when the detailed plan is written: compiler/flash layout of the two slots,
+dumps per slot, save format, how shipped templates split, migration of old saves (old
+firmware becomes the firmware slot, no program).
+
+## M11 — User interface review (after M10)
+
+Owner request: with firmware, program, console, gallery, dumps and upgrades the side
+panel has grown tab by tab. Review the whole UI once M10 lands: information
+architecture (what lives where), editor for two code slots, telemetry vs admin views,
+what the top bar shows, discoverability for beginners. Proposals with screenshots first.
+
 ## Resolved decisions (M7)
 
 1. Upgrades are **picked up**: a supply crate lands near the rover; the grabber installs it.
 2. Installed **immediately** on pickup (including Flash/register limits).
-3. **More rovers later**, once the single-rover game is tuned (now M10).
+3. **More rovers later**, once the single-rover game is tuned (now M12).
 4. Prospector stays at 31/32 lines without squall handling: **a lesson** (Flash 48 fixes it).
    Now 120/128 bytes; the Flash 192 B upgrade fixes it.
 
@@ -301,3 +327,4 @@ window with a fixed dish?
 | 2026-11-12 | `ccr-a25966c0-1wr43t` (4) | M9 slice 1: byte downlink with lossy log FIFO, `LOG tag [src]`, `@LOG_FREE` / `@LOG_LOST`, boot frames, Console tab with CONST-named tags, save v4. |
 | 2026-11-12 | `ccr-a25966c0-1wr43t` (5) | M9 slice 2: science recorder, spectra (`imaging.ts`), `@REC_FREE`, `@TX_DATA` = `LOG 0`, goals on frames/products, firmware updated, Gallery tab, save v5. |
 | 2026-11-12 | `ccr-a25966c0-1wr43t` (6) | M9 slice 3: uplinked Dump / Dump stacks / Continue, dump frames ahead of the log, `BRK` and `HALTED`, live debugger admin-only, save v6. |
+| 2026-11-12 | `ccr-a25966c0-1wr43t` (6b) | Design: firmware + program slot agreed as M10 (SPEC §3.9), UI review as M11, multiple rovers renumbered to M12. |

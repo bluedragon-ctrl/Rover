@@ -457,6 +457,41 @@ gallery keeps the last 100 products (saved). Old saves: science points still wai
 | Hi-res sensor | 80 | Camera mode 4 | Recorder 2 KB |
 | Colour sensor | 100 | Camera mode 5 | Colour filter wheel, Recorder 2 KB |
 
+## 3.9 Firmware and programs **[M10, planned]**
+
+Design agreed with the owner (2026-11-12); details are settled while building M10.
+
+The rover runs two pieces of code on its one CPU, like a spacecraft's flight software
+running uplinked command sequences, or a small OS starting user programs:
+
+* **Firmware** keeps the rover alive (sun, dish, squalls, low battery) and decides when
+  the program runs. The factory firmware ships with every rover. Advanced players may
+  edit and upload it (full upload cost, hard reboot), as today.
+* **Program**: the player's task (Explorer, Prospector, Fetch, ...). Beginners only write
+  programs. *Upload program* pays only for the program's bytes and does **not** reboot.
+
+Rules:
+
+* **Shared flash, separate contexts.** Firmware + program together must fit the chassis
+  flash (Mk-I 128 B): a lean firmware leaves room for bigger programs. Each has its own
+  IP, registers and stacks, so a program cannot clobber the firmware's variables.
+* **One CPU, one thread of control.** The program runs only inside the firmware's
+  `RUN ticks`: it runs until it ends, faults or the slice is used up, then control returns
+  to the firmware; the next `RUN` resumes it. The slice is checked between instructions,
+  so a long `SLEEP` or `STEP` in the program runs to completion first (as in any
+  cooperative system). No actuator ownership rules are needed: the firmware tidies up
+  between slices.
+* **Registry ports:** `@PROG_STATE` (`PROG_NONE`, `PROG_READY`, `PROG_RUNNING`,
+  `PROG_DONE`, `PROG_FAULT`, `PROG_HALTED`) and `@PROG_RESULT` (the value of `END value`).
+* **Program faults** return to the firmware with `PROG_FAULT` instead of a watchdog
+  reboot. `BRK` in a program halts only the program; *Continue* resumes it.
+* **Default firmware stays small:** housekeeping, give the program time slices (none while
+  charging), log the outcome (`PROG done = 3`), acknowledge. Anything smarter is the
+  player's to add by editing the firmware.
+* **Console:** *Run again* restarts the program without re-uploading it.
+* **Editor:** the Code tab edits the program by default; the firmware editor is marked
+  advanced. Templates become programs.
+
 ## 4. World
 
 * Infinite, signed integer coordinates. **`NORTH` = +Y, `EAST` = +X.**
