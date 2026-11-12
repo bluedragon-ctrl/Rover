@@ -11,6 +11,7 @@ const NOTES: Record<string, string> = {
   CALL: 'push args, call', RET: 'return',
   SLEEP: 'wait N ticks', SCAN: 'ray: dest1 = tile type, dest2 = distance', STEP: 'drive [tiles] in dir', ACT: 'fire tool in hardpoint (see Tools)', PEEK: 'dest = item ID in cargo slot', USE: 'repair [system] (default SYS_HULL) by consuming the material in cargo slot (see Tools)',
   LOG: 'queue a log frame for the downlink (Console tab). tag: number or CONST 0–14 (15 = system). 1 cycle, no @STATUS; dropped if the FIFO is full (@LOG_LOST)',
+  BRK: 'halt the CPU (HALTED) until the Console sends Continue or you upload; the world keeps running, no watchdog. 1 cycle',
 };
 
 /** Generated language reference: always in sync with the compiler and port table. */

@@ -9,7 +9,7 @@ export type Op =
   | 'JMP' | 'JEQ' | 'JNE' | 'JLT' | 'JGT' | 'JLE' | 'JGE'
   | 'CALL' | 'RET'
   | 'SLEEP' | 'SCAN' | 'STEP' | 'ACT' | 'PEEK' | 'USE'
-  | 'LOG';
+  | 'LOG' | 'BRK';
 
 export type Operand =
   | { k: 'imm'; v: number }
@@ -109,6 +109,7 @@ const SIGNATURES: Record<Op, string[]> = {
   PEEK: ['v', 'd'],
   USE: ['v', 'v?'],
   LOG: ['k', 'v?'],
+  BRK: [],
 };
 
 export const OPCODES = Object.keys(SIGNATURES) as Op[];

@@ -115,7 +115,7 @@ The rover and the player "see" differently:
 | :--- | :--- |
 | `RUNNING` | Executing instructions. |
 | `BLOCKED` | Waiting for a hardware action (`STEP`, `SCAN`, `SLEEP`, ...). |
-| `HALTED` | **[M9, planned]** Stopped by `BRK`; resumes on *Continue* or upload (§3.8.4). No watchdog. |
+| `HALTED` | **[M9]** Stopped by `BRK`; resumes on *Continue* or upload (§3.8.4). No watchdog. |
 | `FAULT` | Stack overflow/underflow. A **watchdog** hard-reboots the CPU after 50 ticks. |
 | `POWER_OFF` | Battery empty (§3.4). |
 | `DESTROYED` | Hull at 0. Only the admin console can recover. |
@@ -241,10 +241,10 @@ prerequisites and count neither toward goals nor toward "seen" prerequisites.
 
 ## 3.6 Persistence **[M6]**
 
-`SaveManager.serialize/deserialize` (headless). A save (`version: 5`; v1–v4 files are migrated
+`SaveManager.serialize/deserialize` (headless). A save (`version: 6`; v1–v5 files are migrated
 by `migrate()`) holds the seed, supply drops, installed upgrades, each rover's downlink
 (log FIFO, transmitter budget, `@LOG_LOST`, recorder descriptors and progress, sequence
-number), the console's last 200 received frames, the gallery's last 100 products,
+number, dump replies waiting), the console's last 200 received frames, the gallery's last 100 products,
 tick, credits, stats, cheats, storyteller state (RNG, schedule, completed goals), full
 unit and VM state (firmware source is recompiled on load), and **only chunks that are
 dirty or explored**: fog as run lengths plus a sparse `[layer, index, id]` diff against
@@ -285,11 +285,12 @@ unaffected (it already fits). Goal *Upgraded*: install a first upgrade.
 Built so far: the link (§3.8.1) with the log FIFO, log and boot frames (§3.8.2), `LOG`,
 `@LOG_FREE`, `@LOG_LOST`, `@TX_DATA` as `LOG 0` and the Console tab (§3.8.3) (slice 1);
 the science recorder, science frames, spectra, `@REC_FREE` and the Gallery tab
-(§3.8.5) (slice 2). Still planned: `@POST`, dumps and `BRK`, the camera and the upgrades.
+(§3.8.5) (slice 2); dumps, `BRK`, `HALTED` and the admin-only debugger (§3.8.4) (slice 3).
+Still planned: `@POST`, the camera and the upgrades.
 
 Design principle: **mission control knows only what the rover sent**, plus the program
 it uploaded itself. There is no live view of registers, stacks or ports for the player
-(the old debugger becomes an admin-only "omniscient" view). Everything the player learns
+(the old debugger is an admin-only "omniscient" view). Everything the player learns
 about the rover's memory crosses the radio link as bytes, so the encoding is the game.
 
 ### 3.8.1 The link
@@ -362,18 +363,34 @@ kind 1 = science frame   size = 0; followed by 1 sequence byte, then the product
 
 ### 3.8.4 Memory dumps and `BRK`
 
-* **Dump** (console button): an uplinked command, paid like a small upload
-  (`dumpEnergy` = `ceil(150 × 100 / max(10, @SIGNAL_STR))`), rejected without power.
-  The rover answers with a tag-15 dump frame (IP 2 B, `@STATUS` 1 B, CPU state 1 B,
-  each installed register 4 B, data-stack depth 1 B, call-stack depth 1 B: 22 B on Mk-I,
-  38 B with 8 registers; stack contents need a second command, "dump stacks"). The console shows it as a **snapshot with the
-  tick it was taken**, never as a live view.
-* **`BRK`** (1 cycle, 1 byte, compute): the CPU enters the new state `HALTED`. Physical
-  actions already in progress finish; the world keeps running; the watchdog does not
-  fire. The console offers *Dump* and *Continue* (both uplinked commands; *Continue*
-  costs the same as a dump). An upload also ends the halt (hard reboot).
-* **Admin view:** the old live debugger stays available behind the admin toggle, clearly
-  labelled, for development and when stuck.
+* **Uplinked commands** (Console buttons *Dump*, *Dump stacks*, *Continue*): paid like a
+  small upload, `commandCost` = `ceil(dumpEnergy × 100 / max(10, @SIGNAL_STR))` with
+  `dumpEnergy` = 150 (1.5 % battery at full signal, 15 % at signal ≤ 10); free with the
+  admin *Free uploads* cheat. Rejected (nothing paid) while the rover is powered off,
+  when the battery cannot pay, or when `dumpQueueMax` = 4 dump replies are still waiting.
+* **Dump replies** are taken the moment the command arrives and wait in their own queue,
+  sent **before the log FIFO** (a third virtual channel; it may preempt a log frame or a
+  product between bytes). On air: `F8` (kind 1, tag 15), dump kind, payload length, payload.
+  * *Dump* (kind 1): IP of the next instruction 2 B, `@STATUS` 1 B, CPU state 1 B
+    (0 `RUNNING`, 1 `BLOCKED`, 2 `HALTED`, 3 `FAULT`), each installed register 4 B, data-stack
+    depth 1 B, call-stack depth 1 B: 22 B payload on Mk-I (25 B on air, ~13 ticks at full
+    signal), 38 B with 8 registers. Example: `F8 01 16 00 09 00 02 …`.
+  * *Dump stacks* (kind 2): data-stack depth 1 B + 4 B per entry, call-stack depth 1 B
+    + 2 B (return IP) per entry.
+  * The Console shows a dump as a **snapshot with the tick it was taken**, never as a live
+    view, with IPs turned into source lines of the uploaded program:
+    `DUMP (snapshot t254): next L13 · HALTED · @STATUS OK · r0=20 … · stacks 3/0`.
+    Dumps are system frames: they do not count toward goals.
+* **`BRK`** (1 cycle, 1 byte, compute, no `@STATUS`): the CPU enters `HALTED`; the IP
+  already points past the `BRK`. Actuators keep moving to their targets, the transmitter
+  keeps sending, the world keeps running; the watchdog does not fire. *Continue* resumes
+  at the next tick; a running CPU ignores it (it is still paid: mission control does not
+  know the state without a dump). An upload also ends the halt (hard reboot).
+  A halted CPU cannot steer the dish: as the orbiter moves on, the link fades, so aim the
+  dish (or dump) soon after a `BRK`.
+* **Admin view:** the old live debugger (registers, stacks, ports, current line,
+  single-step) is hidden unless *Live debugger* is ticked on the Admin tab; it is labelled
+  as showing what mission control cannot know. A browser preference, not saved with the world.
 
 ### 3.8.5 Science products and the recorder
 
@@ -521,7 +538,7 @@ friction, but the set should stay small enough to learn in one sitting.
 | | `USE slot` | 5 ticks | Consume a cargo item (§3.3.2). |
 | | `SNAP dir [mode]` | blocks 10 | **[M9, planned]** Photograph the subject in `dir` into the science recorder (§3.8.5). |
 | Debug | `LOG tag [src]` | 1 cycle | **[M9]** Queue a log frame for the downlink; compute, no `@STATUS` (§3.8.3). |
-| | `BRK` | 1 cycle | **[M9, planned]** Halt the CPU (`HALTED`) until *Continue* or an upload (§3.8.4). |
+| | `BRK` | 1 cycle | **[M9]** Halt the CPU (`HALTED`) until *Continue* or an upload (§3.8.4). |
 
 `@STATUS` is written by every hardware instruction and by arithmetic errors; pure
 compute instructions leave it alone.

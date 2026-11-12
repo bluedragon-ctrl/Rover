@@ -1,13 +1,13 @@
 import { CHASSIS_MK1 } from './balance';
 import { CHUNK_AREA, WorldChunk } from './ChunkedWorld';
 import type { DirectorState } from './EventDirector';
-import type { ProductDesc, QueuedFrame, ReceivedFrame, ReceivedProduct } from './downlink';
+import type { ProductDesc, QueuedFrame, ReceivedFrame, ReceivedProduct, SysFrame } from './downlink';
 import { SimulationEngine, type SupplyDrop } from './SimulationEngine';
 import { UPGRADE_BY_ID } from './upgrades';
 import { CpuState, type Status } from './types';
 import type { Unit, UnitAction, UnitMotion } from './Unit';
 
-export const SAVE_VERSION = 5;
+export const SAVE_VERSION = 6;
 
 interface UnitSave {
   id: number;
@@ -30,8 +30,8 @@ interface UnitSave {
   seismic: [type: number, dist: number];
   /** v3 */
   indicators: number[];
-  /** v4: downlink transmitter */
-  link: { fifo: QueuedFrame[]; headSent: number; acc: number; lost: number; gap: number; products: ProductDesc[]; recSent: number; seq: number };
+  /** v4: downlink transmitter (v5: recorder, v6: dump replies) */
+  link: { fifo: QueuedFrame[]; headSent: number; acc: number; lost: number; gap: number; products: ProductDesc[]; recSent: number; seq: number; sys: SysFrame[]; sysSent: number };
   action: UnitAction | null;
   motion: UnitMotion | null;
   cyclesLeft: number;
@@ -162,6 +162,8 @@ function saveUnit(u: Unit): UnitSave {
       products: u.link.products.map((p) => ({ ...p })),
       recSent: u.link.recSent,
       seq: u.link.seq,
+      sys: u.link.sys.map((f) => ({ bytes: [...f.bytes], taken: f.taken })),
+      sysSent: u.link.sysSent,
     },
     solar: [u.solarOpen, u.solarDeploy, u.solarAngle, u.solarTarget],
     antenna: [u.antennaAngle, u.antennaTarget],
@@ -234,6 +236,11 @@ export function migrate(raw: unknown): SaveSnapshot {
     out.gallery = [];
     v = 5;
   }
+  if (v === 5) {
+    // v5 -> v6: memory dumps (M9 slice 3). No dump replies waiting.
+    for (const u of out.units) Object.assign(u.link, { sys: [], sysSent: 0 });
+    v = 6;
+  }
   if (v !== SAVE_VERSION) throw new SaveError(`Unsupported save version ${s.version}.`);
   out.version = v;
   return out;
@@ -284,6 +291,8 @@ export function deserialize(raw: unknown): SimulationEngine {
       products: us.link.products.map((p) => ({ ...p })),
       recSent: us.link.recSent,
       seq: us.link.seq,
+      sys: us.link.sys.map((f) => ({ bytes: [...f.bytes], taken: f.taken })),
+      sysSent: us.link.sysSent,
     });
     u.seismicType = us.seismic[0];
     u.seismicDist = us.seismic[1];

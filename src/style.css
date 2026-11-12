@@ -100,3 +100,5 @@ input[type=checkbox] { width: auto; }
 #goals .evh { margin: 14px 0 2px; color: var(--accent); }
 #upgrades .ok { color: var(--accent); } #upgrades .info { color: var(--info); } #upgrades .warn { color: var(--warn); }
 #upgrades button[disabled] { opacity: 0.45; cursor: not-allowed; }
+#console-list .dump { color: var(--info); margin: 2px 0; }
+.admin-banner { margin-top: 8px; padding: 3px 6px; border: 1px dashed var(--warn); color: var(--warn); border-radius: 4px; }

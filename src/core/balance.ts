@@ -38,6 +38,10 @@ export const BALANCE = {
   uploadBase: 500,
   uploadPerByte: 12, // ~50 per average instruction
   uploadSignalFloor: 10,
+  /** Uplinked console command (Dump, Dump stacks, Continue): like a small upload (§3.8.4). */
+  dumpEnergy: 150,
+  /** Dump replies that may wait for the downlink at once. */
+  dumpQueueMax: 4,
   // Downlink (docs/SPEC.md §3.8.1): byte-based, shared by the log FIFO and the science recorder
   linkBytesPerTick: 2, // at @SIGNAL_STR 100, proportional to signal
   linkMinSignal: 20, // nothing is sent below this

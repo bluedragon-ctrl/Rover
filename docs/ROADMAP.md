@@ -20,7 +20,7 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | **M8** | **Visual overhaul (SPEC §7)** | 🚧 in progress: asset preview, indicator lamps, **game renderer switched to v2**, frame-time HUD + geometry baseline, pan leash; performance fine on PC, remaining items (LOD, fat lines, zoom range, atmosphere) deferred to the next visual pass |
 | M8.1 | Radar `SCAN` vs. light-limited operator view; headlight cone; `@HEADING` | ✅ done |
 | Flash bytes | Program size in machine-code bytes instead of lines (SPEC §5.7) | ✅ core done; editor byte gutter awaiting preview approval |
-| **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | 🚧 slices 1–2 done (link layer, `LOG`, Console tab; recorder, spectra, Gallery tab; save v5); ⏭ next: slice 3 (admin-only debugger, dumps, `BRK`); photo POC in `preview.html?photos=1` |
+| **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | 🚧 slices 1–3 done (link layer, `LOG`, Console tab; recorder, spectra, Gallery tab; dumps, `BRK`, admin-only debugger; save v6); ⏭ next: slice 4 (`@POST` display, preview first); photo POC in `preview.html?photos=1` |
 | M10 | Multiple rovers (after single-rover tuning) | planned |
 
 ## Done: Flash measured in bytes
@@ -197,9 +197,15 @@ Slices, one PR each, in order. Every slice: tests green, build, SPEC markers upd
        keeps the item, in-order delivery and credits, partial gallery entries, spectrum
        shape/determinism, boot frames vs First contact, save mid-product, v4 migration,
        hatch rendering).
-3. [ ] **Debugger admin-only, dumps, `BRK`.** Debugger panel behind the admin toggle;
-       console *Dump* / *Dump stacks* / *Continue* commands (uplink cost, SPEC §3.8.4);
-       CPU state `HALTED`; dump snapshots shown with their tick.
+3. [x] **Debugger admin-only, dumps, `BRK`.** Debugger panel, current-line highlight and
+       *Step instr* behind the Admin tab's *Live debugger* toggle (browser preference).
+       `engine.command(u, 'DUMP' | 'DUMP_STACKS' | 'CONTINUE')`: uplink cost
+       (`dumpEnergy` 150 scaled by signal), rejected without power/energy or with 4 dumps
+       waiting. Dump replies (`F8 kind len payload`, `encodeCpuDump` / `encodeStackDump` /
+       `decodeDump`) snapshot the CPU on arrival and go before the log FIFO; received
+       frames carry `taken`. `BRK` (1 cycle, compute) → `HALTED`; *Continue* resumes,
+       upload reboots, no watchdog, admin stepper stops. Console buttons with cost, dumps
+       decoded with source lines. Save v6 (dump queue). Tests in `tests/debug.test.ts`.
 4. [ ] **`@POST` display.** Preview first (`preview.html`, two 7-segment digits on the
        cabin), owner screenshot review, then the game renderer; visible only in the
        operator's view.
@@ -294,3 +300,4 @@ window with a fixed dish?
 | 2026-11-12 | `ccr-a25966c0-1wr43t` (3) | M8: pan leash, camera focus stays within 24 tiles of the rover (owner request). |
 | 2026-11-12 | `ccr-a25966c0-1wr43t` (4) | M9 slice 1: byte downlink with lossy log FIFO, `LOG tag [src]`, `@LOG_FREE` / `@LOG_LOST`, boot frames, Console tab with CONST-named tags, save v4. |
 | 2026-11-12 | `ccr-a25966c0-1wr43t` (5) | M9 slice 2: science recorder, spectra (`imaging.ts`), `@REC_FREE`, `@TX_DATA` = `LOG 0`, goals on frames/products, firmware updated, Gallery tab, save v5. |
+| 2026-11-12 | `ccr-a25966c0-1wr43t` (6) | M9 slice 3: uplinked Dump / Dump stacks / Continue, dump frames ahead of the log, `BRK` and `HALTED`, live debugger admin-only, save v6. |

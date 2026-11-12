@@ -6,7 +6,7 @@ import { TOOLS } from '../core/tools';
 
 const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!);
 
-/** Read-only view of a unit's CPU and hardware state. */
+/** Admin-only, omniscient read-only view of a unit's CPU and hardware state (SPEC §3.8.4). */
 export class DebuggerPanel {
   private lastHtml = '';
 
@@ -16,7 +16,7 @@ export class DebuggerPanel {
     const vm = u.vm;
     const prog = vm.program;
     const stateClass =
-      vm.state === CpuState.RUNNING ? 'ok' : vm.state === CpuState.BLOCKED ? 'info' : vm.state === CpuState.FAULT ? 'bad' : 'bad';
+      vm.state === CpuState.RUNNING ? 'ok' : vm.state === CpuState.BLOCKED ? 'info' : vm.state === CpuState.HALTED ? 'warn' : 'bad';
     const regs = Array.from(vm.regs)
       .map((v, i) => `<div class="kv"><span>r${i}</span><b>${v}</b></div>`)
       .join('');
