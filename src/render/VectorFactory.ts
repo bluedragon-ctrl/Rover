@@ -113,6 +113,7 @@ export function drawTile(b: LineBatch, shape: TileShape, color: number, lx: numb
       break;
     }
     case 'crystal':
+    case 'mound':
       b.color(color, 1).octa(cx, 0.4, cz, 0.3, 0.38);
       b.color(color, 0.6).octa(cx + 0.22, 0.18, cz + 0.18, 0.1, 0.17);
       break;
@@ -343,6 +344,30 @@ export class FillBatch {
 /** Deterministic 0..1 from a variant byte and a salt (render-only jitter). */
 const jit = (variant: number, salt: number) => (((variant * 73 + salt * 151) ^ (variant >> 2)) & 255) / 255;
 
+/** Hexagonal crystal prism with a pointed tip, from `root` along unit `dir`. */
+function prism(b: LineBatch, f: FillBatch, color: number, root: THREE.Vector3, dir: THREE.Vector3, r: number, len: number): void {
+  const u = new THREE.Vector3(1, 0, 0).cross(dir);
+  if (u.lengthSq() < 1e-4) u.set(0, 0, 1).cross(dir);
+  u.normalize();
+  const v = new THREE.Vector3().crossVectors(dir, u);
+  const lo: V3[] = [];
+  const hi: V3[] = [];
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    const o = u.clone().multiplyScalar(Math.cos(a) * r).addScaledVector(v, Math.sin(a) * r);
+    const p = root.clone().add(o);
+    lo.push([p.x, p.y, p.z]);
+    const q = p.addScaledVector(dir, len);
+    hi.push([q.x, q.y, q.z]);
+  }
+  const t = root.clone().addScaledVector(dir, len + r * 1.6);
+  const tip: V3 = [t.x, t.y, t.z];
+  f.color(color, 0.3).band(lo, hi);
+  for (let i = 0; i < 6; i++) f.tri(hi[i], hi[(i + 1) % 6], tip);
+  b.color(color, 1).loop(hi);
+  for (let i = 0; i < 6; i++) b.seg(...lo[i], ...hi[i]).seg(...hi[i], ...tip);
+}
+
 /** Unexplored tile: a faint survey cross on the corner, no fill. */
 export function drawFogTile(b: LineBatch, lx: number, ly: number): void {
   b.at(lx + 0.5, -ly - 0.5).color(0x2a3a52, 0.5).seg(lx - 0.08, 0, -ly, lx + 0.08, 0, -ly).seg(lx, 0, -ly - 0.08, lx, 0, -ly + 0.08);
@@ -458,17 +483,71 @@ export function drawTileVec(b: LineBatch, f: FillBatch, shape: TileShape, color:
       break;
     }
     case 'crystal': {
+      // Partially buried crystal cluster: hexagonal prisms jutting out of a sand drift at
+      // angles; their roots start below the surface, so the ground hides them.
       ground(0x7a5a3a);
-      const shards: [number, number, number, number, number][] = [
-        [cx, 0.4, cz, 0.24, 0.4],
-        [cx + 0.24, 0.2, cz + 0.16, 0.1, 0.2],
-        [cx - 0.2, 0.17, cz + 0.2, 0.09, 0.17],
-        [cx + 0.05, 0.13, cz - 0.27, 0.07, 0.13],
-      ];
-      for (const [x, y, z, rx, ry] of shards) {
-        f.color(color, 0.28).octa(x, y, z, rx, ry);
-        b.color(color, 1).octa(x, y, z, rx, ry);
+      const drift: V3[] = [];
+      const driftTop: V3[] = [];
+      for (let i = 0; i < 9; i++) {
+        const a = (i / 9) * Math.PI * 2;
+        const r = 0.36 + jit(variant, i) * 0.07;
+        drift.push([cx + Math.cos(a) * r, 0, cz + Math.sin(a) * r]);
+        driftTop.push([cx + Math.cos(a) * r * 0.55, 0.05, cz + Math.sin(a) * r * 0.55]);
       }
+      f.color(0x7a5a3a, 0.16).band(drift, driftTop).poly(driftTop);
+      b.color(0x7a5a3a, 0.55).loop(drift);
+      b.color(0x7a5a3a, 0.4).loop(driftTop);
+      const spin = jit(variant, 3) * Math.PI * 2;
+      // [offset angle, offset radius, tilt, length, radius]
+      const shards: [number, number, number, number, number][] = [
+        [0, 0.02, 0.18, 0.5, 0.085],
+        [1.9, 0.17, 0.62, 0.3, 0.06],
+        [3.8, 0.16, 0.7, 0.24, 0.05],
+        [5.3, 0.2, 0.8, 0.22, 0.045],
+      ];
+      for (const [oa, or, tilt, len, r] of shards) {
+        const a = oa + spin;
+        const ox = Math.cos(a), oz = Math.sin(a);
+        // Leans away from the cluster centre.
+        const dir = new THREE.Vector3(ox * Math.sin(tilt), Math.cos(tilt), oz * Math.sin(tilt));
+        const root = new THREE.Vector3(cx + ox * or, -0.12, cz + oz * or);
+        prism(b, f, color, root, dir, r, len + 0.12);
+      }
+      break;
+    }
+    case 'mound': {
+      // Rough ore mound: a lumpy main heap and a smaller one, with glinting ore nodules.
+      ground(0x7a5a3a);
+      const crust = 0x8a4a3a;
+      const heap = (hx: number, hz: number, rb: number, h: number, salt: number) => {
+        const N = 8;
+        const rings: V3[][] = [[], [], []];
+        const lv = [0, 0.5, 0.85];
+        const rr = [1, 0.72, 0.38];
+        for (let i = 0; i < N; i++) {
+          const a = (i / N) * Math.PI * 2 + jit(variant, salt) * 0.6;
+          for (let k = 0; k < 3; k++) {
+            const r = rb * rr[k] * (0.8 + jit(variant, salt + i * 3 + k) * 0.35);
+            rings[k].push([hx + Math.cos(a) * r, h * lv[k] * (k ? 0.85 + jit(variant, salt + i + 20) * 0.3 : 1), hz + Math.sin(a) * r]);
+          }
+        }
+        const peak: V3 = [hx + (jit(variant, salt + 40) - 0.5) * rb * 0.3, h, hz + (jit(variant, salt + 41) - 0.5) * rb * 0.3];
+        f.color(crust, 0.14).band(rings[0], rings[1]).band(rings[1], rings[2]);
+        for (let i = 0; i < N; i++) f.tri(rings[2][i], rings[2][(i + 1) % N], peak);
+        b.color(crust, 0.85).loop(rings[0]);
+        b.color(crust, 0.55).loop(rings[1]).loop(rings[2]);
+        for (let i = 0; i < N; i += 2) b.color(crust, 0.6).seg(...rings[0][i], ...rings[1][i]).seg(...rings[1][i], ...rings[2][i]).seg(...rings[2][i], ...peak);
+        return rings;
+      };
+      const main = heap(cx - 0.04, cz + 0.02, 0.4, 0.34 + jit(variant, 2) * 0.08, 5);
+      const small = heap(cx + 0.27, cz - 0.24, 0.17, 0.16, 60);
+      // Ore nodules sitting on the flanks.
+      for (const p of [main[1][1], main[1][4], main[2][6], small[1][2]]) {
+        f.color(color, 0.4).octa(p[0], p[1] + 0.02, p[2], 0.045, 0.04);
+        b.color(color, 1).octa(p[0], p[1] + 0.02, p[2], 0.045, 0.04);
+      }
+      // A bright vein streak down the main heap.
+      b.color(color, 0.9).seg(...main[2][3], ...main[1][3]).seg(...main[1][3], ...main[0][2]);
       break;
     }
     case 'crate': {

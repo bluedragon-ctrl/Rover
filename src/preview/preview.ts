@@ -186,6 +186,11 @@ state.labels = q.get('labels') !== '0';
 rig.dist = num('dist', rig.dist);
 rig.pitch = num('pitch', rig.pitch);
 rig.yaw = num('yaw', rig.yaw);
+if (q.has('fx')) {
+  state.follow = false;
+  rig.focusX = num('fx', 0);
+  rig.focusY = num('fy', 0);
+}
 if (q.get('crt') === '0') view.classList.remove('crt'), (state.crt = false);
 
 // ------------------------------------------------------------------ frame
