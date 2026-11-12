@@ -9,6 +9,7 @@ import { ThreeScene } from './render/ThreeScene';
 import { DebuggerPanel } from './ui/DebuggerPanel';
 import { EditorPanel } from './ui/EditorPanel';
 import { renderReference } from './ui/ReferencePanel';
+import { PerfHud } from './ui/PerfHud';
 import { CompassHud } from './ui/CompassHud';
 import { GoalsPanel } from './ui/GoalsPanel';
 import { UpgradesPanel } from './ui/UpgradesPanel';
@@ -250,6 +251,7 @@ window.addEventListener('keydown', (e) => {
   else if (e.key === 'b' || e.key === 'B') scene.setBloom(!scene.post.enabled);
   else if (e.key === 'q' || e.key === 'Q') scene.rotate(1);
   else if (e.key === 'e' || e.key === 'E') scene.rotate(-1);
+  else if (e.key === 'p' || e.key === 'P') perfHud.toggle();
 });
 
 // ---------------------------------------------------------------- loop
@@ -258,6 +260,7 @@ const hoverEl = $('#hover');
 const clockEl = $('#clock');
 const creditsEl = $('#credits');
 const worldInfo = $('#world-info');
+const perfHud = new PerfHud($('#perf'));
 let last = performance.now();
 let uiTimer = 0;
 
@@ -299,7 +302,8 @@ function frame(now: number): void {
       hoverEl.textContent = `(${x}, ${y})  ${names.join(' · ')}`;
       hoverEl.style.display = '';
     } else hoverEl.style.display = 'none';
-    worldInfo.textContent = `Seed ${seed} · ${engine.world.loadedCount} chunks loaded · ${scene.chunkMeshCount} chunk meshes · ${(scene.lineVertices / 1000).toFixed(0)}k line verts · ${scene.stats.fps.toFixed(0)} fps (${scene.stats.ms.toFixed(1)} ms)`;
+    worldInfo.textContent = `Seed ${seed} · ${engine.world.loadedCount} chunks loaded · ${scene.stats.fps.toFixed(0)} fps (P: frame-time HUD)`;
+    perfHud.update(scene.perf);
   }
   requestAnimationFrame(frame);
 }

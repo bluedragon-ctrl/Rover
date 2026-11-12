@@ -3,6 +3,7 @@ import type { SimulationEngine } from '../core/SimulationEngine';
 import { CpuState, DIR_VEC } from '../core/types';
 import type { Unit } from '../core/Unit';
 import { BALANCE } from '../core/balance';
+import { FrameStats } from './FrameStats';
 import { ChunkPool } from './ChunkPool';
 import { FxOverlay } from './FxOverlay';
 import { CameraRig } from './CameraRig';
@@ -18,6 +19,26 @@ interface RoverView {
   angle: number;
   /** performance.now() of the last SCAN (radar wave). */
   radarAt: number;
+}
+
+export interface PerfSnapshot {
+  fps: number;
+  avgMs: number;
+  p95Ms: number;
+  worstMs: number;
+  cpuMs: number;
+  drawCalls: number;
+  triangles: number;
+  lines: number;
+  chunkMeshes: number;
+  lineVertices: number;
+  fillTriangles: number;
+  chunkBuilds: number;
+  chunkBuildMs: number;
+  pixelRatio: number;
+  width: number;
+  height: number;
+  bloom: boolean;
 }
 
 export type ViewMode = 'angled' | 'top';
@@ -58,15 +79,15 @@ export class ThreeScene {
   private lastNow = performance.now();
   /** World tile under the mouse, or null. */
   hover: { x: number; y: number } | null = null;
-  /** Frame-time stats (smoothed). */
-  readonly stats = { fps: 0, ms: 0 };
-  private frames = 0;
-  private statT = 0;
+  /** Frame-time stats (rolling window) for the performance HUD. */
+  readonly stats = new FrameStats();
 
   constructor(private container: HTMLElement, private engine: SimulationEngine) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     container.appendChild(this.renderer.domElement);
+    // Bloom renders several passes; count draw calls for the whole frame.
+    this.renderer.info.autoReset = false;
     this.scene.fog = new THREE.Fog(0x050910, 30, 90);
     this.rig = new CameraRig(this.renderer.domElement);
     this.rig.dist = 14;
@@ -174,7 +195,10 @@ export class ThreeScene {
   }
 
   render(alpha: number, now: number): void {
-    const dt = Math.min(0.1, Math.max(0, (now - this.lastNow) / 1000));
+    const cpu0 = performance.now();
+    const intervalMs = now - this.lastNow;
+    this.renderer.info.reset();
+    const dt = Math.min(0.1, Math.max(0, intervalMs / 1000));
     this.lastNow = now;
     const t = now / 1000;
     const simTime = this.engine.tick + alpha;
@@ -277,15 +301,32 @@ export class ThreeScene {
     this.updateCapsules(simTime, now);
     this.fx.update(fx, fy, now);
     this.post.render(this.scene, rig.camera);
+    if (intervalMs > 0) this.stats.push(intervalMs, performance.now() - cpu0);
+  }
 
-    this.frames++;
-    this.statT += dt;
-    if (this.statT > 0.5) {
-      this.stats.fps = this.frames / this.statT;
-      this.stats.ms = (this.statT * 1000) / this.frames;
-      this.frames = 0;
-      this.statT = 0;
-    }
+  /** Numbers for the performance HUD. */
+  get perf(): PerfSnapshot {
+    const info = this.renderer.info;
+    const s = this.stats;
+    return {
+      fps: s.fps,
+      avgMs: s.avgMs,
+      p95Ms: s.p95Ms,
+      worstMs: s.worstMs,
+      cpuMs: s.cpuMs,
+      drawCalls: info.render.calls,
+      triangles: info.render.triangles,
+      lines: info.render.lines,
+      chunkMeshes: this.chunks.size,
+      lineVertices: this.chunks.lineVertices,
+      fillTriangles: this.chunks.fillTriangles,
+      chunkBuilds: this.chunks.lastBuilds,
+      chunkBuildMs: this.chunks.lastBuildMs,
+      pixelRatio: this.renderer.getPixelRatio(),
+      width: this.renderer.domElement.width,
+      height: this.renderer.domElement.height,
+      bloom: this.post.enabled,
+    };
   }
 
   centerOn(u: Unit): void {
@@ -359,13 +400,5 @@ export class ThreeScene {
 
   setRevealAll(v: boolean): void {
     this.chunks.setRevealAll(v);
-  }
-
-  get chunkMeshCount(): number {
-    return this.chunks.size;
-  }
-
-  get lineVertices(): number {
-    return this.chunks.lineVertices;
   }
 }
