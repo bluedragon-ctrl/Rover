@@ -16,6 +16,7 @@ import { compile } from '../core/vm/Compiler';
 import { PROSPECTOR, TEMPLATES } from '../core/programs';
 import { EditorPanel } from '../ui/EditorPanel';
 import { buildRoverRig, drawFogTile, drawTileVec, FillBatch, indicatorHex, LineBatch, LIGHT_HEX } from '../render/VectorFactory';
+import { mountPhotoLab } from './photos';
 
 const view = document.getElementById('view')!;
 const labelsEl = document.getElementById('labels')!;
@@ -221,6 +222,10 @@ if (q.get('editor') === '1') {
     showBytes: true,
   });
 }
+
+// ------------------------------------------------------------------ science products (POC)
+// ?photos=1 shows what a 16-byte camera / spectrometer product could look like.
+if (q.get('photos') === '1') mountPhotoLab(document.getElementById('photolab')!, q);
 
 // ------------------------------------------------------------------ frame
 function resize(): void {
