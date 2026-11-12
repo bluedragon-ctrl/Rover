@@ -72,8 +72,8 @@ const editor = new EditorPanel({
   onUpload: () => upload(),
   onChange: (src, res) => {
     editorFlash = res.flashUsed;
-    flashEl.textContent = `Flash ${res.flashUsed}/${rover.chassis.flashLines}${res.errors.length ? ` · ${res.errors.length} error(s)` : ''}`;
-    flashEl.classList.toggle('over', res.flashUsed > rover.chassis.flashLines || res.errors.length > 0);
+    flashEl.textContent = `Flash ${res.flashUsed}/${rover.chassis.flashBytes} B${res.errors.length ? ` · ${res.errors.length} error(s)` : ''}`;
+    flashEl.classList.toggle('over', res.flashUsed > rover.chassis.flashBytes || res.errors.length > 0);
     flashEl.classList.toggle('dirty', src !== rover.sourceCode);
   },
 });

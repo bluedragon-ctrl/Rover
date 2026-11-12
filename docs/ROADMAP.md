@@ -19,7 +19,32 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | M7 | Upgrades bought with credits, delivered as supply crates, seismic scanner, save v2 | ✅ done |
 | **M8** | **Visual overhaul (SPEC §7)** | 🚧 in progress: asset preview + indicator lamps done; ⏭ next: switch the game renderer |
 | M8.1 | Radar `SCAN` vs. light-limited operator view; headlight cone; `@HEADING` | ✅ done |
+| Flash bytes | Program size in machine-code bytes instead of lines (SPEC §5.7) | ✅ core done; editor byte gutter awaiting preview approval |
 | M9 | Multiple rovers (after single-rover tuning) | planned |
+
+## Done: Flash measured in bytes
+
+Decided with the owner: program size reflects real machine code (SPEC §5.7) instead of
+one Flash line per instruction. Opcode 1 B, register/port 1 B, immediates 1/2/3/5 B by
+value (0–15 packed into the operand byte), label references 2 B; label definitions,
+`ALIAS`, `CONST` and comments are free. Size does not change cycle costs.
+
+- [x] `ENCODING` in `balance.ts`; `chassis.flashBytes` (Mk-I 128 B; upgrades 192 / 256 B,
+      ids `FLASH_48` / `FLASH_64` kept for saves).
+- [x] Compiler: `flashUsed` in bytes, `lineBytes` per source line (an estimate on lines
+      with errors), overflow error on the first line that does not fit; `instrBytes`,
+      `operandBytes`, `immBytes` exported.
+- [x] Upload cost per byte (`uploadPerByte` 12 ≈ the old 50 per line).
+- [x] UI: `Flash n/128 B` counter, upgrades panel, Reference tab table (generated from
+      `ENCODING`).
+- [x] Shipped firmware sizes: Factory idle 46 B, Explorer 104 B, Fetch 78 B,
+      **Prospector 120/128 B** (the M7 "almost full" lesson still holds).
+- [x] Tests: operand sizes, error-line estimates, byte limit + error line, every template
+      fits Mk-I; upload-cost and Flash-upgrade tests updated.
+- [ ] **Editor byte gutter** (bytes per line next to the line numbers): in the preview
+      (`/preview.html?editor=1`, `&program=Explorer` etc.), awaiting screenshot approval;
+      then set `showBytes: true` in `src/main.ts`.
+- No save format change (chassis stats are rebuilt from upgrade ids).
 
 ## Done: M8.1 — Radar vs. operator view, directional headlight
 
@@ -94,6 +119,7 @@ tests must stay untouched. Do it in small PRs, checking frame time at each step.
 2. Installed **immediately** on pickup (including Flash/register limits).
 3. **More rovers later**, once the single-rover game is tuned (M9).
 4. Prospector stays at 31/32 lines without squall handling: **a lesson** (Flash 48 fixes it).
+   Now 120/128 bytes; the Flash 192 B upgrade fixes it.
 
 ## Resolved decisions (M6)
 
@@ -152,3 +178,4 @@ tests must stay untouched. Do it in small PRs, checking frame time at each step.
 | 2026-11-12 | (next PR) | M7: upgrades via supply crates, seismic scanner, Fetch template, save v2 + migration. |
 | 2026-11-12 | `ccr-685ffa2c-m6av8z` | M8 asset preview page (v2 vector assets, tile lighting, bloom, orbit camera, accordion solar wings, volcano vents, ore mounds, buried crystals); indicator lamps `@IND1..3` (save v3); M8.1 directional headlight planned. |
 | 2026-11-12 | `ccr-4522f0b5-0m8b66` | M8.1: `SCAN` is radar (day and night); the player's view needs light (night ring + headlight cone, shared `sensors.ts`, TileLighting); `@HEADING` port; Long-range radar upgrade. |
+| 2026-11-12 | `ccr-27c44841-89sznb` | Flash measured in machine-code bytes (SPEC §5.7): encoding table, 128/192/256 B, upload cost per byte, Reference tab; editor byte gutter in preview. |

@@ -21,8 +21,9 @@ const growCargo = (u: Unit, n: number) => {
 };
 
 export const UPGRADES: UpgradeDef[] = [
-  { id: 'FLASH_48', title: 'Flash 48', description: 'Program memory 32 → 48 lines.', cost: 40, apply: (c) => (c.flashLines = 48) },
-  { id: 'FLASH_64', title: 'Flash 64', description: 'Program memory 48 → 64 lines.', cost: 90, requires: 'FLASH_48', apply: (c) => (c.flashLines = 64) },
+  // Ids kept from the line-based Flash (saves store them): FLASH_48 = 192 B, FLASH_64 = 256 B.
+  { id: 'FLASH_48', title: 'Flash 192 B', description: 'Program memory 128 → 192 bytes.', cost: 40, apply: (c) => (c.flashBytes = 192) },
+  { id: 'FLASH_64', title: 'Flash 256 B', description: 'Program memory 192 → 256 bytes.', cost: 90, requires: 'FLASH_48', apply: (c) => (c.flashBytes = 256) },
   {
     id: 'REGS_6',
     title: 'Register file r0–r5',

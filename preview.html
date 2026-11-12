@@ -27,6 +27,12 @@
       #stats { top: 10px; right: 10px; white-space: pre; color: #7d8ca3; }
       #labels { position: absolute; inset: 0; pointer-events: none; z-index: 6; }
       #labels div { position: absolute; transform: translate(-50%, -100%); font-size: 10px; color: #cbd5e1; background: rgba(5, 9, 16, 0.7); border: 1px solid rgba(56, 189, 248, 0.25); padding: 0 4px; border-radius: 3px; white-space: nowrap; }
+      #editor { top: 70px; left: 10px; bottom: 120px; width: 440px; display: flex; flex-direction: column; gap: 6px; padding: 6px; --mono: ui-monospace, 'JetBrains Mono', Menlo, monospace; }
+      #editor[hidden] { display: none; }
+      #editor-cm { flex: 1; min-height: 0; overflow: hidden; border-radius: 4px; }
+      #editor-cm .cm-editor { height: 100%; }
+      #editor-flash { text-align: right; color: #cbd5e1; }
+      #editor-flash.over { color: #f87171; }
     </style>
   </head>
   <body>
@@ -38,6 +44,7 @@
     </div>
     <div class="panel" id="stats"></div>
     <div class="panel" id="controls"></div>
+    <div class="panel" id="editor" hidden><div id="editor-cm"></div><div id="editor-flash"></div></div>
     <script type="module" src="/src/preview/preview.ts"></script>
   </body>
 </html>

@@ -177,10 +177,10 @@ export class SimulationEngine {
     u.heading = dir;
   }
 
-  /** Energy needed to flash `lines` instructions at the current signal strength. */
-  uploadCost(u: Unit, lines: number): number {
+  /** Energy needed to flash a program of `bytes` at the current signal strength. */
+  uploadCost(u: Unit, bytes: number): number {
     if (this.cheats.freeUpload) return 0;
-    const base = BALANCE.uploadBase + BALANCE.uploadPerLine * lines;
+    const base = BALANCE.uploadBase + BALANCE.uploadPerByte * bytes;
     return Math.ceil((base * 100) / Math.max(BALANCE.uploadSignalFloor, this.signalOf(u)));
   }
 
@@ -209,7 +209,7 @@ export class SimulationEngine {
     unit.vm.load(res.program);
     unit.cyclesLeft = 0;
     const costMsg = res.cost ? `, cost ${(res.cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(unit)}` : '';
-    this.log(unit, 'info', `Firmware flashed (${res.flashUsed}/${unit.chassis.flashLines} lines${costMsg}). Rebooting.`);
+    this.log(unit, 'info', `Firmware flashed (${res.flashUsed}/${unit.chassis.flashBytes} bytes${costMsg}). Rebooting.`);
     return res;
   }
 

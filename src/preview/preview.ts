@@ -12,6 +12,9 @@ import { PostFx } from '../render/PostFx';
 import { RoverAnimator, type RoverPose } from '../render/RoverRig';
 import { radarFront, TileLighting } from '../render/TileLighting';
 import { FxOverlay } from '../render/FxOverlay';
+import { compile } from '../core/vm/Compiler';
+import { PROSPECTOR, TEMPLATES } from '../core/programs';
+import { EditorPanel } from '../ui/EditorPanel';
 import { buildRoverRig, drawFogTile, drawTileVec, FillBatch, indicatorHex, LineBatch, LIGHT_HEX } from '../render/VectorFactory';
 
 const view = document.getElementById('view')!;
@@ -198,6 +201,26 @@ if (q.has('fx')) {
   rig.focusY = num('fy', 0);
 }
 if (q.get('crt') === '0') view.classList.remove('crt'), (state.crt = false);
+
+// ------------------------------------------------------------------ editor: bytes per line
+// ?editor=1 opens the firmware editor with the Flash-size gutter (docs/SPEC.md §5.7).
+const editorEl = document.getElementById('editor')!;
+if (q.get('editor') === '1') {
+  editorEl.hidden = false;
+  const flashEl = document.getElementById('editor-flash')!;
+  const constants = reg.constants();
+  new EditorPanel({
+    parent: document.getElementById('editor-cm')!,
+    initial: TEMPLATES[q.get('program') ?? 'Prospector'] ?? PROSPECTOR,
+    compile: (src) => compile(src, CHASSIS_MK1, constants),
+    onUpload: () => {},
+    onChange: (_src, res) => {
+      flashEl.textContent = `Flash ${res.flashUsed}/${CHASSIS_MK1.flashBytes} B${res.errors.length ? ` · ${res.errors.length} error(s)` : ''}`;
+      flashEl.classList.toggle('over', res.flashUsed > CHASSIS_MK1.flashBytes || res.errors.length > 0);
+    },
+    showBytes: true,
+  });
+}
 
 // ------------------------------------------------------------------ frame
 function resize(): void {

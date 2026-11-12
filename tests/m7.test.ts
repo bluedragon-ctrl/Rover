@@ -37,7 +37,7 @@ describe('buying upgrades', () => {
     const { e, u } = rover();
     expect(e.buyUpgrade(u, 'FLASH_48')).toMatch(/credits/);
     e.credits = 500;
-    expect(e.buyUpgrade(u, 'FLASH_64')).toMatch(/needs Flash 48/);
+    expect(e.buyUpgrade(u, 'FLASH_64')).toMatch(/needs Flash 192 B/);
     expect(e.buyUpgrade(u, 'FLASH_48')).toBeNull();
     expect(e.credits).toBe(500 - UPGRADE_BY_ID.FLASH_48.cost);
     expect(e.buyUpgrade(u, 'FLASH_48')).toBe('on its way');
@@ -74,7 +74,7 @@ describe('picking up installs immediately', () => {
     expect(u.vm.regs.length).toBe(6);
     expect(e.compileFor(u, 'MOV r5 1').errors).toEqual([]);
 
-    const long = Array.from({ length: 40 }, () => 'ADD r0 1').join('\n');
+    const long = Array.from({ length: 40 }, () => 'ADD r0 100').join('\n'); // 160 B
     expect(e.compileFor(u, long).errors.length).toBe(1);
     grab(e, orderAndLand(e, 'FLASH_48'));
     expect(e.compileFor(u, long).errors).toEqual([]);

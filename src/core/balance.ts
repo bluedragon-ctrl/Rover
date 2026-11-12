@@ -38,7 +38,7 @@ export const BALANCE = {
   txEnergy: 30,
   txMinSignal: 50,
   uploadBase: 500,
-  uploadPerLine: 50,
+  uploadPerByte: 12, // ~50 per average instruction
   uploadSignalFloor: 10,
 
   // Storyteller (docs/SPEC.md §3.5)
@@ -55,9 +55,26 @@ export const BALANCE = {
   landingZoneRadius: 2, // 5x5
 } as const;
 
+/**
+ * Machine-code size of Rover-ASM (docs/SPEC.md §5.7). Every instruction is one opcode byte
+ * plus its operands; compile-time names (labels, ALIAS, CONST) emit nothing themselves.
+ */
+export const ENCODING = {
+  opcode: 1,
+  register: 1, // operand byte: addressing mode + register index
+  port: 1, // operand byte: addressing mode + port number
+  shortImm: 1, // 0..shortImmMax packed into the operand byte itself
+  shortImmMax: 15,
+  imm8: 2, // operand byte + 1 data byte: -128..127
+  imm16: 3, // + 2 data bytes: -32768..32767
+  imm32: 5, // + 4 data bytes: anything else (registers are 32-bit)
+  label: 2, // absolute 16-bit address of a jump / call target
+} as const;
+
 export interface ChassisDef {
   name: string;
-  flashLines: number;
+  /** Program memory in bytes (see ENCODING). */
+  flashBytes: number;
   registers: number;
   dataStack: number;
   callStack: number;
@@ -76,7 +93,7 @@ export interface ChassisDef {
 
 export const CHASSIS_MK1: ChassisDef = {
   name: 'Rover Mk-I',
-  flashLines: 32,
+  flashBytes: 128,
   registers: 4,
   dataStack: 8,
   callStack: 8,
