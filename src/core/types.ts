@@ -33,6 +33,19 @@ export enum LightColor {
   AMBER = 4,
 }
 
+/** Repair targets for `USE slot [system]`. */
+export enum SystemId {
+  SYS_HULL = 0,
+  SYS_SOLAR = 1,
+  SYS_ANTENNA = 2,
+}
+
+export enum Alert {
+  ALERT_NONE = 0,
+  ALERT_ECLIPSE = 1,
+  ALERT_SQUALL = 2,
+}
+
 export enum Layer {
   TERRAIN = 0,
   OBSTACLE = 1,

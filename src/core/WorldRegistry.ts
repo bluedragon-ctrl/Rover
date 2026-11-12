@@ -1,6 +1,6 @@
 import { Layer } from './types';
 
-export type TileShape = 'floor' | 'rough' | 'vent' | 'wall' | 'crystal' | 'crate' | 'sample' | 'rover';
+export type TileShape = 'floor' | 'rough' | 'vent' | 'wall' | 'crystal' | 'crate' | 'sample' | 'supply' | 'rover';
 
 export interface TileDef {
   id: number;
@@ -26,7 +26,11 @@ export interface TileDef {
   /** Science packets produced when analyzed by the spectrometer. */
   science?: number;
   /** Effect of `USE` on this item from cargo. */
-  useEffect?: { hull?: number };
+  /**
+   * Repair material: `USE slot system` consumes this item from cargo and restores
+   * `repairs[system]` integrity (SYS_HULL=0, SYS_SOLAR=1, SYS_ANTENNA=2).
+   */
+  repairs?: Partial<Record<number, number>>;
 }
 
 /**
@@ -78,6 +82,7 @@ export const T = {
   SILICON_ORE: 12,
   REPAIR_KIT: 20,
   SAMPLE: 21,
+  SUPPLY_CRATE: 22,
   ROVER: 30,
 } as const;
 
@@ -87,10 +92,11 @@ export function createDefaultRegistry(): WorldRegistry {
   r.register({ id: T.ROUGH_GRAVEL, constName: 'ROUGH_GRAVEL', name: 'Rough gravel', layer: Layer.TERRAIN, color: 0x8a7f72, shape: 'rough', moveTicks: 6, moveEnergy: 120, hazardLevel: 1 });
   r.register({ id: T.ACID_VENT, constName: 'ACID_VENT', name: 'Acid vent', layer: Layer.TERRAIN, color: 0x9dff3a, shape: 'vent', moveTicks: 4, moveEnergy: 60, hazardDamage: 10, hazardLevel: 2 });
   r.register({ id: T.CLIFF_WALL, constName: 'CLIFF_WALL', name: 'Cliff wall', layer: Layer.OBSTACLE, color: 0xd08a52, shape: 'wall', blocksMove: true });
-  r.register({ id: T.IRON_ORE, constName: 'IRON_ORE', name: 'Iron ore vein', layer: Layer.OBSTACLE, color: 0xff5a4a, shape: 'crystal', blocksMove: true, tool: 'DRILL', science: 1 });
-  r.register({ id: T.SILICON_ORE, constName: 'SILICON_ORE', name: 'Silicon ore vein', layer: Layer.OBSTACLE, color: 0x5ad0ff, shape: 'crystal', blocksMove: true, tool: 'DRILL', science: 1 });
-  r.register({ id: T.REPAIR_KIT, constName: 'REPAIR_KIT', name: 'Repair kit', layer: Layer.ITEM, color: 0xffffff, shape: 'crate', tool: 'GRABBER', useEffect: { hull: 30 } });
+  r.register({ id: T.IRON_ORE, constName: 'IRON_ORE', name: 'Iron ore vein', layer: Layer.OBSTACLE, color: 0xff5a4a, shape: 'crystal', blocksMove: true, tool: 'DRILL', science: 1, repairs: { 0: 10, 2: 15 } });
+  r.register({ id: T.SILICON_ORE, constName: 'SILICON_ORE', name: 'Silicon ore vein', layer: Layer.OBSTACLE, color: 0x5ad0ff, shape: 'crystal', blocksMove: true, tool: 'DRILL', science: 1, repairs: { 1: 20 } });
+  r.register({ id: T.REPAIR_KIT, constName: 'REPAIR_KIT', name: 'Repair kit', layer: Layer.ITEM, color: 0xffffff, shape: 'crate', tool: 'GRABBER', repairs: { 0: 30, 1: 40, 2: 40 } });
   r.register({ id: T.SAMPLE, constName: 'SAMPLE', name: 'Geological sample', layer: Layer.ITEM, color: 0xffd23a, shape: 'sample', tool: 'GRABBER', science: 3 });
+  r.register({ id: T.SUPPLY_CRATE, constName: 'SUPPLY_CRATE', name: 'Supply crate (upgrade)', layer: Layer.ITEM, color: 0xffd23a, shape: 'supply', tool: 'GRABBER' });
   r.register({ id: T.ROVER, constName: 'ROVER', name: 'Rover', layer: Layer.ACTOR, color: 0x3affc8, shape: 'rover', blocksMove: true });
   return r;
 }

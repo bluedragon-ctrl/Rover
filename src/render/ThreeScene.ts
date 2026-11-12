@@ -5,7 +5,7 @@ import type { Unit } from '../core/Unit';
 import { ChunkPool } from './ChunkPool';
 import { FxOverlay } from './FxOverlay';
 import { BALANCE } from '../core/balance';
-import { buildRoverMesh, LIGHT_HEX, type RoverMesh } from './VectorFactory';
+import { buildCapsuleMesh, buildRoverMesh, LIGHT_HEX, type RoverMesh } from './VectorFactory';
 
 interface RoverView extends RoverMesh {
   angle: number;
@@ -36,6 +36,11 @@ export class ThreeScene {
   focusY = 0.5;
   followUnitId: number | null = null;
   mode: ViewMode = 'angled';
+  /** Called on shift+click with the world tile (admin teleport). */
+  onTileShiftClick?: (x: number, y: number) => void;
+  private squall: THREE.LineSegments;
+  private capsules = new Map<number, { capsule: THREE.LineSegments; ring: THREE.LineLoop }>();
+  private squallSeeds: Float32Array;
   /** World tile under the mouse, or null. */
   hover: { x: number; y: number } | null = null;
 
@@ -52,6 +57,16 @@ export class ThreeScene {
     this.resize();
     new ResizeObserver(() => this.resize()).observe(container);
     this.bindInput();
+
+    // Micrometeorite streaks, shown during squalls (purely cosmetic, Math.random is fine here).
+    const N = 160;
+    this.squallSeeds = new Float32Array(N * 3).map(() => Math.random());
+    const sg = new THREE.BufferGeometry();
+    sg.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(N * 6), 3));
+    this.squall = new THREE.LineSegments(sg, new THREE.LineBasicMaterial({ color: 0xffb070, transparent: true, opacity: 0.8 }));
+    this.squall.frustumCulled = false;
+    this.squall.visible = false;
+    this.scene.add(this.squall);
 
     engine.events.on('SCAN_PULSE', (e) => {
       const color = e.hit ? (engine.registry.get(e.hit)?.color ?? 0xffffff) : 0x3affc8;
@@ -100,6 +115,10 @@ export class ThreeScene {
     const el = this.renderer.domElement;
     let drag: { x: number; y: number } | null = null;
     el.addEventListener('pointerdown', (e) => {
+      if (e.shiftKey && this.hover && this.onTileShiftClick) {
+        this.onTileShiftClick(this.hover.x, this.hover.y);
+        return;
+      }
       drag = { x: e.clientX, y: e.clientY };
       el.setPointerCapture(e.pointerId);
     });
@@ -193,6 +212,10 @@ export class ThreeScene {
       v.solar.scale.set(Math.max(0.05, deploy), 1, Math.max(0.05, deploy));
       v.solar.rotation.y = bearing(u.solarAngle);
       v.dish.rotation.y = bearing(u.antennaAngle);
+      const tint = (m: THREE.LineBasicMaterial, ok: number, health: number) =>
+        m.color.setHex(ok).lerp(new THREE.Color(0xff3030), 1 - health / 100);
+      tint(v.solarMat, 0x5a7dff, u.solarHealth);
+      tint(v.dishMat, 0x3affc8, u.antennaHealth);
       const range = this.engine.sensorRange(u) + 0.5;
       v.sensorRing.position.set(x - this.focusX, 0, -(y - this.focusY));
       v.sensorRing.scale.setScalar(range);
@@ -208,6 +231,8 @@ export class ThreeScene {
     const light = this.engine.sun.light / 100;
     this.chunks.setBrightness(0.3 + 0.7 * Math.sqrt(light));
 
+    this.updateSquall(now);
+    this.updateCapsules(simTime, now);
     this.fx.update(this.focusX, this.focusY, now);
     this.renderer.render(this.scene, this.camera);
   }
@@ -216,6 +241,57 @@ export class ThreeScene {
     this.followUnitId = u.id;
     this.focusX = u.x + 0.5;
     this.focusY = u.y + 0.5;
+  }
+
+  /** Supply crates in flight: a parachute capsule descending onto a pulsing target ring. */
+  private updateCapsules(simTime: number, now: number): void {
+    const live = new Set<number>();
+    for (const d of this.engine.drops) {
+      if (d.landed) continue;
+      live.add(d.id);
+      let c = this.capsules.get(d.id);
+      if (!c) {
+        const pts: THREE.Vector3[] = [];
+        for (let i = 0; i < 24; i++) pts.push(new THREE.Vector3(Math.cos((i / 24) * Math.PI * 2) * 0.6, 0.02, Math.sin((i / 24) * Math.PI * 2) * 0.6));
+        const ring = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0xffd23a, transparent: true }));
+        c = { capsule: buildCapsuleMesh(), ring };
+        c.capsule.frustumCulled = c.ring.frustumCulled = false;
+        this.worldRoot.add(c.capsule, c.ring);
+        this.capsules.set(d.id, c);
+      }
+      const left = Math.max(0, d.landTick - simTime) / BALANCE.supplyDropTicks;
+      const px = d.x + 0.5 - this.focusX;
+      const pz = -(d.y + 0.5 - this.focusY);
+      c.capsule.position.set(px + left * 4, left * 18, pz - left * 2);
+      c.ring.position.set(px, 0, pz);
+      c.ring.scale.setScalar(1 + 0.25 * Math.sin(now / 150));
+      (c.ring.material as THREE.LineBasicMaterial).opacity = 0.5 + 0.5 * Math.sin(now / 150);
+    }
+    for (const [id, c] of this.capsules) {
+      if (live.has(id)) continue;
+      this.worldRoot.remove(c.capsule, c.ring);
+      c.capsule.geometry.dispose();
+      c.ring.geometry.dispose();
+      this.capsules.delete(id);
+    }
+  }
+
+  private updateSquall(now: number): void {
+    const active = this.engine.director.isActive('SQUALL', this.engine.tick);
+    this.squall.visible = active;
+    if (!active) return;
+    const pos = this.squall.geometry.getAttribute('position') as THREE.BufferAttribute;
+    const span = (this.viewSize / this.camera.zoom) * 1.6;
+    const s = this.squallSeeds;
+    for (let i = 0; i < s.length / 3; i++) {
+      const t = (s[i * 3 + 2] + now / 900) % 1; // fall phase
+      const x = (s[i * 3] - 0.5) * span;
+      const z = (s[i * 3 + 1] - 0.5) * span;
+      const y = 12 * (1 - t);
+      pos.setXYZ(i * 2, x - 0.9, y + 1.6, z - 0.5);
+      pos.setXYZ(i * 2 + 1, x, y, z);
+    }
+    pos.needsUpdate = true;
   }
 
   setRevealAll(v: boolean): void {

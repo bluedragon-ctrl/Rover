@@ -1,8 +1,9 @@
 import type { SimulationEngine } from './SimulationEngine';
-import { DIR_VEC, Layer, Status } from './types';
+import { DIR_VEC, Layer, Status, SystemId } from './types';
 import type { Unit } from './Unit';
+import { T } from './WorldRegistry';
 
-export type ToolId = 'DRILL' | 'GRABBER' | 'SPECTROMETER' | 'USE_ITEM';
+export type ToolId = 'DRILL' | 'GRABBER' | 'SPECTROMETER' | 'SEISMIC' | 'USE_ITEM';
 
 /**
  * Declarative tool table. `ACT TOOL_n arg` looks up the tool mounted in hardpoint n;
@@ -19,8 +20,8 @@ export interface ToolDef {
   ticks: number;
   energy: number;
   description: string;
-  check(e: SimulationEngine, u: Unit, arg: number): Status;
-  complete(e: SimulationEngine, u: Unit, arg: number): Status;
+  check(e: SimulationEngine, u: Unit, arg: number, arg2?: number): Status;
+  complete(e: SimulationEngine, u: Unit, arg: number, arg2?: number): Status;
   /** World tile the tool acts on (for FX), if any. */
   target?(u: Unit, arg: number): [number, number] | null;
 }
@@ -67,7 +68,9 @@ export const TOOLS: Record<ToolId, ToolDef> = {
     check(e, u, dir) {
       if (!validDir(dir)) return Status.ERR_INVALID;
       const [x, y] = adjacent(u, dir);
-      if (e.registry.get(e.world.getTile(x, y, Layer.ITEM))?.tool !== 'GRABBER') return Status.ERR_INVALID;
+      const item = e.world.getTile(x, y, Layer.ITEM);
+      if (e.registry.get(item)?.tool !== 'GRABBER') return Status.ERR_INVALID;
+      if (item === T.SUPPLY_CRATE) return Status.OK; // installs directly, needs no cargo slot
       return freeSlot(u) < 0 ? Status.ERR_FULL : Status.OK;
     },
     complete(e, u, dir) {
@@ -76,6 +79,10 @@ export const TOOLS: Record<ToolId, ToolDef> = {
       const [x, y] = adjacent(u, dir);
       const item = e.world.getTile(x, y, Layer.ITEM);
       e.world.setTile(x, y, Layer.ITEM, 0);
+      if (item === T.SUPPLY_CRATE) {
+        e.openSupplyCrate(u, x, y);
+        return Status.OK;
+      }
       u.cargo[freeSlot(u)] = item;
       e.stats.itemsCollected++;
       return Status.OK;
@@ -101,23 +108,50 @@ export const TOOLS: Record<ToolId, ToolDef> = {
       return Status.OK;
     },
   },
+  SEISMIC: {
+    id: 'SEISMIC',
+    name: 'Seismic scanner',
+    arg: 'dir',
+    ticks: 4,
+    energy: 150,
+    description: 'Finds the nearest ore vein up to 12 tiles away in <dir>, through walls: @SEISMIC_TYPE / @SEISMIC_DIST (0 = none).',
+    check: (_e, _u, dir) => (validDir(dir) ? Status.OK : Status.ERR_INVALID),
+    complete(e, u, dir) {
+      u.seismicType = 0;
+      u.seismicDist = 0;
+      const [dx, dy] = DIR_VEC[dir];
+      for (let d = 1; d <= 12; d++) {
+        const id = e.world.getTile(u.x + dx * d, u.y + dy * d, Layer.OBSTACLE);
+        if (e.registry.get(id)?.tool === 'DRILL') {
+          u.seismicType = id;
+          u.seismicDist = d;
+          break;
+        }
+      }
+      return Status.OK;
+    },
+  },
   USE_ITEM: {
     id: 'USE_ITEM',
-    name: 'Use cargo item',
+    name: 'Field repair',
     arg: 'slot',
-    ticks: 5,
-    energy: 0,
-    description: 'Consumes the item in cargo <slot> (REPAIR_KIT: +30 hull).',
-    check(e, u, slot) {
-      if (!validSlot(u, slot)) return Status.ERR_INVALID;
-      return e.registry.get(u.cargo[slot])?.useEffect ? Status.OK : Status.ERR_INVALID;
+    ticks: 10,
+    energy: 200,
+    description:
+      'Repairs [system] (default SYS_HULL) by consuming the material in cargo <slot>: REPAIR_KIT +30 hull / +40 solar / +40 dish, IRON_ORE +10 hull / +15 dish, SILICON_ORE +20 solar.',
+    check(e, u, slot, system = SystemId.SYS_HULL) {
+      if (!validSlot(u, slot) || system < 0 || system > 2) return Status.ERR_INVALID;
+      return e.registry.get(u.cargo[slot])?.repairs?.[system] ? Status.OK : Status.ERR_INVALID;
     },
-    complete(e, u, slot) {
-      const st = this.check(e, u, slot);
+    complete(e, u, slot, system = SystemId.SYS_HULL) {
+      const st = this.check(e, u, slot, system);
       if (st !== Status.OK) return st;
-      const fx = e.registry.get(u.cargo[slot])!.useEffect!;
-      if (fx.hull) u.hull = Math.min(100, u.hull + fx.hull);
-      u.cargo[slot] = 0;
+      const amount = e.registry.get(u.cargo[slot])!.repairs![system]!;
+      if (system === SystemId.SYS_HULL) u.hull = Math.min(100, u.hull + amount);
+      else if (system === SystemId.SYS_SOLAR) u.solarHealth = Math.min(100, u.solarHealth + amount);
+      else u.antennaHealth = Math.min(100, u.antennaHealth + amount);
+      u.cargo[slot] = 0; // the material is used up
+      e.stats.repairs++;
       return Status.OK;
     },
   },

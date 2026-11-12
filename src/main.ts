@@ -11,15 +11,33 @@ import { EditorPanel } from './ui/EditorPanel';
 import { renderReference } from './ui/ReferencePanel';
 import { CompassHud } from './ui/CompassHud';
 import { GoalsPanel } from './ui/GoalsPanel';
+import { UpgradesPanel } from './ui/UpgradesPanel';
+import { UPGRADE_BY_ID } from './core/upgrades';
+import { clearAutosave, downloadSave, tryLoadAutosave, writeAutosave, writeAutosaveRaw } from './ui/persistence';
+import { deserialize } from './core/SaveManager';
+import { EVENT_BY_ID, EVENT_DEFS } from './core/events';
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 
 // ---------------------------------------------------------------- world
+// Startup: resume the autosave unless the URL asks for a different seed.
 const params = new URLSearchParams(location.search);
-const seed = Number(params.get('seed')) || Math.floor(Math.random() * 1e9);
-const engine = new SimulationEngine({ seed });
-const rover: Unit = engine.spawnUnit('Rover-1', 0, 0);
-engine.upload(rover, FACTORY_IDLE, { factory: true });
+const seedParam = params.get('seed') !== null ? Number(params.get('seed')) : null;
+const startupMessages: string[] = [];
+const loaded = tryLoadAutosave(seedParam);
+if (loaded.error) startupMessages.push(`Autosave could not be loaded (${loaded.error}); starting a new world.`);
+let engine: SimulationEngine;
+let rover: Unit;
+if (loaded.engine) {
+  engine = loaded.engine;
+  rover = engine.units[0];
+  startupMessages.push(`Resumed autosave: seed ${engine.seed}, tick ${engine.tick}.`);
+} else {
+  engine = new SimulationEngine({ seed: seedParam || Math.floor(Math.random() * 1e9) });
+  rover = engine.spawnUnit('Rover-1', 0, 0);
+  engine.upload(rover, FACTORY_IDLE, { factory: true });
+}
+const seed = engine.seed;
 
 const clock = new SimClock();
 clock.tickHz = BALANCE.defaultTickHz;
@@ -30,6 +48,9 @@ scene.centerOn(rover);
 const debuggerPanel = new DebuggerPanel($('#debugger'), engine);
 const compass = new CompassHud($<HTMLCanvasElement>('#compass'), engine);
 const goalsPanel = new GoalsPanel($('#goals'), engine);
+const upgradesPanel = new UpgradesPanel($('#upgrades'), engine, () => rover, (err, id) => {
+  if (err) log('warn', `Cannot buy ${UPGRADE_BY_ID[id]?.title}: ${err}.`);
+});
 const toasts = $('#toasts');
 engine.events.on('GOAL_COMPLETED', (g) => {
   log('info', `Goal completed: ${g.title} (+${g.reward} credits)`);
@@ -75,7 +96,75 @@ function log(level: 'info' | 'warn' | 'error', message: string): void {
   logEl.scrollTop = logEl.scrollHeight;
 }
 engine.events.on('LOG', (e) => log(e.level, `${engine.getUnit(e.unitId)?.name}: ${e.message}`));
-log('info', `World seed ${seed}. Share this URL with ?seed=${seed} to replay the same world.`);
+log('info', `World seed ${seed}. Open ?seed=${seed} to start a fresh copy of this world.`);
+for (const m of startupMessages) log(m.startsWith('Autosave could') ? 'error' : 'info', m);
+
+// ---------------------------------------------------------------- persistence
+const saveInfo = $('#save-info');
+/** Set when navigating away on purpose (new world / load), so the page-hide autosave does not overwrite. */
+let leaving = false;
+function autosave(): void {
+  if (leaving) return;
+  if (writeAutosave(engine)) saveInfo.textContent = `Autosaved at tick ${engine.tick} (${new Date().toLocaleTimeString()}).`;
+  else saveInfo.textContent = 'Autosave failed (browser storage full or disabled).';
+}
+setInterval(autosave, 30_000);
+document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && autosave());
+window.addEventListener('pagehide', autosave);
+$('#save-file').addEventListener('click', () => downloadSave(engine));
+const loadInput = $<HTMLInputElement>('#load-input');
+$('#load-file').addEventListener('click', () => loadInput.click());
+loadInput.addEventListener('change', async () => {
+  const file = loadInput.files?.[0];
+  if (!file) return;
+  try {
+    const snap = JSON.parse(await file.text());
+    deserialize(snap); // validate before replacing the autosave
+    writeAutosaveRaw(snap);
+    leaving = true;
+    location.href = location.pathname; // reload without ?seed: resumes the loaded save
+  } catch (err) {
+    log('error', `Load failed: ${(err as Error).message}`);
+  }
+  loadInput.value = '';
+});
+
+engine.events.on('SUPPLY', (s) => {
+  const title = UPGRADE_BY_ID[s.upgrade]?.title ?? s.upgrade;
+  if (s.phase === 'LANDED') log('info', `Supply crate (${title}) landed at (${s.x}, ${s.y}). Grab it to install.`);
+  if (s.phase === 'INSTALLED') {
+    const t = document.createElement('div');
+    t.className = 'toast';
+    t.textContent = `⬆ ${title} installed`;
+    $('#toasts').appendChild(t);
+    setTimeout(() => t.remove(), 5000);
+  }
+});
+
+// ---------------------------------------------------------------- world events
+const banner = $('#event-banner');
+engine.events.on('WORLD_EVENT', (w) => {
+  const name = EVENT_BY_ID[w.def]?.title ?? w.type;
+  if (w.phase === 'ALERT') log('warn', `${name} forecast in ${w.startTick - engine.tick} ticks (@ALERT).`);
+  else if (w.phase === 'START') log('warn', `${name} has begun.`);
+  else log('info', `${name} is over.`);
+});
+function updateBanner(): void {
+  const a = engine.director.alert(engine.tick);
+  if (!a.event) {
+    banner.className = '';
+    return;
+  }
+  const squall = a.event.type === 'SQUALL';
+  const name = `${squall ? '☄' : '◐'} ${(EVENT_BY_ID[a.event.def]?.title ?? a.event.type).toUpperCase()}`;
+  if (a.eta > 0) {
+    banner.className = 'warn';
+    banner.textContent = `${name} in ${a.eta} ticks${squall ? ' — stow the solar array' : ''}`;
+  } else {
+    banner.className = 'active';
+    banner.textContent = `${name} — ${a.event.endTick - engine.tick} ticks left`;
+  }
+}
 
 // ---------------------------------------------------------------- controls
 const speedButtons = [...document.querySelectorAll<HTMLButtonElement>('#speed button')];
@@ -114,7 +203,21 @@ $<HTMLInputElement>('#adm-free').addEventListener('change', (e) => (engine.cheat
 $<HTMLInputElement>('#adm-reveal').addEventListener('change', (e) => scene.setRevealAll((e.target as HTMLInputElement).checked));
 $('#btn-view').addEventListener('click', () => scene.setViewMode(scene.mode === 'angled' ? 'top' : 'angled'));
 $('#btn-follow').addEventListener('click', () => scene.centerOn(rover));
+const eventSel = $<HTMLSelectElement>('#adm-event');
+for (const d of EVENT_DEFS) eventSel.add(new Option(d.title, d.id));
+$('#adm-event-go').addEventListener('click', () => engine.director.triggerNow(eventSel.value));
+$('#adm-credits').addEventListener('click', () => (engine.credits += 50));
+const invuln = $<HTMLInputElement>('#adm-invuln');
+invuln.checked = engine.cheats.invulnerable;
+invuln.addEventListener('change', () => (engine.cheats.invulnerable = invuln.checked));
+$<HTMLInputElement>('#adm-free').checked = engine.cheats.freeUpload;
+scene.onTileShiftClick = (x, y) => {
+  if (!engine.admin.teleport(rover, x, y)) log('warn', `Cannot teleport to (${x}, ${y}): tile is blocked.`);
+};
 $('#btn-new').addEventListener('click', () => {
+  if (!confirm('Start a new world? The current world will be discarded (save it to a file first if you want to keep it).')) return;
+  leaving = true;
+  clearAutosave();
   location.search = `?seed=${Math.floor(Math.random() * 1e9)}`;
 });
 $('#adm-charge').addEventListener('click', () => engine.admin.forceCharge(rover));
@@ -171,7 +274,9 @@ function frame(now: number): void {
     const sun = engine.sun;
     clockEl.textContent = `sol ${engine.env.dayNumber(engine.tick)} · ${sun.elevation > 0 ? '☀ day' : '☾ night'} · tick ${engine.tick}`;
     compass.update(rover);
+    updateBanner();
     goalsPanel.update();
+    upgradesPanel.update();
     creditsEl.textContent = `◆ ${engine.credits} credits`;
     const cost = engine.uploadCost(rover, editorFlash);
     const sig = engine.signalOf(rover);

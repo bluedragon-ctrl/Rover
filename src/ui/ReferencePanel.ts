@@ -9,7 +9,7 @@ const NOTES: Record<string, string> = {
   ADD: 'dst += v', SUB: 'dst -= v', MUL: 'dst *= v', DIV: 'dst /= v (truncates)', MOD: 'dst = dst mod v (never negative)',
   JMP: 'jump', JEQ: 'jump if a == b', JNE: 'jump if a != b', JLT: 'jump if a < b', JGT: 'jump if a > b', JLE: 'jump if a <= b', JGE: 'jump if a >= b',
   CALL: 'push args, call', RET: 'return',
-  SLEEP: 'wait N ticks', SCAN: 'ray: dest1 = tile type, dest2 = distance', STEP: 'drive [tiles] in dir', ACT: 'fire tool in hardpoint (see Tools)', PEEK: 'dest = item ID in cargo slot', USE: 'consume cargo item (REPAIR_KIT: +30 hull)',
+  SLEEP: 'wait N ticks', SCAN: 'ray: dest1 = tile type, dest2 = distance', STEP: 'drive [tiles] in dir', ACT: 'fire tool in hardpoint (see Tools)', PEEK: 'dest = item ID in cargo slot', USE: 'repair [system] (default SYS_HULL) by consuming the material in cargo slot (see Tools)',
 };
 
 /** Generated language reference: always in sync with the compiler and port table. */
@@ -24,9 +24,9 @@ export function renderReference(el: HTMLElement, registry: WorldRegistry): void 
     <code>ALIAS r0 name</code> and <code>CONST NAME 5</code> cost no Flash. The program loops back to the top when it runs off the end.
     Compute instructions are fast (several per tick); hardware instructions (<code>SCAN STEP SLEEP ACT USE</code>) end the tick and take time.</p>
     <h4>Instructions</h4><table>${ops}</table>
-    <h4>Tools (Mk-I hardpoints)</h4><table>${CHASSIS_MK1.tools
+    <h4>Tools (Mk-I hardpoints; TOOL_3 can be fitted with an upgrade)</h4><table>${CHASSIS_MK1.tools
       .map((t, i) => (t ? `<tr><td><code>ACT TOOL_${i} &lt;${TOOLS[t].arg}&gt;</code></td><td>${TOOLS[t].name}: ${TOOLS[t].description} ${TOOLS[t].ticks} ticks, ${TOOLS[t].energy / 1000}% battery.</td></tr>` : `<tr><td><code>ACT TOOL_${i}</code></td><td>empty hardpoint: ERR_NO_TOOL</td></tr>`))
-      .join('')}</table>
+      .join('')}<tr><td><code>ACT TOOL_3 &lt;dir&gt;</code></td><td>with the upgrade: ${TOOLS.SEISMIC.name}: ${TOOLS.SEISMIC.description}</td></tr><tr><td><code>USE &lt;slot&gt; [system]</code></td><td>${TOOLS.USE_ITEM.name}: ${TOOLS.USE_ITEM.description} ${TOOLS.USE_ITEM.ticks} ticks, ${TOOLS.USE_ITEM.energy / 1000}% battery.</td></tr></table>
     <h4>Ports</h4><table>${ports}</table>
     <h4>Constants</h4><p class="consts">${consts}</p>
     <h4>Keys</h4><p><code>Ctrl+Enter</code> upload · <code>Space</code> pause (outside editor) · <code>.</code> step instruction · <code>V</code> camera view · <code>F</code> follow rover</p>

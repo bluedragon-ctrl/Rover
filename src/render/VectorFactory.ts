@@ -110,9 +110,33 @@ export function drawTile(b: LineBatch, shape: TileShape, color: number, lx: numb
     case 'sample':
       b.color(color, 1).octa(cx, 0.15, cz, 0.13, 0.15);
       break;
+    case 'supply': {
+      // Crate with a collapsed parachute and a beacon mast.
+      b.color(color, 1).box(cx - 0.25, 0, cz - 0.25, 0.5, 0.35, 0.5);
+      b.color(color, 0.6).seg(cx - 0.25, 0.35, cz - 0.25, cx + 0.25, 0, cz + 0.25).seg(cx + 0.25, 0.35, cz - 0.25, cx - 0.25, 0, cz + 0.25);
+      b.color(0xffffff, 0.8).seg(cx, 0.35, cz, cx, 0.9, cz);
+      b.color(0xff5a4a, 1).octa(cx, 0.95, cz, 0.06, 0.06);
+      b.color(0xffffff, 0.35).loop([[cx + 0.3, 0.01, cz + 0.45], [cx + 0.7, 0.01, cz + 0.2], [cx + 0.55, 0.01, cz + 0.6]]);
+      break;
+    }
     case 'rover':
       break;
   }
+}
+
+/** Falling supply capsule with parachute, centred at the origin (y up). */
+export function buildCapsuleMesh(): THREE.LineSegments {
+  const b = new LineBatch().color(0xffd23a, 1);
+  b.box(-0.25, 0, -0.25, 0.5, 0.4, 0.5);
+  const canopy: [number, number, number][] = [];
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    canopy.push([Math.cos(a) * 0.9, 1.8, Math.sin(a) * 0.9]);
+  }
+  b.color(0xffffff, 0.9).loop(canopy);
+  for (let i = 0; i < 8; i += 2) b.seg(canopy[i][0], canopy[i][1], canopy[i][2], 0, 0.4, 0);
+  b.seg(-0.9, 1.8, 0, 0, 2.2, 0).seg(0.9, 1.8, 0, 0, 2.2, 0);
+  return new THREE.LineSegments(b.build(), new THREE.LineBasicMaterial({ vertexColors: true }));
 }
 
 export const LIGHT_HEX = [0x333333, 0xff3030, 0x30ff60, 0x3080ff, 0xffb020];
@@ -125,6 +149,9 @@ export interface RoverMesh {
   solar: THREE.Group;
   /** Dish turntable; rotate to the antenna bearing. */
   dish: THREE.Group;
+  /** Tinted by subsystem health. */
+  solarMat: THREE.LineBasicMaterial;
+  dishMat: THREE.LineBasicMaterial;
   /** Sensor-range ring (unit radius, scale to range). Not parented to the rotating group. */
   sensorRing: THREE.LineLoop;
 }
@@ -161,7 +188,10 @@ export function buildRoverMesh(): RoverMesh {
   for (let i = -2; i <= 2; i++) if (i) sp.seg((i * W) / 3, y(-D), -D, (i * W) / 3, y(D), D);
   sp.seg(-W, 0, 0, W, 0, 0);
   sp.color(0x5a7dff, 0.8).seg(0, 0, 0, 0, -0.04, 0);
-  solar.add(lines(sp));
+  const solarMat = new THREE.LineBasicMaterial({ color: 0x5a7dff });
+  const solarLines = new THREE.LineSegments(sp.build(), solarMat);
+  solarLines.geometry.deleteAttribute('color');
+  solar.add(solarLines);
   group.add(solar);
 
   // Dish on the mast.
@@ -179,7 +209,10 @@ export function buildRoverMesh(): RoverMesh {
     db.seg(0, 0.06, 0.04, p[0], p[1], p[2]);
   }
   db.color(c, 0.6).seg(0, 0.06, -0.06, 0, 0.06, -0.2);
-  dish.add(lines(db));
+  const dishMat = new THREE.LineBasicMaterial({ color: c });
+  const dishLines = new THREE.LineSegments(db.build(), dishMat);
+  dishLines.geometry.deleteAttribute('color');
+  dish.add(dishLines);
   group.add(dish);
 
   const beaconB = new LineBatch().color(0xffffff).octa(-0.15, 0.48, 0.22, 0.06, 0.08);
@@ -204,5 +237,5 @@ export function buildRoverMesh(): RoverMesh {
     new THREE.LineDashedMaterial({ color: 0x3affc8, transparent: true, opacity: 0.25, dashSize: 0.3, gapSize: 0.25 }),
   );
   sensorRing.computeLineDistances();
-  return { group, beacon, headlight, solar, dish, sensorRing };
+  return { group, beacon, headlight, solar, dish, sensorRing, solarMat, dishMat };
 }

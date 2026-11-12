@@ -37,8 +37,18 @@ npm run build      # typecheck + production bundle in dist/
   New instructions: `src/core/vm/Compiler.ts` signature table + `RoverVM.ts`.
   New tools: `src/core/tools.ts` (check/complete) + mount in a chassis in `balance.ts`.
   New goals: `GOALS` in `src/core/EventDirector.ts`.
+  New world events: `EVENT_DEFS` in `src/core/events.ts` (with prerequisites; add a
+  teaching variant first for anything harsh).
+  Repair materials: `repairs` on the tile in `WorldRegistry`.
+  New upgrades: `UPGRADES` in `src/core/upgrades.ts` (modify the rover's own `chassis`;
+  never the shared `CHASSIS_MK1`).
 - Shapes are drawn only in `src/render/VectorFactory.ts` (keeps M8 visual work local).
 - Shipped firmware (`src/core/programs.ts`) must compile and is covered by tests.
+
+- **New simulation state must be saved:** add it to `src/core/SaveManager.ts`. The
+  round-trip test (save mid-run, load, continue == uninterrupted run) catches omissions
+  that affect the simulation. Bump `SAVE_VERSION` and add a migration for format changes.
+- Storyteller randomness only through `EventDirector.rng` (seeded, saved).
 
 ## Gotchas
 - Names are case-insensitive: a label `beat` clashes with `CONST BEAT`.

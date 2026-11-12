@@ -34,11 +34,13 @@
         <canvas id="compass" title="Sky compass: sun (yellow), relay orbiter (cyan triangle), solar array (blue), dish (dashed)"></canvas>
         <div id="hover"></div>
         <div id="toasts"></div>
+        <div id="event-banner"></div>
       </section>
       <aside id="side">
         <div class="tabs">
           <button class="tab active" data-tab="code">Code</button>
           <button class="tab" data-tab="goals">Goals</button>
+          <button class="tab" data-tab="upgrades">Upgrades</button>
           <button class="tab" data-tab="ref">Reference</button>
           <button class="tab" data-tab="admin">Admin</button>
         </div>
@@ -56,14 +58,30 @@
           <div id="debugger"></div>
         </div>
         <div class="tabpane" id="tab-goals"><div id="goals"></div></div>
+        <div class="tabpane" id="tab-upgrades"><div id="upgrades"></div></div>
         <div class="tabpane" id="tab-ref"><div id="reference"></div></div>
         <div class="tabpane" id="tab-admin">
-          <p class="small dim">Cheats for when your rover is stuck. They do not touch the program.</p>
+          <h4>World</h4>
+          <p class="small dim">The world autosaves to this browser every 30 s and when you leave the page.</p>
+          <div class="toolbar">
+            <button id="save-file">Save to file</button>
+            <button id="load-file">Load from file</button>
+            <input type="file" id="load-input" accept=".json,application/json" hidden />
+          </div>
+          <p class="small dim" id="save-info"></p>
+          <h4>Admin console</h4>
+          <p class="small dim">Cheats for testing and for when your rover is stuck. They do not touch the program. Shift+click the map to teleport the rover.</p>
           <div class="toolbar">
             <button id="adm-charge">Force charge</button>
-            <button id="adm-repair">Force repair</button>
+            <button id="adm-repair">Repair all systems</button>
             <button id="adm-respawn">Respawn at origin</button>
           </div>
+          <div class="toolbar">
+            <select id="adm-event" title="Admin-started events ignore prerequisites and do not count toward goals"></select>
+            <button id="adm-event-go">Start event</button>
+            <button id="adm-credits">+50 credits</button>
+          </div>
+          <label class="small"><input type="checkbox" id="adm-invuln" /> Invulnerable (no hull or system damage)</label>
           <label class="small"><input type="checkbox" id="adm-free" /> Free uploads (ignore signal &amp; battery cost)</label>
           <label class="small"><input type="checkbox" id="adm-reveal" /> Reveal map (disable fog of war)</label>
           <p class="small dim" id="world-info"></p>
