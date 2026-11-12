@@ -5,7 +5,8 @@ inconsistencies found in review and pins down the numbers the code relies on.
 All tunable numbers live in `src/core/balance.ts`; this document lists defaults.
 
 Status markers: **[M1–M3]** … **[M7]** implemented in that milestone, **[later]** designed
-but not yet implemented, **[M9, planned]** designed for a milestone that has not started.
+but not yet implemented, **[M9, planned]** designed for a milestone that has not started
+(or for a later slice of it; **[M9]** marks the parts already built).
 
 ---
 
@@ -65,7 +66,7 @@ Each rover owns a copy of its chassis stats; upgrades (§3.7) modify that copy.
 | Cargo | 4 slots | Item IDs (= tile IDs). **[M5]** |
 | Hardpoints | `TOOL_0` drill, `TOOL_1` grabber, `TOOL_2` spectrometer, `TOOL_3` empty | **[M5]** |
 | Sensor range | 6 tiles | `SCAN` radar, every direction, day and night. The operator's *view* needs light: 6 by day, 1-tile ring at night plus the headlight cone (§3.1.1). **[M4, M8.1]** |
-| Downlink | 2 B/tick at full signal, log FIFO 32 B, science recorder 1024 B | **[M9, planned]** §3.8 |
+| Downlink | 2 B/tick at full signal, log FIFO 32 B, science recorder 1024 B | Link + log FIFO **[M9]**; recorder **[M9, planned]** §3.8 |
 | Camera | mast camera, 32×32 2 bpp | `SNAP dir [mode]`. **[M9, planned]** §3.8.5 |
 
 ### 3.1 Energy costs (defaults)
@@ -238,8 +239,9 @@ prerequisites and count neither toward goals nor toward "seen" prerequisites.
 
 ## 3.6 Persistence **[M6]**
 
-`SaveManager.serialize/deserialize` (headless). A save (`version: 3`; v1/v2 files are migrated
-by `migrate()`) holds the seed, supply drops, installed upgrades,
+`SaveManager.serialize/deserialize` (headless). A save (`version: 4`; v1–v3 files are migrated
+by `migrate()`) holds the seed, supply drops, installed upgrades, each rover's downlink
+(log FIFO, transmitter budget, `@LOG_LOST`), the console's last 200 received frames,
 tick, credits, stats, cheats, storyteller state (RNG, schedule, completed goals), full
 unit and VM state (firmware source is recompiled on load), and **only chunks that are
 dirty or explored**: fog as run lengths plus a sparse `[layer, index, id]` diff against
@@ -275,7 +277,12 @@ on pickup and needs no cargo slot. Ports: `@DROPS` (landed crates waiting), `@DR
 Flash and register upgrades change compiler limits at once; the running program is
 unaffected (it already fits). Goal *Upgraded*: install a first upgrade.
 
-## 3.8 Downlink, debugging and science products **[M9, planned]**
+## 3.8 Downlink, debugging and science products **[M9, in progress]**
+
+Built so far (slice 1): the link (§3.8.1) with the log FIFO, log and boot frames
+(§3.8.2), `LOG`, `@LOG_FREE`, `@LOG_LOST` and the Console tab (§3.8.3). Still planned:
+the recorder and science frames, `@TX_DATA` as `LOG 0`, `@POST`, dumps and `BRK`,
+the camera and the upgrades.
 
 Design principle: **mission control knows only what the rover sent**, plus the program
 it uploaded itself. There is no live view of registers, stacks or ports for the player
@@ -340,7 +347,9 @@ kind 1 = science frame   size = 0; followed by 1 sequence byte, then the product
   raw hex and the decoded value. Tags are named from the uploaded program, like a
   `defmt` / spacecraft-EVR dictionary: with `CONST T_BAT 5`, `LOG T_BAT @BAT` shows as
   `T_BAT = 812 (L17)`. A raw-hex toggle hides the decoding. Lost frames show as a gap
-  ("⚠ 3 frames lost", from the next frame's `@LOG_LOST`).
+  ("⚠ 3 frames lost"): the transmitter counts drops and reports the count with the next
+  frame that gets through (link-layer bookkeeping, not part of the frame bytes). The
+  console keeps the last 200 frames (saved).
 * **`@POST` (RW, 0–255):** a two-digit hexadecimal display on the rover body, like a PC
   POST card. Free, no link needed, no `@STATUS`; physical (survives reboots), dark while
   powered off. The player can read it only while the rover is inside their view
@@ -498,7 +507,7 @@ friction, but the set should stay small enough to learn in one sitting.
 | | `PEEK slot -> dst` | 1 cycle | Item ID in cargo `slot` (0 = empty); bad slot → `ERR_INVALID`. |
 | | `USE slot` | 5 ticks | Consume a cargo item (§3.3.2). |
 | | `SNAP dir [mode]` | blocks 10 | **[M9, planned]** Photograph the subject in `dir` into the science recorder (§3.8.5). |
-| Debug | `LOG tag [src]` | 1 cycle | **[M9, planned]** Queue a log frame for the downlink; compute, no `@STATUS` (§3.8.3). |
+| Debug | `LOG tag [src]` | 1 cycle | **[M9]** Queue a log frame for the downlink; compute, no `@STATUS` (§3.8.3). |
 | | `BRK` | 1 cycle | **[M9, planned]** Halt the CPU (`HALTED`) until *Continue* or an upload (§3.8.4). |
 
 `@STATUS` is written by every hardware instruction and by arithmetic errors; pure
@@ -545,8 +554,8 @@ compute instructions leave it alone.
 | `@DROPS`, `@DROP_X`, `@DROP_Y` | R | supply crates waiting / nearest crate | M7 |
 | `@SEISMIC_TYPE`, `@SEISMIC_DIST` | R | last seismic scan | M7 |
 | `@SCIENCE_READY` | R | science products waiting for downlink | M5 (M9: products in the recorder) |
-| `@LOG_FREE` | R | free bytes in the log FIFO | M9, planned |
-| `@LOG_LOST` | RW | log frames dropped (saturates at 255) | M9, planned |
+| `@LOG_FREE` | R | free bytes in the log FIFO | M9 |
+| `@LOG_LOST` | RW | log frames dropped (saturates at 255) | M9 |
 | `@REC_FREE` | R | free bytes in the science recorder | M9, planned |
 | `@POST` | RW | 0–255, two-digit hex display on the rover | M9, planned |
 

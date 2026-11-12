@@ -1,12 +1,13 @@
 import { CHASSIS_MK1 } from './balance';
 import { CHUNK_AREA, WorldChunk } from './ChunkedWorld';
 import type { DirectorState } from './EventDirector';
+import type { QueuedFrame, ReceivedFrame } from './downlink';
 import { SimulationEngine, type SupplyDrop } from './SimulationEngine';
 import { UPGRADE_BY_ID } from './upgrades';
 import { CpuState, type Status } from './types';
 import type { Unit, UnitAction, UnitMotion } from './Unit';
 
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
 
 interface UnitSave {
   id: number;
@@ -32,6 +33,8 @@ interface UnitSave {
   seismic: [type: number, dist: number];
   /** v3 */
   indicators: number[];
+  /** v4: downlink transmitter */
+  link: { fifo: QueuedFrame[]; headSent: number; acc: number; lost: number; gap: number };
   action: UnitAction | null;
   motion: UnitMotion | null;
   cyclesLeft: number;
@@ -71,6 +74,8 @@ export interface SaveSnapshot {
   /** v2 */
   drops: SupplyDrop[];
   nextDropId: number;
+  /** v4: frames received by mission control */
+  received: ReceivedFrame[];
   units: UnitSave[];
   chunks: ChunkSave[];
 }
@@ -126,6 +131,7 @@ export function serialize(e: SimulationEngine): SaveSnapshot {
     director: e.director.saveState(),
     drops: e.drops.map((d) => ({ ...d })),
     nextDropId: e.nextDropId,
+    received: e.received.map((f) => ({ ...f, bytes: [...f.bytes] })),
     units: e.units.map(saveUnit),
     chunks,
   };
@@ -148,6 +154,13 @@ function saveUnit(u: Unit): UnitSave {
     scienceReady: u.scienceReady,
     lights: [u.lightColor, u.lightBlink, u.headlight],
     indicators: [...u.indicators],
+    link: {
+      fifo: u.link.fifo.map((f) => ({ bytes: [...f.bytes], gap: f.gap })),
+      headSent: u.link.headSent,
+      acc: u.link.acc,
+      lost: u.link.lost,
+      gap: u.link.gap,
+    },
     solar: [u.solarOpen, u.solarDeploy, u.solarAngle, u.solarTarget],
     antenna: [u.antennaAngle, u.antennaTarget],
     packetsSent: u.packetsSent,
@@ -196,6 +209,12 @@ export function migrate(raw: unknown): SaveSnapshot {
     for (const u of out.units) u.indicators = [0, 0, 0];
     v = 3;
   }
+  if (v === 3) {
+    // v3 -> v4: byte downlink (M9). Empty FIFO, nothing received yet.
+    out.received = [];
+    for (const u of out.units) u.link = { fifo: [], headSent: 0, acc: 0, lost: 0, gap: 0 };
+    v = 4;
+  }
   if (v !== SAVE_VERSION) throw new SaveError(`Unsupported save version ${s.version}.`);
   out.version = v;
   return out;
@@ -215,6 +234,7 @@ export function deserialize(raw: unknown): SimulationEngine {
   e.director.loadState(s.director);
   e.drops = s.drops.map((d) => ({ ...d }));
   e.nextDropId = s.nextDropId;
+  e.received = s.received.map((f) => ({ ...f, bytes: [...f.bytes] }));
 
   for (const cs of s.chunks) {
     const c = e.world.getChunk(cs.cx, cs.cy);
@@ -235,6 +255,13 @@ export function deserialize(raw: unknown): SimulationEngine {
       def.apply(u.chassis, u); // rebuild stats; counters are restored from the snapshot
       u.upgrades.push(id);
     }
+    Object.assign(u.link, {
+      fifo: us.link.fifo.map((f) => ({ bytes: [...f.bytes], gap: f.gap })),
+      headSent: us.link.headSent,
+      acc: us.link.acc,
+      lost: us.link.lost,
+      gap: us.link.gap,
+    });
     u.seismicType = us.seismic[0];
     u.seismicDist = us.seismic[1];
     Object.assign(u, {

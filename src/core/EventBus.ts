@@ -1,5 +1,6 @@
 import type { CpuState, Status } from './types';
 import type { WorldEventType } from './EventDirector';
+import type { ReceivedFrame } from './downlink';
 
 export interface SimEvents {
   TICK: { tick: number };
@@ -14,6 +15,7 @@ export interface SimEvents {
   WORLD_EVENT: { phase: 'ALERT' | 'START' | 'END'; type: WorldEventType; def: string; startTick: number; endTick: number };
   UNIT_STATE: { unitId: number; state: CpuState };
   UNIT_STATUS: { unitId: number; status: Status };
+  DOWNLINK_FRAME: ReceivedFrame;
   LOG: { unitId: number; level: 'info' | 'warn' | 'error'; message: string };
 }
 

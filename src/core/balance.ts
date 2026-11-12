@@ -40,6 +40,10 @@ export const BALANCE = {
   uploadBase: 500,
   uploadPerByte: 12, // ~50 per average instruction
   uploadSignalFloor: 10,
+  // Downlink (docs/SPEC.md §3.8.1): byte-based, shared by the log FIFO (and later the recorder)
+  linkBytesPerTick: 2, // at @SIGNAL_STR 100, proportional to signal
+  linkMinSignal: 20, // nothing is sent below this
+  linkEnergyPerTick: 2, // per tick in which at least one byte is sent
 
   // Storyteller (docs/SPEC.md §3.5)
   eventEarliestTick: 1500, // grace period for new worlds
@@ -79,6 +83,8 @@ export interface ChassisDef {
   dataStack: number;
   callStack: number;
   cyclesPerTick: number;
+  /** Log FIFO size in bytes (downlink, §3.8.3). */
+  logFifoBytes: number;
   sensorRange: number;
   cargoSlots: number;
   /** Tool mounted in each hardpoint TOOL_0..TOOL_3 (null = empty). */
@@ -98,6 +104,7 @@ export const CHASSIS_MK1: ChassisDef = {
   dataStack: 8,
   callStack: 8,
   cyclesPerTick: 4,
+  logFifoBytes: 32,
   sensorRange: 6,
   cargoSlots: 4,
   tools: ['DRILL', 'GRABBER', 'SPECTROMETER', null],

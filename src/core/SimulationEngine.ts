@@ -4,6 +4,7 @@ import { EventBus } from './EventBus';
 import { MapGenerator } from './MapGenerator';
 import { EventDirector } from './EventDirector';
 import { hash3 } from './rng';
+import { BootReason, encodeLog, RECEIVED_KEEP, SYSTEM_TAG, type ReceivedFrame } from './downlink';
 import { UPGRADE_BY_ID } from './upgrades';
 import type { SquallDamage } from './events';
 import { TOOLS, type ToolDef } from './tools';
@@ -72,6 +73,8 @@ export class SimulationEngine {
   sun: SunState;
   orbitAzimuth: number;
   nextUnitId = 1;
+  /** Mission control: frames received over the downlink (newest last, last RECEIVED_KEEP). */
+  received: ReceivedFrame[] = [];
   readonly portCtx: PortContext;
 
   constructor(readonly opts: EngineOptions) {
@@ -208,6 +211,7 @@ export class SimulationEngine {
     unit.action = null;
     unit.vm.load(res.program);
     unit.cyclesLeft = 0;
+    this.booted(unit, BootReason.UPLOAD);
     const costMsg = res.cost ? `, cost ${(res.cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(unit)}` : '';
     this.log(unit, 'info', `Firmware flashed (${res.flashUsed}/${unit.chassis.flashBytes} bytes${costMsg}). Rebooting.`);
     return res;
@@ -263,6 +267,7 @@ export class SimulationEngine {
     for (const u of this.units) {
       this.world.touchRadius(u.x, u.y, BALANCE.chunkBubbleRadius);
       this.updatePower(u);
+      if (u.powered) this.updateLink(u);
       if (squall) this.applySquall(u, squall);
       this.updateUnitPhysics(u);
       this.revealAround(u);
@@ -311,6 +316,7 @@ export class SimulationEngine {
       if (u.energy * 100 >= B.coldBootPercent * u.chassis.batteryCapacity) {
         u.vm.state = CpuState.RUNNING;
         u.vm.reboot();
+        this.booted(u, BootReason.COLD_BOOT);
         this.log(u, 'warn', 'Solar cold boot: battery recovered, firmware restarted.');
         this.events.emit('UNIT_STATE', { unitId: u.id, state: u.vm.state });
       }
@@ -381,6 +387,7 @@ export class SimulationEngine {
       if (--vm.watchdog <= 0) {
         vm.reboot();
         u.action = null;
+        this.booted(u, BootReason.WATCHDOG);
         this.log(u, 'warn', 'Watchdog reboot.');
         this.events.emit('UNIT_STATE', { unitId: u.id, state: vm.state });
       }
@@ -596,7 +603,31 @@ export class SimulationEngine {
         if (p) writePortClamped(p, u, v, this.portCtx);
       },
       hardware: (ins, values) => this.hardware(u, ins, values),
+      log: (tag, value) => {
+        u.link.enqueue(encodeLog(tag, value), u.chassis.logFifoBytes);
+      },
     };
+  }
+
+  // ---------------------------------------------------------------- downlink
+
+  /** After a hard reboot: @LOG_LOST restarts, and the boot frame `LOG 15 reason` is queued. */
+  private booted(u: Unit, reason: number): void {
+    u.link.lost = 0;
+    u.link.enqueue(encodeLog(SYSTEM_TAG, reason), u.chassis.logFifoBytes);
+  }
+
+  /** Transmit this tick's bytes; completed frames reach mission control. */
+  private updateLink(u: Unit): void {
+    const { sent, done } = u.link.pump(this.signalOf(u), BALANCE.linkMinSignal, BALANCE.linkBytesPerTick);
+    if (!sent) return;
+    this.drain(u, BALANCE.linkEnergyPerTick);
+    for (const f of done) {
+      const r: ReceivedFrame = { unitId: u.id, tick: this.tick, bytes: f.bytes, gap: f.gap };
+      this.received.push(r);
+      this.events.emit('DOWNLINK_FRAME', r);
+    }
+    if (this.received.length > RECEIVED_KEEP) this.received.splice(0, this.received.length - RECEIVED_KEEP);
   }
 
   private hardware(u: Unit, ins: Instr, v: number[]): number[] | void {
@@ -691,6 +722,7 @@ export class SimulationEngine {
       if (u.vm.state === CpuState.POWER_OFF) {
         u.vm.state = CpuState.RUNNING;
         u.vm.reboot();
+        this.booted(u, BootReason.ADMIN);
         this.log(u, 'warn', 'ADMIN: battery recharged, cold boot.');
       } else this.log(u, 'warn', 'ADMIN: battery recharged.');
     },
@@ -701,6 +733,7 @@ export class SimulationEngine {
       if (u.vm.state === CpuState.DESTROYED) {
         u.vm.state = CpuState.RUNNING;
         u.vm.reboot();
+        this.booted(u, BootReason.ADMIN);
       }
       this.log(u, 'warn', 'ADMIN: hull repaired.');
     },
@@ -726,6 +759,7 @@ export class SimulationEngine {
       u.antennaHealth = 100;
       u.vm.state = CpuState.RUNNING;
       u.vm.reboot();
+      this.booted(u, BootReason.ADMIN);
       this.revealAround(u);
       this.log(u, 'warn', 'ADMIN: respawned at origin.');
     },

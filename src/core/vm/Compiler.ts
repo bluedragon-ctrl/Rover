@@ -1,4 +1,5 @@
 import { ENCODING, type ChassisDef } from '../balance';
+import { MAX_LOG_TAG, SYSTEM_TAG } from '../downlink';
 import { getPort } from '../ports';
 import { Alert, Dir, LightColor, Status, SystemId } from '../types';
 
@@ -7,7 +8,8 @@ export type Op =
   | 'ADD' | 'SUB' | 'MUL' | 'DIV' | 'MOD'
   | 'JMP' | 'JEQ' | 'JNE' | 'JLT' | 'JGT' | 'JLE' | 'JGE'
   | 'CALL' | 'RET'
-  | 'SLEEP' | 'SCAN' | 'STEP' | 'ACT' | 'PEEK' | 'USE';
+  | 'SLEEP' | 'SCAN' | 'STEP' | 'ACT' | 'PEEK' | 'USE'
+  | 'LOG';
 
 export type Operand =
   | { k: 'imm'; v: number }
@@ -41,6 +43,11 @@ export interface CompileResult {
   flashUsed: number;
   /** Bytes per source line (1-based) that holds an instruction; a best estimate on lines with errors. */
   lineBytes: Record<number, number>;
+  /**
+   * Log dictionary for the console: per LOG tag, the names it was written with
+   * (CONST names) and the source lines that log it.
+   */
+  logTags: Record<number, { names: string[]; lines: number[] }>;
 }
 
 /** Encoded size of an integer immediate. */
@@ -74,6 +81,7 @@ export function instrBytes(i: Instr): number {
  *  d  destination (reg or writable port)
  *  m  read-modify-write destination (reg or read+write port)
  *  l  label
+ *  k  compile-time constant (number or CONST), no register/port
  *  suffix '?' optional, '*' variadic
  */
 const SIGNATURES: Record<Op, string[]> = {
@@ -100,6 +108,7 @@ const SIGNATURES: Record<Op, string[]> = {
   ACT: ['v', 'v?'],
   PEEK: ['v', 'd'],
   USE: ['v', 'v?'],
+  LOG: ['k', 'v?'],
 };
 
 export const OPCODES = Object.keys(SIGNATURES) as Op[];
@@ -217,11 +226,13 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
   const instrs: Instr[] = [];
   const lineToIp: Record<number, number> = {};
   const lineBytes: Record<number, number> = {};
+  const logTags: CompileResult['logTags'] = {};
 
   /** Size of an operand token without reporting errors (so lines with errors still get a size). */
   const tokenBytes = (tok: string, kind: string): number => {
     const up = tok.toUpperCase();
     if (kind === 'l') return ENCODING.label;
+    if (kind === 'k') return immBytes(parseNumber(tok) ?? constants[up] ?? 0);
     if (up.startsWith('@')) return ENCODING.port;
     if (up in aliases || REG.test(tok)) return ENCODING.register;
     const n = parseNumber(tok) ?? constants[up];
@@ -235,6 +246,14 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
       if (up in labels) return { k: 'label', target: labels[up], name: up };
       err(line, `Unknown label '${tok}'`);
       return null;
+    }
+    if (kind === 'k') {
+      const n = parseNumber(tok) ?? constants[up];
+      if (n === undefined) {
+        err(line, `'${tok}' must be a number or CONST (compile-time constant)`);
+        return null;
+      }
+      return { k: 'imm', v: n };
     }
     if (up.startsWith('@')) {
       const p = getPort(up);
@@ -305,6 +324,21 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
       err(l.line, `CALL passes ${args.length - 1} args but the data stack holds ${chassis.dataStack}`);
       ok = false;
     }
+    if (op === 'LOG' && ok) {
+      const tag = (args[0] as { v: number }).v;
+      if (tag === SYSTEM_TAG) {
+        err(l.line, `LOG tag ${SYSTEM_TAG} is reserved for system frames (boot, dumps); use 0–${MAX_LOG_TAG}`);
+        ok = false;
+      } else if (tag < 0 || tag > MAX_LOG_TAG) {
+        err(l.line, `LOG tag must be 0–${MAX_LOG_TAG}, got ${tag}`);
+        ok = false;
+      } else {
+        const entry = (logTags[tag] ??= { names: [], lines: [] });
+        const name = argToks[0].toUpperCase();
+        if (parseNumber(argToks[0]) === null && !entry.names.includes(name)) entry.names.push(name);
+        entry.lines.push(l.line);
+      }
+    }
     if (!ok) continue;
     lineToIp[l.line] = instrs.length;
     instrs.push({ op, args, line: l.line });
@@ -323,11 +357,12 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
     errors,
     flashUsed,
     lineBytes,
+    logTags,
   };
 }
 
 export function formatSig(op: Op): string {
-  const names: Record<string, string> = { v: 'value', d: 'dest', m: 'reg', l: 'label' };
+  const names: Record<string, string> = { v: 'value', d: 'dest', m: 'reg', l: 'label', k: 'tag' };
   return (
     `${op} ` +
     SIGNATURES[op]

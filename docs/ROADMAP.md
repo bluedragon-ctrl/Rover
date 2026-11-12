@@ -20,7 +20,7 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | **M8** | **Visual overhaul (SPEC §7)** | 🚧 in progress: asset preview, indicator lamps, **game renderer switched to v2**, frame-time HUD + geometry baseline, pan leash; performance fine on PC, remaining items (LOD, fat lines, zoom range, atmosphere) deferred to the next visual pass |
 | M8.1 | Radar `SCAN` vs. light-limited operator view; headlight cone; `@HEADING` | ✅ done |
 | Flash bytes | Program size in machine-code bytes instead of lines (SPEC §5.7) | ✅ core done; editor byte gutter awaiting preview approval |
-| **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | 📝 designed; ⏭ **next**: slice 1 (link layer + `LOG`); photo POC in `preview.html?photos=1` |
+| **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | 🚧 slice 1 done (link layer, `LOG`, Console tab, save v4); ⏭ next: slice 2 (recorder + spectra, retire packet science); photo POC in `preview.html?photos=1` |
 | M10 | Multiple rovers (after single-rover tuning) | planned |
 
 ## Done: Flash measured in bytes
@@ -163,17 +163,21 @@ Spec: [SPEC §3.8](SPEC.md). Decided with the owner (2026-11-12):
 Slices, one PR each, in order. Every slice: tests green, build, SPEC markers updated from
 "M9, planned" to "M9", session-log row.
 
-1. [ ] **Link layer + `LOG`.** `src/core/downlink.ts` (FIFO, byte accumulator, frame
-       encoder, per-tick energy), `LOG` in `Compiler.ts` signature table + `RoverVM.ts`
-       (tag 0–14 compile-time constant; `LOG 15` error), ports `@LOG_FREE` / `@LOG_LOST`,
-       boot frame on hard reboot, `BALANCE.link*`. Engine emits `DOWNLINK_FRAME` (bytes +
-       decoded) for the UI. `@TX_DATA` = `LOG 0` **only after slice 2** (science still
-       rides on it until then). Console tab (`src/ui/ConsolePanel.ts`): received frames,
-       raw hex toggle, tag names from `CONST`, lost-frame gaps. Save: FIFO bytes, lost
-       counter, accumulator, last 200 received frames (bump `SAVE_VERSION` to 4 + migration).
-       Tests: frame encoding (examples in SPEC §3.8.2), FIFO overflow drops whole frames,
-       rate vs signal, no send below 20, energy only while sending, save round-trip
-       mid-frame, determinism.
+1. [x] **Link layer + `LOG`.** `src/core/downlink.ts`: frame encoder/decoder, `Downlink`
+       (log FIFO that drops whole frames, integer byte accumulator, gap count), 2 energy
+       per sending tick, nothing below signal 20, runs while faulted, stops when powered
+       off. `LOG tag [src]` (new operand kind `k` = compile-time constant; `LOG 15` and
+       tags outside 0–14 are errors; the compiler returns a `logTags` dictionary of CONST
+       names and lines). Ports `@LOG_FREE` / `@LOG_LOST`. Boot frame `LOG 15 reason` on
+       every hard reboot (upload, watchdog, cold boot, admin), which also resets
+       `@LOG_LOST`. `chassis.logFifoBytes` 32; `BALANCE.link*`. Engine `received` (last
+       200) + `DOWNLINK_FRAME` event. Console tab (`src/ui/ConsolePanel.ts`): decoded
+       frames named from `CONST`s with source lines, raw-hex toggle, lost-frame gaps, FIFO
+       / lost / signal status. Save v4 + migration. `@TX_DATA` and shipped firmware
+       unchanged until slice 2. Tests: `tests/downlink.test.ts` (SPEC encoding examples,
+       signed round trip, compile rules and sizes, 1 cycle / no `@STATUS`, FIFO overflow
+       and saturation, rate vs signal, energy only while sending, faulted vs powered off,
+       boot reasons, ports, save mid-frame == uninterrupted, v3 migration, console text).
 2. [ ] **Recorder + spectra; retire packet science.** Recorder (descriptors + sent
        offset), science frames with sequence byte, spectrometer writes a spectrum
        (`ERR_FULL` keeps the item), `@REC_FREE`, `@SCIENCE_READY` = products waiting,
@@ -277,3 +281,4 @@ window with a fixed dish?
 | 2026-11-12 | `ccr-a25966c0-1wr43t` | M8: game renderer switched to the v2 assets (CameraRig, PostFx bloom, TileLighting, rover rig + animator, dust/fog); radar wave outlines unmapped terrain via hidden chunk geometry; compass rotates with the camera; Q/E/B keys; v1 shapes removed. |
 | 2026-11-12 | `ccr-a25966c0-1wr43t` (2) | M8: frame-time HUD (P, `?perf=1`: frame ms avg/p95/max, render CPU ms, draw calls, geometry counts); headless geometry budget test (179k/204k line verts for 25 chunks, hidden geometry +14%); chunk rebuilds time-budgeted. |
 | 2026-11-12 | `ccr-a25966c0-1wr43t` (3) | M8: pan leash, camera focus stays within 24 tiles of the rover (owner request). |
+| 2026-11-12 | `ccr-a25966c0-1wr43t` (4) | M9 slice 1: byte downlink with lossy log FIFO, `LOG tag [src]`, `@LOG_FREE` / `@LOG_LOST`, boot frames, Console tab with CONST-named tags, save v4. |
