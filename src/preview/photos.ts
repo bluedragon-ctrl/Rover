@@ -127,21 +127,27 @@ const SUBJECTS: Subject[] = [
   },
 ];
 
-// ---------------------------------------------------------------- 16-byte encodings
+// ---------------------------------------------------------------- camera formats
+/** Downlink rate assumed for the "ticks to send" estimate (bytes per tick, full signal). */
+const LINK_BYTES_PER_TICK = 2;
+
 interface Encoding {
   id: string;
   label: string;
+  tier: string;
   w: number;
   h: number;
-  /** Packs the scene into exactly 16 bytes. */
+  bpp: number;
+  /** Packs the scene, MSB-first, `bpp` bits per pixel, row by row. */
   encode: (s: Subject, night: boolean) => Uint8Array;
-  /** Decodes 16 bytes into RGB pixels 0..255 (w*h*3). */
+  /** Decodes into RGB 0..255 per pixel. */
   decode: (b: Uint8Array) => Uint8ClampedArray;
 }
+const bytesOf = (e: Encoding) => (e.w * e.h * e.bpp) / 8;
 
 /** Box-filtered sample of the scene for an output pixel; night = dark + sensor noise. */
 function sample(s: Subject, w: number, h: number, x: number, y: number, night: boolean): RGB {
-  const N = 8;
+  const N = Math.max(2, Math.round(64 / w));
   let r = 0, g = 0, b = 0;
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
     const c = s.scene((x + (i + 0.5) / N) / w, (y + (j + 0.5) / N) / h);
@@ -158,14 +164,15 @@ const luma = (c: RGB) => 0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2];
 
 /**
  * Takes a w×h frame with auto-exposure, like a real rover camera: the darkest and
- * brightest pixels are stretched to the full range before quantizing, so 4 grey levels
+ * brightest pixels are stretched to the full range before quantizing, so the few levels
  * are spent on the scene's actual contrast. At night this also amplifies sensor noise.
  */
 function capture(s: Subject, w: number, h: number, night: boolean): RGB[] {
   const px: RGB[] = [];
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) px.push(sample(s, w, h, x, y, night));
   const l = px.map(luma);
-  const lo = Math.min(...l), hi = Math.max(...l);
+  let lo = 1, hi = 0;
+  for (const v of l) (lo = Math.min(lo, v)), (hi = Math.max(hi, v));
   const gain = 1 / Math.max(0.12, hi - lo); // limited gain: a flat scene stays flat-ish
   // scale brightness, keep hue: every channel by the same factor as the pixel's luma
   return px.map((c, i) => {
@@ -175,19 +182,70 @@ function capture(s: Subject, w: number, h: number, night: boolean): RGB[] {
 }
 const BAYER4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 
-const ENCODINGS: Encoding[] = [
-  {
-    id: 'g8', label: '4×4 · 8 bpp grey', w: 4, h: 4,
-    encode: (s, n) => Uint8Array.from(capture(s, 4, 4, n), (c) => Math.round(luma(c) * 255)),
-    decode: (b) => Uint8ClampedArray.from({ length: 48 }, (_, i) => b[Math.floor(i / 3)]),
-  },
-  {
-    id: 'rgb332', label: '4×4 · RGB332 colour', w: 4, h: 4,
-    encode: (s, n) => Uint8Array.from(capture(s, 4, 4, n), (c) => {
-      return (Math.round(c[0] * 7) << 5) | (Math.round(c[1] * 7) << 2) | Math.round(c[2] * 3);
-    }),
+function pack(values: number[], bpp: number): Uint8Array {
+  const out = new Uint8Array((values.length * bpp) / 8);
+  values.forEach((v, p) => {
+    const bit = p * bpp;
+    out[bit >> 3] |= v << (8 - bpp - (bit & 7));
+  });
+  return out;
+}
+function unpack(b: Uint8Array, count: number, bpp: number): number[] {
+  const mask = (1 << bpp) - 1;
+  return Array.from({ length: count }, (_, p) => {
+    const bit = p * bpp;
+    return (b[bit >> 3] >> (8 - bpp - (bit & 7))) & mask;
+  });
+}
+const greyRGB = (levels: number[], max: number) => {
+  const out = new Uint8ClampedArray(levels.length * 3);
+  levels.forEach((v, i) => out.fill((v * 255) / max, i * 3, i * 3 + 3));
+  return out;
+};
+
+/** Grey camera, optional ordered dither between the 2^bpp levels (same bytes, nicer look). */
+function greyCam(id: string, label: string, tier: string, w: number, h: number, bpp: number, dither: boolean): Encoding {
+  const max = (1 << bpp) - 1;
+  return {
+    id, label, tier, w, h, bpp,
+    encode: (s, n) => pack(capture(s, w, h, n).map((c, p) => {
+      const t = dither ? (BAYER4[((Math.floor(p / w)) & 3) * 4 + (p % w & 3)] + 0.5) / 16 : 0.5;
+      return Math.max(0, Math.min(max, Math.floor(luma(c) * max + t)));
+    }), bpp),
+    decode: (b) => greyRGB(unpack(b, w * h, bpp), max),
+  };
+}
+
+/** 16-colour fixed palette tuned for the planet: browns and tans plus a few mineral accents. */
+const PALETTE: RGB[] = [
+  0x000000, 0x2a1d16, 0x4a3324, 0x6e4c33, 0x93694a, 0xb88d66, 0xd9b38c, 0xf2e2c8,
+  0x8a2f22, 0xe0643c, 0xffc94a, 0x8fbf3a, 0x2f6f7a, 0x6fd0f0, 0x5a5f8a, 0xffffff,
+].map(hex);
+function paletteCam(w: number, h: number): Encoding {
+  return {
+    id: 'pal16', label: `${w}×${h} · 4 bpp, 16-colour palette`, tier: 'upgrade: colour filter wheel', w, h, bpp: 4,
+    encode: (s, n) => pack(capture(s, w, h, n).map((c) => {
+      let best = 0, bd = 9;
+      PALETTE.forEach((q, i) => {
+        // weighted distance: hue errors matter more than the eye's luma noise here
+        const d = 2 * (c[0] - q[0]) ** 2 + 4 * (c[1] - q[1]) ** 2 + 3 * (c[2] - q[2]) ** 2;
+        if (d < bd) (bd = d), (best = i);
+      });
+      return best;
+    }), 4),
     decode: (b) => {
-      const out = new Uint8ClampedArray(48);
+      const idx = unpack(b, w * h, 4), out = new Uint8ClampedArray(w * h * 3);
+      idx.forEach((v, i) => PALETTE[v].forEach((ch, k) => (out[i * 3 + k] = ch * 255)));
+      return out;
+    },
+  };
+}
+function rgb332Cam(w: number, h: number): Encoding {
+  return {
+    id: 'rgb332', label: `${w}×${h} · 8 bpp RGB332`, tier: 'upgrade: colour sensor', w, h, bpp: 8,
+    encode: (s, n) => Uint8Array.from(capture(s, w, h, n), (c) => (Math.round(c[0] * 7) << 5) | (Math.round(c[1] * 7) << 2) | Math.round(c[2] * 3)),
+    decode: (b) => {
+      const out = new Uint8ClampedArray(b.length * 3);
       b.forEach((v, i) => {
         out[i * 3] = ((v >> 5) * 255) / 7;
         out[i * 3 + 1] = (((v >> 2) & 7) * 255) / 7;
@@ -195,43 +253,19 @@ const ENCODINGS: Encoding[] = [
       });
       return out;
     },
-  },
-  {
-    id: 'g2', label: '8×8 · 2 bpp (4 greys)', w: 8, h: 8,
-    encode: (s, n) => {
-      const out = new Uint8Array(16);
-      const px = capture(s, 8, 8, n);
-      for (let p = 0; p < 64; p++) {
-        const level = Math.min(3, Math.floor(luma(px[p]) * 4));
-        out[p >> 2] |= level << (6 - 2 * (p & 3));
-      }
-      return out;
-    },
-    decode: (b) => Uint8ClampedArray.from({ length: 192 }, (_, i) => {
-      const p = Math.floor(i / 3);
-      return (((b[p >> 2] >> (6 - 2 * (p & 3))) & 3) * 255) / 3;
-    }),
-  },
-  {
-    id: 'g1', label: '16×8 · 1 bpp dithered', w: 16, h: 8,
-    encode: (s, n) => {
-      const out = new Uint8Array(16);
-      const px = capture(s, 16, 8, n);
-      for (let p = 0; p < 128; p++) {
-        const x = p % 16, y = p >> 4;
-        if (luma(px[p]) * 16 > BAYER4[(y & 3) * 4 + (x & 3)] + 0.5) out[p >> 3] |= 0x80 >> (p & 7);
-      }
-      return out;
-    },
-    decode: (b) => Uint8ClampedArray.from({ length: 384 }, (_, i) => {
-      const p = Math.floor(i / 3);
-      return (b[p >> 3] >> (7 - (p & 7))) & 1 ? 235 : 20;
-    }),
-  },
+  };
+}
+
+const ENCODINGS: Encoding[] = [
+  greyCam('g2', '32×32 · 2 bpp grey', 'Mk-I camera', 32, 32, 2, false),
+  greyCam('g2d', '32×32 · 2 bpp grey, dithered', 'Mk-I, dither mode', 32, 32, 2, true),
+  paletteCam(32, 32),
+  greyCam('g2x', '64×64 · 2 bpp grey', 'upgrade: hi-res sensor', 64, 64, 2, true),
+  rgb332Cam(32, 32),
 ];
 
 // ---------------------------------------------------------------- drawing
-const CELL = 112;
+const CELL = 128;
 
 /** Draws decoded pixels; bytes >= `received` are missing (partial downlink). */
 function drawImage(enc: Encoding, bytes: Uint8Array, received: number, smoothUp: boolean): HTMLCanvasElement {
@@ -240,9 +274,8 @@ function drawImage(enc: Encoding, bytes: Uint8Array, received: number, smoothUp:
   src.width = enc.w, src.height = enc.h;
   const sctx = src.getContext('2d')!;
   const img = sctx.createImageData(enc.w, enc.h);
-  const pixelsPerByte = (enc.w * enc.h) / 16;
   for (let p = 0; p < enc.w * enc.h; p++) {
-    const missing = Math.floor(p / pixelsPerByte) >= received;
+    const missing = (p * enc.bpp) >> 3 >= received;
     for (let k = 0; k < 3; k++) img.data[p * 4 + k] = missing ? 0 : px[p * 3 + k];
     img.data[p * 4 + 3] = missing ? 0 : 255;
   }
@@ -256,20 +289,12 @@ function drawImage(enc: Encoding, bytes: Uint8Array, received: number, smoothUp:
   ctx.strokeStyle = '#2b3b52';
   for (let i = -CELL; i < CELL; i += 8) ctx.beginPath(), ctx.moveTo(i, CELL), ctx.lineTo(i + CELL, 0), ctx.stroke();
   ctx.imageSmoothingEnabled = smoothUp;
-  if (smoothUp) {
-    // two-step upscale: bilinear between pixel centres
-    const mid = document.createElement('canvas');
-    mid.width = enc.w * 4, mid.height = enc.h * 4;
-    const m = mid.getContext('2d')!;
-    m.imageSmoothingEnabled = true;
-    m.drawImage(src, 0, 0, mid.width, mid.height);
-    ctx.drawImage(mid, 0, 0, CELL, CELL);
-  } else ctx.drawImage(src, 0, 0, CELL, CELL);
+  ctx.drawImage(src, 0, 0, CELL, CELL);
   return out;
 }
 
 function drawReference(s: Subject, night: boolean): HTMLCanvasElement {
-  const R = 56;
+  const R = 96;
   const src = document.createElement('canvas');
   src.width = src.height = R;
   const ctx = src.getContext('2d')!;
@@ -322,16 +347,16 @@ export function mountPhotoLab(root: HTMLElement, q: URLSearchParams): void {
   const opts = { smooth: q.get('smooth') === '1', night: q.get('night') === '1', partial: q.get('partial') === '1' };
   root.hidden = false;
   const render = () => {
-    const received = opts.partial ? 10 : 16;
+    const part = opts.partial ? 0.6 : 1;
     root.innerHTML = `
       <div class="pl-head">
-        <b>SCIENCE PRODUCTS · 16 BYTES EACH</b>
-        <span class="dim">camera: same scene, four encodings of 16 B · spectrometer: 16 bands × 1 B</span>
+        <b>SCIENCE PRODUCTS · CAMERA TIERS</b>
+        <span class="dim">same scene through each camera · ticks = downlink time at full signal, ${LINK_BYTES_PER_TICK} B/tick · spectrometer: 16 bands × 1 B</span>
         <span class="pl-toggles"></span>
       </div>
       <div class="pl-grid"></div>`;
     const toggles = root.querySelector('.pl-toggles')!;
-    for (const [k, label] of [['smooth', 'smooth upscale'], ['night', 'night, no headlight'], ['partial', 'partial downlink (10/16 B)']] as const) {
+    for (const [k, label] of [['smooth', 'smooth upscale'], ['night', 'night, no headlight'], ['partial', 'partial downlink (60 %)']] as const) {
       const b = document.createElement('button');
       b.textContent = label;
       b.classList.toggle('on', opts[k]);
@@ -339,7 +364,7 @@ export function mountPhotoLab(root: HTMLElement, q: URLSearchParams): void {
       toggles.appendChild(b);
     }
     const grid = root.querySelector('.pl-grid')!;
-    const head = ['subject', 'scene (ground truth)', ...ENCODINGS.map((e) => e.label), 'spectrometer'];
+    const head = ['subject', 'scene (ground truth)', ...ENCODINGS.map((e) => `${e.label}<br><span class="dim">${e.tier}<br>${bytesOf(e)} B · ${bytesOf(e) / LINK_BYTES_PER_TICK} ticks</span>`), 'spectrometer<br><span class="dim">16 B · 8 ticks</span>'];
     for (const h of head) grid.insertAdjacentHTML('beforeend', `<div class="pl-colhead">${h}</div>`);
     for (const s of SUBJECTS) {
       grid.insertAdjacentHTML('beforeend', `<div class="pl-name"><b>${s.name}</b><br><span class="dim">${s.note}</span></div>`);
@@ -352,8 +377,9 @@ export function mountPhotoLab(root: HTMLElement, q: URLSearchParams): void {
         const bytes = enc.encode(s, opts.night);
         const cell = document.createElement('div');
         cell.className = 'pl-cell';
+        const received = Math.floor(bytes.length * part);
         cell.appendChild(drawImage(enc, bytes, received, opts.smooth));
-        cell.insertAdjacentHTML('beforeend', `<pre>${hexDump(bytes, received)}</pre>`);
+        cell.insertAdjacentHTML('beforeend', `<pre>${hexDump(bytes.subarray(0, 16), Math.min(16, received))} …\n${received}/${bytes.length} B</pre>`);
         grid.appendChild(cell);
       }
       const cell = document.createElement('div');
@@ -362,7 +388,7 @@ export function mountPhotoLab(root: HTMLElement, q: URLSearchParams): void {
       else {
         const sb = spectrumBytes(s);
         cell.appendChild(drawSpectrum(sb));
-        cell.insertAdjacentHTML('beforeend', `<pre>${hexDump(sb, received)}</pre>`);
+        cell.insertAdjacentHTML('beforeend', `<pre>${hexDump(sb, Math.floor(16 * part))}</pre>`);
       }
       grid.appendChild(cell);
     }
