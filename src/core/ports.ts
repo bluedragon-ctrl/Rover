@@ -2,7 +2,7 @@ import type { ChunkedWorld } from './ChunkedWorld';
 import { type SunState, signalStrength, wrapDeg } from './Environment';
 import type { Unit } from './Unit';
 import type { WorldRegistry } from './WorldRegistry';
-import { BALANCE } from './balance';
+import { BALANCE, CHASSIS_MK1 } from './balance';
 
 export interface PortContext {
   readonly tick: number;
@@ -11,6 +11,8 @@ export interface PortContext {
   world: ChunkedWorld;
   registry: WorldRegistry;
   sensorRange(u: Unit): number;
+  sideRange(u: Unit): number;
+  turn(u: Unit, dir: number): void;
   alert(): { type: number; eta: number };
   drops(): { x: number; y: number }[];
   nearestDrop(u: Unit): { x: number; y: number } | null;
@@ -56,7 +58,18 @@ export const PORTS: PortDef[] = [
   { name: 'DROPS', description: 'Supply crates that have landed and wait to be picked up', read: (_u, c) => c.drops().length },
   { name: 'DROP_X', description: 'X of the nearest landed supply crate (own X if none)', read: (u, c) => c.nearestDrop(u)?.x ?? u.x },
   { name: 'DROP_Y', description: 'Y of the nearest landed supply crate (own Y if none)', read: (u, c) => c.nearestDrop(u)?.y ?? u.y },
-  { name: 'SENSOR_RANGE', description: 'Current SCAN range in tiles (drops at night)', read: (u, c) => c.sensorRange(u) },
+  {
+    name: 'SENSOR_RANGE',
+    description: `SCAN range ahead (along @HEADING): ${CHASSIS_MK1.sensorRange} by day, ${BALANCE.nightSensorRange} at night, ${BALANCE.headlightSensorRange} at night with @HEADLIGHT`,
+    read: (u, c) => c.sensorRange(u),
+  },
+  { name: 'SENSOR_SIDE', description: `SCAN range in the other three directions: ${CHASSIS_MK1.sensorRange} by day, ${BALANCE.nightSensorRange} at night`, read: (u, c) => c.sideRange(u) },
+  {
+    name: 'HEADING',
+    description: `Direction the rover faces (NORTH..WEST). STEP turns it; write to turn in place (${BALANCE.turnEnergy} energy, wraps mod 4). The headlight shines this way`,
+    read: (u) => u.heading,
+    write: (u, v, c) => c.turn(u, ((v % 4) + 4) % 4),
+  },
 
   // Sun & solar
   { name: 'SUN_AZIMUTH', description: 'Sun bearing 0–359 (0 = north, 90 = east)', read: (_u, c) => c.sun.azimuth },
@@ -105,7 +118,7 @@ export const PORTS: PortDef[] = [
   ),
   {
     name: 'HEADLIGHT',
-    description: `Headlight 0/1: night SCAN range ${BALANCE.headlightSensorRange} instead of ${BALANCE.nightSensorRange}`,
+    description: `Headlight 0/1 (${BALANCE.headlightPerTick} energy/tick): at night lights a cone ${BALANCE.headlightSensorRange} tiles ahead (3 wide, then 5), so SCAN along @HEADING reaches ${BALANCE.headlightSensorRange} instead of ${BALANCE.nightSensorRange}`,
     min: 0,
     max: 1,
     read: (u) => u.headlight,

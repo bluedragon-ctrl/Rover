@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { HEADLIGHT_CONE } from '../core/sensors';
 
 /** Max rovers that cast tile light at once (uniform array size). */
 export const MAX_LIGHTS = 4;
@@ -8,8 +9,9 @@ export const MAX_LIGHTS = 4;
  *
  * Every terrain vertex carries the centre of the tile it belongs to (`tile` attribute,
  * chunk-local x/z). The vertex shader moves that centre into scene space and decides how
- * lit the whole tile is: daylight, a rover's sensor bubble, or its headlight beam. Tiles
- * therefore light up as crisp cells, the same cells the simulation reveals.
+ * lit the whole tile is: daylight, a rover's sensor disc, or its headlight cone. Tiles
+ * therefore light up as crisp cells, the same cells the simulation reveals: the disc and
+ * cone here mirror `src/core/sensors.ts` (cone numbers are injected from HEADLIGHT_CONE).
  *
  * At night unlit tiles fade to a cold, desaturated grey ("remembered terrain") instead of
  * black; lit tiles keep their full colour and a slight boost so they bloom.
@@ -26,7 +28,7 @@ export class TileLighting {
     uLightCount: { value: 0 },
     /** xy = rover tile centre in scene x/z, z = sensor radius in tiles, w = unused. */
     uLights: { value: Array.from({ length: MAX_LIGHTS }, () => new THREE.Vector4()) },
-    /** xy = forward unit vector (scene x/z), z = beam length in tiles (0 = off). */
+    /** xy = forward unit vector (scene x/z), z = 1 when the headlight cone is on, else 0. */
     uBeams: { value: Array.from({ length: MAX_LIGHTS }, () => new THREE.Vector4()) },
   };
 
@@ -47,7 +49,13 @@ export class TileLighting {
       fragmentShader: FRAG,
       fog: true,
       vertexColors: true,
-      defines: fill ? { FILL: 1 } : {},
+      defines: {
+        ...(fill ? { FILL: 1 } : {}),
+        CONE_LEN: HEADLIGHT_CONE.length.toFixed(1),
+        CONE_NEAR_LEN: HEADLIGHT_CONE.nearLength.toFixed(1),
+        CONE_NEAR_SPREAD: HEADLIGHT_CONE.nearSpread.toFixed(1),
+        CONE_FAR_SPREAD: HEADLIGHT_CONE.farSpread.toFixed(1),
+      },
     });
     if (fill) {
       // Push fills back so coplanar grid lines always win the depth test.
@@ -81,14 +89,15 @@ void main() {
     vec2 d = floor(tc.xz - uLights[i].xy + 0.5);
     float r = uLights[i].z;
     float d2 = dot(d, d);
-    // Same disc as ChunkedWorld.revealCircle (r*r + r).
+    // Same disc as sensors.inDisc / ChunkedWorld.revealCircle (r*r + r).
     if (d2 <= r * r + r) lit = max(lit, 0.95 - 0.3 * sqrt(d2) / max(r, 1.0));
     vec4 b = uBeams[i];
     if (b.z > 0.0) {
+      // Same cone as sensors.inCone.
       float fwd = dot(d, b.xy);
       float lat = abs(d.x * b.y - d.y * b.x);
-      float spread = fwd <= 2.0 ? 1.0 : 2.0;
-      if (fwd >= 1.0 && fwd <= b.z && lat <= spread) lit = max(lit, 1.15 - (fwd - 1.0) * 0.07);
+      float spread = fwd <= CONE_NEAR_LEN ? CONE_NEAR_SPREAD : CONE_FAR_SPREAD;
+      if (fwd >= 1.0 && fwd <= CONE_LEN && lat <= spread) lit = max(lit, 1.15 - (fwd - 1.0) * 0.07);
     }
   }
   vLit = max(lit, uDay);

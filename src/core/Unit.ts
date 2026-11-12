@@ -20,7 +20,7 @@ export interface UnitMotion {
 export class Unit {
   x = 0;
   y = 0;
-  /** Last direction moved or scanned; drives the renderer's heading. */
+  /** Direction the rover faces (STEP, directional tools, @HEADING). Aims the headlight cone. */
   heading = 0;
   energy: number;
   hull = 100;

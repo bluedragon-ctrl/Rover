@@ -17,31 +17,29 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | M5 | Tools, cargo, spectrometer, science, first goals | ✅ done |
 | M6 | Save/load + autosave, storyteller with prerequisites & teaching events, subsystem damage, material repairs, admin console | ✅ done |
 | M7 | Upgrades bought with credits, delivered as supply crates, seismic scanner, save v2 | ✅ done |
-| **M8** | **Visual overhaul (SPEC §7)** | 🚧 in progress: asset preview + indicator lamps done |
-| **M8.1** | **Directional headlight: a forward cone becomes the real night sensor rule** | ⏭ next (plan below) |
+| **M8** | **Visual overhaul (SPEC §7)** | 🚧 in progress: asset preview + indicator lamps done; ⏭ next: switch the game renderer |
+| M8.1 | Directional headlight: a forward cone is the night sensor rule; `@HEADING`, `@SENSOR_SIDE` | ✅ done |
 | M9 | Multiple rovers (after single-rover tuning) | planned |
 
-## Next: M8.1 — Directional headlight (detailed plan)
+## Done: M8.1 — Directional headlight
 
-Decided in review: at night the headlight lights (and senses) **only a forward cone**, not a
-circle. This changes rules, so it is its own PR, before the renderer switch-over.
+At night the rover senses the 1-tile ring; `@HEADLIGHT 1` adds a forward cone
+(`1 ≤ forward ≤ 5`, 3 wide for 2 tiles then 5 wide, 21 tiles). Day stays a 6-tile disc.
+Decision 4 → **(b)**: `SCAN` no longer turns the rover; `@HEADING` (RW, 5 energy per turn,
+wraps mod 4) turns in place. SPEC §3.1.1.
 
-Shape (numbers to `balance.ts`): the 1-tile ring around the rover is always sensed
-(`nightSensorRange`); with `@HEADLIGHT 1` add tiles `1 ≤ forward ≤ 5` ahead with
-`|lateral| ≤ 1` for `forward ≤ 2` and `≤ 2` beyond (≈ 20 tiles). Day stays a 6-tile circle.
-
-- [ ] **One shared shape function** in core, e.g. `sensorTiles(u)` / `isSensed(u, dx, dy)`
-      in `SimulationEngine`, used for fog reveal **and** by the renderer's `TileLighting`
-      (so what is lit is exactly what is sensed). `revealAround` key must include heading.
-- [ ] `ChunkedWorld.revealTiles(...)` (or a cone variant of `revealCircle`), deterministic.
-- [ ] **SCAN at night:** today `SCAN dir` sets the heading first, so the cone would always
-      point where the rover scans. Decide (see open decision 4); then implement.
-- [ ] `@SENSOR_RANGE` description: range **ahead**; consider `@SENSOR_SIDE` (1 at night).
-- [ ] Shipped firmware (Explorer / Prospector / Fetch): check night behaviour still works.
-- [ ] Tests: cone reveal shape per heading, ring without headlight, determinism, save
-      round trip (heading is already saved), firmware still compiles.
-- [ ] SPEC §3 (sensor range table, `@HEADLIGHT`), Reference text via the port description.
-- [ ] Renderer: `TileLighting` uses the shared shape instead of disc + beam emphasis.
+- [x] One shared shape in `src/core/sensors.ts` (`inDisc`, `inCone`, `coneOffsets`,
+      `rayRange`); engine `sensorShape` / `isSensed` / `scanRange`; reveal key includes the
+      cone heading.
+- [x] `ChunkedWorld.revealTile` / `revealTiles`.
+- [x] SCAN uses the sensed range in its direction; `@SENSOR_RANGE` = ahead, new `@SENSOR_SIDE`.
+- [x] Shipped firmware unchanged: Explorer/Prospector only act on adjacent hits, which the
+      ring covers (tested through a night).
+- [x] Tests (`tests/headlight.test.ts`): cone shape and rotation, ring without headlight,
+      cone reveal per heading, SCAN off-heading, `@HEADING`, day disc, firmware, save round trip.
+- [x] `TileLighting` cone numbers injected from `HEADLIGHT_CONE`; preview and the old
+      renderer's sensor ring show the night ring, not a 5-tile circle.
+- No save format change (heading was already saved; the reveal key is derived).
 
 ## M8 — Visual overhaul (detailed plan)
 
@@ -112,10 +110,10 @@ tests must stay untouched. Do it in small PRs, checking frame time at each step.
 2. Bloom on by default with a toggle (as in the preview) — confirm once measured in-game.
 3. Upgrade prices: fine for now? (A Prospector run earns ~75 credits in 1.5 sols; the
    whole catalogue costs 745.)
-4. **M8.1 SCAN vs. cone:** (a) keep `SCAN dir` turning the rover instantly (the cone always
-   covers the scan, headlight only limits fog reveal), or (b) at night a `SCAN` off the
-   current heading only reaches the 1-tile ring unless the rover turns first (needs a
-   cheap turn instruction or `@HEADING` port). (b) makes the cone matter; recommended.
+4. ~~M8.1 SCAN vs. cone~~ → (b): `SCAN` does not turn; off-heading night scans reach the
+   ring only; `@HEADING` port turns in place (5 energy). Revisit the turn cost after play.
+5. Explorer firmware toggles `@HEADLIGHT` 0→1 every loop at night (reveal can miss the
+   cone on a tick boundary). Harmless now; fix when Flash allows.
 
 ## Backlog / ideas
 
@@ -142,3 +140,4 @@ tests must stay untouched. Do it in small PRs, checking frame time at each step.
 | 2026-11-12 | PR #3 | M6: save/load + autosave, storyteller events, subsystem damage, admin console; then event prerequisites + teaching events and material-consuming repairs (review feedback). |
 | 2026-11-12 | (next PR) | M7: upgrades via supply crates, seismic scanner, Fetch template, save v2 + migration. |
 | 2026-11-12 | `ccr-685ffa2c-m6av8z` | M8 asset preview page (v2 vector assets, tile lighting, bloom, orbit camera, accordion solar wings, volcano vents, ore mounds, buried crystals); indicator lamps `@IND1..3` (save v3); M8.1 directional headlight planned. |
+| 2026-11-12 | `ccr-4522f0b5-0m8b66` | M8.1 directional headlight: shared sensor shape (`sensors.ts`), night ring + forward cone, `SCAN` no longer turns, `@HEADING` / `@SENSOR_SIDE` ports, TileLighting uses the shared cone. |

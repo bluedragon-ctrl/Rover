@@ -216,7 +216,8 @@ export class ThreeScene {
         m.color.setHex(ok).lerp(new THREE.Color(0xff3030), 1 - health / 100);
       tint(v.solarMat, 0x5a7dff, u.solarHealth);
       tint(v.dishMat, 0x3affc8, u.antennaHealth);
-      const range = this.engine.sensorRange(u) + 0.5;
+      // The ring shows the always-sensed disc; the headlight wedge shows the night cone.
+      const range = this.engine.sideRange(u) + 0.5;
       v.sensorRing.position.set(x - this.focusX, 0, -(y - this.focusY));
       v.sensorRing.scale.setScalar(range);
 

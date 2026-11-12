@@ -64,7 +64,7 @@ Each rover owns a copy of its chassis stats; upgrades (§3.7) modify that copy.
 | Subsystems | solar array 100, dish 100 | `@SOLAR_HEALTH`, `@ANTENNA_HEALTH`. **[M6]** |
 | Cargo | 4 slots | Item IDs (= tile IDs). **[M5]** |
 | Hardpoints | `TOOL_0` drill, `TOOL_1` grabber, `TOOL_2` spectrometer, `TOOL_3` empty | **[M5]** |
-| Sensor range | 6 tiles | 1 at night, 5 at night with headlight. **[M4]** |
+| Sensor range | 6 tiles (disc) | Night: 1-tile ring; with headlight also a forward cone 5 tiles long (§3.1.1). **[M4, M8.1]** |
 
 ### 3.1 Energy costs (defaults)
 
@@ -75,10 +75,29 @@ Each rover owns a copy of its chassis stats; upgrades (§3.7) modify that copy.
 | `STEP` onto `ROUGH_GRAVEL` | 6 / tile | 120 / tile |
 | `STEP` onto `ACID_VENT` | 4 / tile | 60 / tile + 10 hull damage |
 | `SCAN` | 1 | 10 |
+| Turn in place (`@HEADING` write) | instant | 5 |
 | Headlight on | per tick | 8 |
 | Actuator moving (array deploy, panel or dish slew) | per tick, each | 1 |
 | `@TX_DATA` packet | instant | 30 |
 | Solar charge | per tick | `floor(60 × SUN_LIGHT/100 × cos(panel − sun azimuth))`, only when fully deployed |
+
+### 3.1.1 Sensing and the headlight **[M8.1]**
+
+One shape decides what a rover senses: fog-of-war reveal, `SCAN` range and the lit tiles
+in the renderer all use it (`src/core/sensors.ts`).
+
+| Condition | Sensed tiles |
+| :--- | :--- |
+| Day (`@SUN_ELEV > 0`) | Disc of radius 6 (`dx² + dy² ≤ r² + r`) in every direction. |
+| Night | The 1-tile ring around the rover (radius-1 disc, diagonals included). |
+| Night, `@HEADLIGHT 1` (powered) | Ring **plus a forward cone** along `@HEADING`: `1 ≤ forward ≤ 5`, `|lateral| ≤ 1` for `forward ≤ 2`, `≤ 2` beyond (21 tiles). |
+
+* The rover faces `@HEADING`. `STEP` and directional tools (`ACT TOOL_n dir`) turn it;
+  writing `@HEADING` turns it in place (5 energy, value wraps mod 4, so `ADD @HEADING 1`
+  turns right). **`SCAN` does not turn the rover.**
+* So at night, `SCAN` along the heading reaches 5 with the headlight; any other direction
+  reaches only the ring (1). Turn first to look elsewhere. `@SENSOR_RANGE` reports the range
+  ahead, `@SENSOR_SIDE` the range in the other three directions.
 
 ### 3.2 CPU states
 
@@ -316,7 +335,7 @@ friction, but the set should stay small enough to learn in one sitting.
 | | `CALL label [args...]` | 1 cycle | Pushes args in order to the data stack, return address to the call stack. |
 | | `RET` | 1 cycle | Pop call stack. Underflow → `FAULT`. |
 | Hardware | `SLEEP ticks` | blocks `ticks` | `ticks <= 0` just ends the tick. |
-| | `SCAN dir -> type dist` | blocks 1 | Ray across layers 1–3 up to sensor range. Returns the first hit's tile ID and distance, or `NONE` and `0`. |
+| | `SCAN dir -> type dist` | blocks 1 | Ray across layers 1–3 up to the sensed range in `dir` (§3.1.1; does not turn the rover). Returns the first hit's tile ID and distance, or `NONE` and `0`. |
 | | `STEP dir [tiles=1]` | blocks per tile | Moves tile by tile; aborts with `ERR_BLOCKED`, `ERR_LOW_POWER` or `ERR_HAZARD` (moved onto a hazard). |
 | | `ACT tool [arg]` | tool-defined | Fire the tool in hardpoint `tool` (§3.3.2). |
 | | `PEEK slot -> dst` | 1 cycle | Item ID in cargo `slot` (0 = empty); bad slot → `ERR_INVALID`. |
@@ -349,9 +368,11 @@ compute instructions leave it alone.
 | `@GROUND_HAZARD` | R | 0–2 | M1–M3 |
 | `@LIGHT_COLOR` | RW | 0–4 | M1–M3 |
 | `@LIGHT_BLINK` | RW | 0/1 | M1–M3 |
-| `@HEADLIGHT` | RW | 0/1 | M4 (costs energy, extends night range) |
+| `@HEADLIGHT` | RW | 0/1 | M4 (costs energy; M8.1: lights a forward cone at night) |
+| `@HEADING` | RW | 0–3 (`NORTH`…`WEST`); write turns in place, wraps mod 4 | M8.1 |
 | `@IND1`, `@IND2`, `@IND3` | RW | 0–4 (`OFF`…`AMBER`) | M8 (indicator lamps, visual only) |
-| `@SENSOR_RANGE` | R | current SCAN range | M4 |
+| `@SENSOR_RANGE` | R | SCAN range ahead (along `@HEADING`) | M4, M8.1 |
+| `@SENSOR_SIDE` | R | SCAN range in the other three directions | M8.1 |
 | `@SUN_AZIMUTH`, `@SUN_ELEV`, `@SUN_LIGHT` | R | 0–359, −70..70, 0–100 | M4 |
 | `@SOLAR_OPEN` | RW | 0/1 | M4 |
 | `@SOLAR_ANGLE` | RW | 0–359 (write = target, read = current) | M4 |

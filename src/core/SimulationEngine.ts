@@ -13,6 +13,7 @@ import { CpuState, DIR_VEC, Layer, Status } from './types';
 import { Unit } from './Unit';
 import { compile, type CompileResult, type Instr } from './vm/Compiler';
 import type { VmHost } from './vm/RoverVM';
+import { coneOffsets, rayRange, shapeContains, type SensorShape } from './sensors';
 import { createDefaultRegistry, T, type WorldRegistry } from './WorldRegistry';
 
 export interface EngineOptions {
@@ -94,6 +95,8 @@ export class SimulationEngine {
       world: this.world,
       registry: this.registry,
       sensorRange: (u) => this.sensorRange(u),
+      sideRange: (u) => this.sideRange(u),
+      turn: (u, dir) => this.turn(u, dir),
       alert: () => this.director.alert(this.tick),
       drops: () => this.drops.filter((d) => d.landed),
       nearestDrop: (u) => this.nearestDrop(u),
@@ -146,9 +149,38 @@ export class SimulationEngine {
     return Math.floor((signalStrength(u.antennaAngle, this.orbitAzimuth) * u.antennaHealth) / 100);
   }
 
+  /** What `u` senses right now (shared with the renderer's tile lighting; see sensors.ts). */
+  sensorShape(u: Unit): SensorShape {
+    if (this.sun.elevation > 0) return { radius: u.chassis.sensorRange, cone: -1 };
+    return { radius: BALANCE.nightSensorRange, cone: u.headlight && u.powered ? u.heading : -1 };
+  }
+
+  /** Is the tile at offset (dx, dy) from `u` currently sensed? */
+  isSensed(u: Unit, dx: number, dy: number): boolean {
+    return shapeContains(this.sensorShape(u), dx, dy);
+  }
+
+  /** SCAN range along `dir` (default: ahead, along the heading). */
+  scanRange(u: Unit, dir = u.heading): number {
+    return rayRange(this.sensorShape(u), dir);
+  }
+
+  /** SCAN range ahead (@SENSOR_RANGE). */
   sensorRange(u: Unit): number {
-    if (this.sun.elevation > 0) return u.chassis.sensorRange;
-    return u.headlight && u.powered ? BALANCE.headlightSensorRange : BALANCE.nightSensorRange;
+    return this.scanRange(u, u.heading);
+  }
+
+  /** SCAN range in the three other directions (@SENSOR_SIDE). */
+  sideRange(u: Unit): number {
+    return this.sensorShape(u).radius;
+  }
+
+  /** Turn in place (@HEADING write). Costs a little energy; no-op if already facing `dir`. */
+  private turn(u: Unit, dir: number): void {
+    if (!u.powered || dir === u.heading) return;
+    this.drain(u, BALANCE.turnEnergy);
+    if (!u.powered) return;
+    u.heading = dir;
   }
 
   /** Energy needed to flash `lines` instructions at the current signal strength. */
@@ -264,11 +296,12 @@ export class SimulationEngine {
   }
 
   private revealAround(u: Unit): void {
-    const r = this.sensorRange(u);
-    const key = `${u.x},${u.y},${r}`;
+    const s = this.sensorShape(u);
+    const key = `${u.x},${u.y},${s.radius},${s.cone}`;
     if (key === u.lastRevealKey) return;
     u.lastRevealKey = key;
-    this.world.revealCircle(u.x, u.y, r);
+    this.world.revealCircle(u.x, u.y, s.radius);
+    if (s.cone >= 0) this.world.revealTiles(u.x, u.y, coneOffsets(s.cone));
   }
 
   /** Solar, actuators, lights and passive drain. Runs before actions each tick. */
@@ -593,12 +626,12 @@ export class SimulationEngine {
           this.setStatus(u, Status.ERR_LOW_POWER);
           return [0, 0];
         }
+        // SCAN does not turn the rover: at night only the heading is lit by the headlight.
+        const range = this.scanRange(u, dir);
         this.drain(u, BALANCE.scanEnergy);
-        u.heading = dir;
         const [dx, dy] = DIR_VEC[dir];
         let hit = 0;
         let dist = 0;
-        const range = this.sensorRange(u);
         for (let d = 1; d <= range; d++) {
           const x = u.x + dx * d;
           const y = u.y + dy * d;

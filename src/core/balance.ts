@@ -26,8 +26,12 @@ export const BALANCE = {
   headlightPerTick: 8,
 
   // Sensors
-  nightSensorRange: 1,
-  headlightSensorRange: 5,
+  nightSensorRange: 1, // always-sensed ring around the rover at night
+  headlightSensorRange: 5, // headlight cone length (tiles ahead)
+  headlightNearLength: 2, // first tiles of the cone ...
+  headlightNearSpread: 1, // ... are 3 wide (|lateral| <= 1)
+  headlightFarSpread: 2, // the rest is 5 wide
+  turnEnergy: 5, // @HEADING write: turn in place
 
   // Comms
   txEnergy: 30,

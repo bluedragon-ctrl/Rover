@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { createDefaultRegistry, T } from '../core/WorldRegistry';
 import { hash3 } from '../core/rng';
+import { BALANCE, CHASSIS_MK1 } from '../core/balance';
 import { CameraRig } from '../render/CameraRig';
 import { PostFx } from '../render/PostFx';
 import { RoverAnimator, type RoverPose } from '../render/RoverRig';
@@ -261,7 +262,8 @@ function frame(now: number): void {
   d = Math.atan2(Math.sin(d), Math.cos(d));
   state.angle += d * Math.min(1, dt * 10);
 
-  const sensor = light > 0 ? 6 : state.headlight ? 5 : 1;
+  // Same shape as the simulation (src/core/sensors.ts): day disc, night ring + cone.
+  const sensor = light > 0 ? CHASSIS_MK1.sensorRange : BALANCE.nightSensorRange;
   rover.sensorRing.scale.setScalar(sensor + 0.5);
   const sunBearing = (t * 20) % 360;
   const blinkOff = state.cpu === 3 || (state.led === 1 && Math.floor(now / 300) % 2 === 1);
@@ -293,7 +295,7 @@ function frame(now: number): void {
   u.uLightCount.value = 1;
   u.uLights.value[0].set(Math.round(px) + 0.5 - fxp, -(Math.round(py) + 0.5 - fyp), sensor, 0);
   const hl = state.headlight && state.cpu !== 3;
-  u.uBeams.value[0].set(DIRV[state.facing][0], -DIRV[state.facing][1], hl ? 5 : 0, 0);
+  u.uBeams.value[0].set(DIRV[state.facing][0], -DIRV[state.facing][1], hl && light <= 0 ? 1 : 0, 0);
   const bg = NIGHT_BG.clone().lerp(DAY_BG, day);
   scene.background = bg;
   const fog = scene.fog as THREE.Fog;
