@@ -384,6 +384,14 @@ panel has grown tab by tab. Review the whole UI once M10 lands: information
 architecture (what lives where), editor for two code slots, telemetry vs admin views,
 what the top bar shows, discoverability for beginners. Proposals with screenshots first.
 
+- [x] Console redesign proposal (owner: "two consoles, dumps… unclear; needs hints"):
+      labelled *Send to rover* / *Received from rover* / *Mission log*, **?** hints
+      (`src/ui/hint.ts`, reusable for other tabs), readable rows, merged repeats, dump
+      cards, bytes on request, auto-follow fix. Behind `?console=2`; always on in
+      `preview.html?editor=1` (`&console=1` shows the old one). **Waiting for owner review**,
+      then: make it the default and delete the old Console template / rows.
+- [ ] Known: the tab bar is wider than the default side panel (the Admin tab is cut off).
+
 ## Resolved decisions (M7)
 
 1. Upgrades are **picked up**: a supply crate lands near the rover; the grabber installs it.
@@ -497,3 +505,4 @@ window with a fixed dish?
 | 2026-11-13 | `m10-slice2` | M10 slice 2: machine code (opcode/port tables, encoder/decoder, byte-address IPs, save v11), Code tab redesign (Program/Firmware slots, Upload program, Compile, flash bar, no-`RUN` warning), Console redesign (slot switch, Run again, merged tags, program dumps), Reference machine-code columns, listing pane in preview review; new rovers ship the default firmware. |
 | 2026-11-13 | `m10-slice2` (2) | Listing pane approved by the owner; enabled in the game by default (`?listing=0` hides it). |
 | 2026-11-13 | `claude/charming-hawking-a1szwz` | Status beacon removed (`@LIGHT_COLOR` / `@LIGHT_BLINK`, LED crystal on the rover): the three roof lamps `@IND1..3` are the only status lights; shipped firmware uses them (1 activity, 2 charging, 3 uplink; default firmware 148 B with a new uplink-lamp comfort block); save v12 rewrites old code onto the lamps; port numbers 33–34 retired. *Compile* button removed from the Code tab (the live listing and flash bar already show its result). |
+| 2026-11-13 | `claude/charming-hawking-a1szwz` (2) | M11 start: Console redesign proposal behind `?console=2` (sections with **?** help hints, Mission log label, merged repeats, dump cards, bytes on request, auto-follow fix). |

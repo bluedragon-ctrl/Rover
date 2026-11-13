@@ -2,7 +2,7 @@
  * M10 slice 2 UI preview (preview.html?editor=1): the redesigned Code tab with the
  * machine-code listing pane (SPEC §5.7.1) and the Console, on a live headless engine,
  * at the game's panel widths. Kept as the review page for later Code tab / Console changes.
- * Options: &slot=firmware, &program=<template name>, &width=<px>.
+ * Options: &slot=firmware, &program=<template name>, &width=<px>, &console=1 (old Console).
  */
 import '../style.css';
 import { DEFAULT_FIRMWARE, PROGRAM_TEMPLATES } from '../core/programs';
@@ -45,7 +45,7 @@ export function mountUiLab(el: HTMLElement, q: URLSearchParams): void {
   const con = new ConsolePanel(el.querySelector('#lab-console')!, e, () => u, (cmd, slot) => {
     const err = e.command(u, cmd, slot);
     if (err) log('warn', `Uplink rejected: ${err}.`);
-  });
+  }, { redesign: q.get('console') !== '1' });
   con.update();
   setInterval(() => {
     code.updateCost();

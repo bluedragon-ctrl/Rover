@@ -13,6 +13,7 @@ import { PerfHud } from './ui/PerfHud';
 import { CompassHud } from './ui/CompassHud';
 import { GoalsPanel } from './ui/GoalsPanel';
 import { ConsolePanel } from './ui/ConsolePanel';
+import { hint, MISSION_LOG_HELP } from './ui/hint';
 import { GalleryPanel } from './ui/GalleryPanel';
 import { UpgradesPanel } from './ui/UpgradesPanel';
 import { UPGRADE_BY_ID } from './core/upgrades';
@@ -54,10 +55,20 @@ const debuggerPanel = new DebuggerPanel($('#debugger'), engine);
 if (import.meta.env.DEV) Object.assign(window, { __rover: { engine, scene, rover } });
 const compass = new CompassHud($<HTMLCanvasElement>('#compass'), engine);
 const goalsPanel = new GoalsPanel($('#goals'), engine);
-const consolePanel = new ConsolePanel($('#console'), engine, () => rover, (cmd, slot) => {
-  const err = engine.command(rover, cmd, slot);
-  if (err) log('warn', `Uplink rejected: ${err}.`);
-});
+// ?console=2: redesigned Console (help hints, readable rows) and a labelled Mission log,
+// in owner review (preview.html?editor=1).
+const consoleV2 = params.get('console') === '2';
+const consolePanel = new ConsolePanel(
+  $('#console'),
+  engine,
+  () => rover,
+  (cmd, slot) => {
+    const err = engine.command(rover, cmd, slot);
+    if (err) log('warn', `Uplink rejected: ${err}.`);
+  },
+  { redesign: consoleV2 },
+);
+if (consoleV2) $('#log').insertAdjacentHTML('beforebegin', `<div id="log-head">Mission log${hint(MISSION_LOG_HELP, 'up')}</div>`);
 const galleryPanel = new GalleryPanel($('#gallery'), engine);
 galleryPanel.onFlag = (g, err) => {
   if (err) log('warn', `Cannot flag photo #${g.seq}: ${err}.`);

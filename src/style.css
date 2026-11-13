@@ -159,3 +159,36 @@ input[type=checkbox] { width: auto; }
 .badge.firmware { color: #8fa6ff; } .badge.program { color: var(--accent); }
 #console-list .system { color: var(--dim); }
 details.help summary { cursor: pointer; } details.help p { margin: 4px 0; }
+/* Help hints: a small "?" with a tooltip on hover / focus / tap. */
+.hint { position: static; display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; padding: 0; margin-left: 6px; border-radius: 50%; border: 1px solid var(--dim); background: none; color: var(--dim); font-size: 10px; line-height: 1; vertical-align: 1px; cursor: help; text-transform: none; letter-spacing: 0; }
+.hint:hover, .hint:focus { border-color: var(--accent); color: var(--accent); outline: none; }
+/* The tip spans its section (the nearest positioned box), so it never leaves the side panel. */
+.panel-box, #log-head { position: relative; }
+.hint .tip { display: none; position: absolute; top: 26px; left: 6px; right: 6px; z-index: 20; padding: 8px 10px; background: #0f1724; border: 1px solid var(--accent); border-radius: 5px; color: var(--text); font: 12px/1.45 system-ui, sans-serif; text-align: left; white-space: normal; box-shadow: 0 6px 20px #000a; cursor: default; }
+.hint.up .tip { top: auto; bottom: calc(100% + 4px); }
+.hint .tip b { color: var(--text); font-size: inherit; font-weight: 600; text-transform: none; letter-spacing: 0; }
+.hint:hover .tip, .hint:focus .tip { display: block; }
+.hint .tip code { color: var(--accent); }
+/* Redesigned Console (?console=2, preview.html?editor=1). */
+.console-panel.v2 .console-intro { margin: 0 2px; }
+.console-panel.v2 #console-list { font-size: 12px; padding: 2px 0; }
+.console-panel.v2 .row { display: flex; gap: 8px; align-items: baseline; padding: 2px 6px; border-bottom: 1px solid #111824; }
+.console-panel.v2 .row .t { color: var(--dim); flex: none; min-width: 56px; font-size: 11px; }
+.console-panel.v2 .row .txt { flex: 1; min-width: 0; }
+.console-panel.v2 .row .src { color: #5d7a9a; margin-left: 8px; font-size: 11px; cursor: help; }
+.console-panel.v2 .row .rep { color: var(--info); margin-left: 6px; font-size: 11px; }
+.console-panel.v2 .row .hex { color: #5d7a9a; margin-left: 8px; font-size: 11px; }
+.console-panel.v2 .row .who { color: var(--info); margin-right: 6px; }
+.console-panel.v2 .row.system .txt { color: var(--dim); }
+.console-panel.v2 .row.lost .txt { color: var(--warn); }
+.console-panel.v2 .chip { flex: none; width: 36px; text-align: center; font-size: 9px; letter-spacing: 0.5px; border: 1px solid currentColor; border-radius: 3px; padding: 0 2px; }
+.chip.log { color: var(--accent); } .chip.sys { color: var(--dim); } .chip.sci { color: var(--warn); } .chip.lost { color: var(--warn); }
+.chip.dump.firmware { color: #8fa6ff; } .chip.dump.program { color: var(--accent); }
+.console-panel.v2 .card { border-left: 2px solid var(--info); padding: 1px 8px; margin: 2px 0; }
+.console-panel.v2 .card-h { color: var(--info); }
+.console-panel.v2 .kv2 i, .console-panel.v2 .regs i { color: var(--dim); font-style: normal; display: inline-block; min-width: 62px; }
+.console-panel.v2 .regs { display: grid; grid-template-columns: repeat(4, auto); gap: 0 10px; justify-content: start; }
+.console-panel.v2 .regs i { min-width: 22px; }
+.console-panel.v2 .empty { padding: 6px 8px; font-family: system-ui, sans-serif; }
+#log-head { display: flex; align-items: center; padding: 3px 8px 0; border-top: 1px solid var(--line); font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 1px; }
+#log-head + #log { border-top: none; }

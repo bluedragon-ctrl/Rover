@@ -572,6 +572,14 @@ running uplinked command sequences, or a small OS starting user programs:
 * The Console decodes log tags with both slots' `CONST` names; a tag both slots name
   differently shows both (`T_BAT|T_X`), with lines per slot (`(fw L12, prog L3)`). Dumps
   show their slot: `PROGRAM DUMP (snapshot t254): next prog:0x02A (L13) · PROG_HALTED · …`.
+* **Console redesign [M11, in owner review]** (game `?console=2`, `preview.html?editor=1`):
+  sections *Send to rover* and *Received from rover*, each with a **?** help hint; a
+  *Talk to Program / Firmware* switch; one row per message (time, LOG / PROG / FW / SYS
+  chip, text, `fw L55` source with a tooltip); runs of identical messages merged (`×39`,
+  `t301–1137`); dumps as small cards (next address and line, state, `@STATUS`, registers;
+  stacks); raw bytes only with *Bytes*; follows the newest message unless scrolled up
+  (*↓ Newest*). The game's message strip under the side panel is labelled **Mission log**
+  with its own hint, to tell it apart from what the rover sends.
 
 ### 3.9.4 Default firmware
 
