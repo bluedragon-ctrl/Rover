@@ -12,7 +12,9 @@ const NOTES: Record<string, string> = {
   SLEEP: 'wait N ticks', SCAN: 'ray: dest1 = tile type, dest2 = distance', STEP: 'drive [tiles] in dir', ACT: 'fire tool in hardpoint (see Tools)', PEEK: 'dest = item ID in cargo slot', USE: 'repair [system] (default SYS_HULL) by consuming the material in cargo slot (see Tools)',
   SNAP: 'photograph the subject in dir into the science recorder (see Tools). Mk-I modes 1 (grey) and 2 (dithered), 258 B each; needs daylight or the headlight aimed at dir',
   LOG: 'queue a log frame for the downlink (Console tab). tag: number or CONST 0–14 (15 = system). 1 cycle, no @STATUS; dropped if the FIFO is full (@LOG_LOST)',
-  BRK: 'halt the CPU (HALTED) until the Console sends Continue or you upload; the world keeps running, no watchdog. 1 cycle',
+  BRK: 'halt the CPU (HALTED) until the Console sends Continue or you upload; the world keeps running, no watchdog. 1 cycle. In a program: halts only the program (PROG_HALTED)',
+  RUN: 'firmware only: run the program for N ticks (a STEP or SLEEP in progress finishes first), then continue here. @STATUS ERR_INVALID if @PROG_STATE is not PROG_READY',
+  END: 'program only: finish with @PROG_STATE = PROG_DONE and @PROG_RESULT = value (default 0); control returns to the firmware',
 };
 
 /** Generated language reference: always in sync with the compiler and port table. */

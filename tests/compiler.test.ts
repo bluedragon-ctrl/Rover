@@ -73,11 +73,11 @@ describe('Compiler', () => {
   });
 
   it('enforces the Flash limit in bytes and points at the first line that does not fit', () => {
-    const fits = Array.from({ length: 32 }, () => 'ADD r0 100').join('\n'); // 4 B each
-    expect(c(fits).flashUsed).toBe(128);
+    const fits = Array.from({ length: 64 }, () => 'ADD r0 100').join('\n'); // 4 B each
+    expect(c(fits).flashUsed).toBe(256);
     expect(c(fits).errors).toEqual([]);
     const r = c(fits + '\nRET');
-    expect(r.errors).toEqual([{ line: 33, message: 'Program is 129 bytes; Rover Mk-I has 128 bytes of Flash' }]);
+    expect(r.errors).toEqual([{ line: 65, message: 'Firmware is 257 bytes; Rover Mk-I has 256 bytes of Flash' }]);
   });
 
   it('ships every template within the Mk-I Flash', () => {

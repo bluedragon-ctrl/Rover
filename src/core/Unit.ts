@@ -1,5 +1,5 @@
 import { BALANCE, cloneChassis, type ChassisDef } from './balance';
-import { CpuState, LightColor } from './types';
+import { CpuState, LightColor, ProgState } from './types';
 import type { ToolId } from './tools';
 import { RoverVM } from './vm/RoverVM';
 import { Downlink } from './downlink';
@@ -55,8 +55,20 @@ export class Unit {
   motion: UnitMotion | null = null;
   /** Cycles left in the current tick (lets the debugger single-step mid-tick). */
   cyclesLeft = 0;
+  /** Firmware source (the firmware slot). */
   sourceCode = '';
+  /** Firmware context. Its state is the CPU's state (power, faults, halts). */
   readonly vm: RoverVM;
+  /** M10: program slot source ('' = no program) and its own context (SPEC §3.9). */
+  programSource = '';
+  readonly prog: RoverVM;
+  /** Flash bytes of each slot, from their last successful compile. */
+  firmwareBytes = 0;
+  programBytes = 0;
+  progState: ProgState = ProgState.PROG_NONE;
+  progResult = 0;
+  /** Ticks left in the program's current RUN slice; -1 when the firmware has control. */
+  slice = -1;
 
   /** Last seismic scan result (TOOL_3 SEISMIC). */
   seismicType = 0;
@@ -70,7 +82,13 @@ export class Unit {
     const chassis = (this.chassis = cloneChassis(base));
     this.energy = chassis.batteryCapacity;
     this.vm = new RoverVM(chassis);
+    this.prog = new RoverVM(chassis);
     this.cargo = new Array(chassis.cargoSlots).fill(0);
+  }
+
+  /** The context that executes now: the program inside a RUN slice, else the firmware. */
+  get cpu(): RoverVM {
+    return this.slice >= 0 ? this.prog : this.vm;
   }
 
   get batteryPercent(): number {

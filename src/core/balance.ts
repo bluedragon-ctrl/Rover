@@ -37,6 +37,8 @@ export const BALANCE = {
   // Comms
   uploadBase: 500,
   uploadPerByte: 12, // ~50 per average instruction
+  /** M10: base cost of a program-only upload (no reboot, SPEC §3.9.3). */
+  programUploadBase: 200,
   uploadSignalFloor: 10,
   /** Uplinked console command (Dump, Dump stacks, Continue): like a small upload (§3.8.4). */
   dumpEnergy: 150,
@@ -119,7 +121,7 @@ export interface ChassisDef {
 
 export const CHASSIS_MK1: ChassisDef = {
   name: 'Rover Mk-I',
-  flashBytes: 128,
+  flashBytes: 256, // M10: shared by firmware and program (was 128)
   registers: 4,
   dataStack: 8,
   callStack: 8,

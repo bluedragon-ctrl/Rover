@@ -16,6 +16,8 @@ export interface PortContext {
   drops(): { x: number; y: number }[];
   nearestDrop(u: Unit): { x: number; y: number } | null;
   transmit(u: Unit, value: number): void;
+  /** Firmware write to @PROG_STATE: PROG_NONE acknowledges, PROG_READY restarts (M10). */
+  setProgState(u: Unit, v: number): void;
 }
 
 export interface PortDef {
@@ -40,7 +42,7 @@ export const PORTS: PortDef[] = [
   { name: 'ANTENNA_HEALTH', description: 'Dish integrity 0–100 (scales signal)', read: (u) => u.antennaHealth },
   { name: 'X', description: 'World X (east +)', read: (u) => u.x },
   { name: 'Y', description: 'World Y (north +)', read: (u) => u.y },
-  { name: 'STATUS', description: 'Result of last hardware op / TX (OK, ERR_*)', read: (u) => u.vm.status },
+  { name: 'STATUS', description: 'Result of last hardware op / TX (OK, ERR_*)', read: (u) => u.cpu.status },
   { name: 'TICK', description: 'Ticks since world start', read: (_u, c) => c.tick },
   { name: 'GROUND', description: 'Terrain tile under rover', read: (u, c) => c.world.getTile(u.x, u.y, 0) },
   {
@@ -136,6 +138,17 @@ export const PORTS: PortDef[] = [
     read: (u) => u.post,
     write: (u, v) => (u.post = v),
   },
+  // Firmware + program (M10, SPEC §3.9.2)
+  {
+    name: 'PROG_STATE',
+    description:
+      'Program state: PROG_NONE, PROG_READY, PROG_RUNNING, PROG_DONE, PROG_FAULT, PROG_HALTED. Firmware only: write PROG_NONE to acknowledge, PROG_READY to restart the program from the top',
+    min: 0,
+    max: 5,
+    read: (u) => u.progState,
+    write: (u, v, c) => c.setProgState(u, v),
+  },
+  { name: 'PROG_RESULT', description: 'Value of the program\'s last END (0 after a restart)', read: (u) => u.progResult },
   {
     name: 'HEADLIGHT',
     description: `Headlight 0/1 (${BALANCE.headlightPerTick} energy/tick): at night lights a cone ${BALANCE.headlightSensorRange} tiles along @HEADING (3 wide, then 5) so the operator can see and map it. SCAN does not need it`,

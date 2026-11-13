@@ -92,10 +92,10 @@ describe('memory dumps (SPEC §3.8.4)', () => {
     const f = encodeCpuDump({ ip: 300, status: Status.ERR_FULL, state: 'HALTED', regs: [7, -300, 0, 2147483647], dsDepth: 1, csDepth: 2 });
     expect(f).toHaveLength(25);
     expect(hex(f.slice(0, 7))).toBe('F8 01 16 01 2C 02 02');
-    expect(decodeDump(f)).toEqual({ kind: 1, ip: 300, status: 2, state: 'HALTED', regs: [7, -300, 0, 2147483647], dsDepth: 1, csDepth: 2 });
+    expect(decodeDump(f)).toEqual({ kind: 1, slot: 'firmware', ip: 300, status: 2, state: 'HALTED', regs: [7, -300, 0, 2147483647], dsDepth: 1, csDepth: 2 });
     const s = encodeStackDump([5, -1], [4]);
     expect(hex(s)).toBe('F8 02 0C 02 00 00 00 05 FF FF FF FF 01 00 04');
-    expect(decodeDump(s)).toEqual({ kind: 2, dataStack: [5, -1], callStack: [4] });
+    expect(decodeDump(s)).toEqual({ kind: 2, slot: 'firmware', dataStack: [5, -1], callStack: [4] });
     expect(decodeDump(encodeLog(15, 1))).toBeNull();
   });
 
@@ -114,7 +114,7 @@ describe('memory dumps (SPEC §3.8.4)', () => {
     expect(rx.map((f) => f.bytes[0])).toEqual([DUMP_HEADER, DUMP_HEADER, encodeLog(4, 1000)[0]]);
     expect(rx[0].taken).toBe(t);
     expect(decodeDump(rx[0].bytes)).toMatchObject({ kind: 1, state: 'HALTED', regs: [7, -300, 0, 0], dsDepth: 1, csDepth: 1 });
-    expect(decodeDump(rx[1].bytes)).toEqual({ kind: 2, dataStack: [5], callStack: [4] });
+    expect(decodeDump(rx[1].bytes)).toEqual({ kind: 2, slot: 'firmware', dataStack: [5], callStack: [4] });
     expect(rx[0].tick).toBeGreaterThan(t + 10); // 25 B at 2 B/tick: a snapshot, not a live view
     expect(e.stats.framesReceived).toBe(1); // dumps are system frames
   });
