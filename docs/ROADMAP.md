@@ -23,7 +23,7 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | ✅ slices 1–6 done (link layer, `LOG`, Console tab; recorder, spectra, Gallery tab; dumps, `BRK`, admin-only debugger; `@POST` display; camera + photos; upgrades, camera modes 3–5, fossil anomalies; save v9) |
 | **M10** | **Firmware + program slot (SPEC §3.9)** | 🚧 slice 1 (core, save v10) done; slice 2 (machine code + byte addresses, save v11, Code tab / Console redesign, listing pane) in review |
 | M11 | User interface review (after M10) | 🚧 Comms tab, Code tab dump box, Reference → Radio, Mission events: default since 2026-11-13 (save v13); `BRK` reports itself |
-| M12 | Image memory: `SNAP` → `LDB` / `STB` → `SEND` (SPEC §3.8.7, guide [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md)) | 🚧 slice 0 (bit instructions, extended opcodes) and slice 1 (image memory in the core, save v14) done; slice 2 (templates, Reference → Image, Gallery labels) next |
+| M12 | Image memory: `SNAP` → `LDB` / `STB` → `SEND` (SPEC §3.8.7, guide [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md)) | 🚧 slices 0–2 done (bit instructions; image memory in the core, save v14; templates, Reference → Image, Gallery labels + hex view, `SNAP` warning); slice 3 (teaching goal) next |
 
 ## Done: Flash measured in bytes
 
@@ -479,17 +479,23 @@ Slices:
        uninterrupted, v13 migration, and **the six guide examples run from the Markdown**
        (Flash sizes = the guide's table, pictures checked); camera tests updated to
        `SNAP` + `SEND`.
-2. [ ] **Examples and teaching.** The six examples from the guide as program templates
-       (compiled and run in tests: assert the pictures); Reference → **Image** sub-tab
-       (from the guide: diagram, rows and addresses, bits in a byte, modes table); Gallery
-       labels *raw / edited / drawn* and a hex view per photo; compiler warning "`SNAP`
-       without `SEND`"; Reference `SNAP` note updated.
    - [x] Review of slice 1 (owner, 2026-11-13): `SEND` costs a little energy
          (`sendEnergy` 10, `ERR_LOW_POWER`); image memory is **non-volatile** (like a
          camera's flash: kept through reboots and power-off) and is cleared only by a new
          `SNAP` or on request with the new **`ERASE`** (`1F 06`, 2 ticks, 10 energy; also
          drops the capture), never by `SEND`. Guide: *Line* and *Memory map* start with
          `ERASE` (27 / 72 B instead of 41 / 86 B). No rewards for drawn pictures for now.
+2. [x] **Examples and teaching.** The six guide examples are program templates
+       `Image: Line` … `Image: Memory map` (`IMAGE_*` in `programs.ts`; a test keeps them
+       identical to the guide's code blocks and runs them, asserting the pictures). New
+       **Reference → Image** sub-tab (`imageHtml`): diagram, the five instructions with
+       costs from `BALANCE`, rows and addresses, bits in a byte, pixel recipes, camera modes
+       and memory size from `PHOTO_FORMATS` / `imageBytes`, things to know, the examples.
+       Gallery: a *raw* / *edited* / *drawn* chip on every photo (from the header byte)
+       and a **hex view** (click the hex line: decoded header, sequence, payload by image
+       memory address; built on opening, stays open across refreshes; `hexDump`). Code tab
+       warning *takes photos but never sends them* (`snapsWithoutSend`: `SNAP` and no
+       `SEND` in either slot).
 3. [ ] **Goals.** A teaching goal (*Darkroom*: deliver an edited photo). Drawn pictures
        earn nothing for now (owner, 2026-11-13), so no *Postcard home* reward.
 
@@ -626,3 +632,4 @@ window with a fixed dish?
 | 2026-11-13 | `claude/gallant-bell-hb1kyd` (2) | M12 slice 0: bit instructions `AND` / `OR` / `SHL` / `SHR`, opcode `1F` as extension prefix (2-byte opcodes; 1D / 1E reserved for `LDB` / `STB`), Reference *Bits* group; guide examples `plot` and `put16` rewritten with them and re-checked on the prototype. |
 | 2026-11-13 | `claude/gallant-bell-hb1kyd` (3) | M12 slice 1: image memory in the core (`SNAP` into memory, `LDB` 1D / `STB` 1E, `SEND` 1F 05, raw / edited / drawn levels in the science header, credits per capture, save v14); minimal Gallery / Reference updates; tests run the six guide examples from the Markdown. |
 | 2026-11-13 | `claude/gallant-bell-hb1kyd` (4) | M12 slice 1 review: `SEND` costs 10 energy; image memory non-volatile (kept through power-off), cleared only by `SNAP` or the new `ERASE` (`1F 06`); guide *Line* / *Memory map* use `ERASE`; no rewards for drawn pictures. |
+| 2026-11-13 | `claude/gallant-bell-hb1kyd` (5) | M12 slice 2: six *Image: …* program templates (= the guide's examples, test-enforced), Reference → Image sub-tab, Gallery *raw / edited / drawn* chips and hex view, Code tab warning for `SNAP` without `SEND`. |

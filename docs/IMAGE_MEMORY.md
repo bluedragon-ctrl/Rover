@@ -1,11 +1,11 @@
 # Image memory: player guide **[M12]**
 
-Status: **in the game** (M12 slice 1). Rules in [`SPEC.md`](SPEC.md) §3.8.7, plan in
-[`ROADMAP.md`](ROADMAP.md) M12. Next, this guide becomes the in-game **Reference → Image**
-sub-tab and the six examples become Code tab program templates. The tests compile and run
-all six examples straight from this file (`tests/image-memory.test.ts`): the pictures, byte
-values and Flash sizes below are checked on every change. Cycle counts were measured on a
-prototype of the rules.
+Status: **in the game** (M12). Rules in [`SPEC.md`](SPEC.md) §3.8.7, plan in
+[`ROADMAP.md`](ROADMAP.md) M12. In the game, **Reference → Image** sums this guide up, and the
+six examples are Code tab program templates (*Image: Line* … *Image: Memory map*), word for
+word: a test keeps them identical to the code below. The tests also run all six examples
+(`tests/image-memory.test.ts`): the pictures, byte values and Flash sizes below are checked
+on every change. Cycle counts were measured on a prototype of the rules.
 
 ---
 

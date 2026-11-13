@@ -333,12 +333,182 @@ go_s:   STEP SOUTH
         JMP loop
 `;
 
+/**
+ * Image memory examples (M12, SPEC §3.8.7): the six worked examples of docs/IMAGE_MEMORY.md,
+ * word for word (a test keeps them identical). Programs: they END, except the memory map.
+ */
+export const IMAGE_LINE = `; LINE: your first picture. Clear image memory to black, draw a
+; white line across the middle and send it home as a photo.
+
+ALIAS r0 addr
+
+        ERASE                 ; every byte 0 = 00 00 00 00 = four black pixels
+        MOV addr 128          ; row 16 starts at byte 16 × 8 = 128
+line:   STB addr 0xFF         ; 0xFF = 11 11 11 11 = four white pixels
+        ADD addr 1
+        JLT addr 136 line     ; one row = 8 bytes = 32 pixels
+        SEND 1                ; decode as a 32×32 grey photo
+        END 1
+`;
+
+export const IMAGE_TEST_PATTERN = `; TEST PATTERN: four grey bars, like a camera test card.
+; One byte = four pixels. 85 = 0x55 = 01 01 01 01 = four dark-grey
+; pixels, so level × 85 fills a byte with one grey: 0, 85, 170, 255.
+
+ALIAS r0 addr
+ALIAS r1 grey
+
+        MOV addr 0
+fill:   MOV grey addr
+        MOD grey 8            ; which byte of its row (0–7)
+        DIV grey 2            ; 2 bytes = 8 pixels per bar: level 0–3
+        MUL grey 85
+        STB addr grey
+        ADD addr 1
+        JLT addr 256 fill
+        SEND 1
+        END 1
+`;
+
+export const IMAGE_NEGATIVE = `; NEGATIVE: take a photo, turn it into a negative, send it.
+; 255 − byte flips every pixel in the byte (0↔3, 1↔2).
+
+ALIAS r0 addr
+ALIAS r1 byte
+
+        SNAP NORTH            ; into image memory: nothing is sent yet
+        JNE @STATUS OK fail   ; ERR_LOW_POWER, ERR_INVALID...
+        MOV addr 0
+inv:    LDB byte addr         ; read
+        MUL byte -1
+        ADD byte 255          ; byte = 255 − byte
+        STB addr byte         ; write back
+        ADD addr 1
+        JLT addr 256 inv
+        SEND                  ; same format as the SNAP (mode 1)
+        END 1
+fail:   END 0
+`;
+
+export const IMAGE_STAMP = `; STAMP: take a photo and write where it was taken into its first
+; four bytes (@X, then @Y, each 16-bit, high byte first), like the
+; engineering header real spacecraft send with their images.
+; In the Gallery, open the photo's hex view: the first bytes are yours.
+
+ALIAS r0 addr
+ALIAS r1 value
+ALIAS r2 low
+
+        SNAP NORTH
+        JNE @STATUS OK fail
+        MOV addr 0
+        MOV value @X
+        CALL put16
+        MOV value @Y
+        CALL put16
+        SEND
+        END 1
+fail:   END 0
+
+; put16: write value as two bytes (high, low) at addr; addr += 2
+put16:  MOV low value
+        AND low 0xFF          ; keep bits 7–0: the low byte
+        SHR value 8           ; bits 15–8 move down to 7–0
+        AND value 0xFF        ; the high byte: −300 → FE D4
+        STB addr value
+        ADD addr 1
+        STB addr low
+        ADD addr 1
+        RET
+`;
+
+export const IMAGE_PLOT = `; PLOT: draw single pixels. Takes a photo and draws a white
+; diagonal from the top-left corner to the bottom-right one.
+; The plot routine works for any 2-bpp picture (modes 1 and 2).
+
+        SNAP NORTH
+        JNE @STATUS OK fail
+        MOV r0 0
+diag:   MOV r1 r0             ; y = x
+        MOV r2 3              ; colour 3 = white
+        CALL plot
+        ADD r0 1
+        JLT r0 32 diag
+        SEND
+        END 1
+fail:   END 0
+
+; plot: pixel (r0 = x, r1 = y) = colour r2 (0–3).
+; Keeps r0; changes r1, r2 and r3.
+plot:   PUSH r0
+        SHL r1 3              ; y × 8: start of the row
+        MOV r3 r0
+        SHR r3 2              ; x / 4
+        ADD r1 r3             ; r1 = address of the byte
+        AND r0 3              ; pixel in the byte (0 = leftmost)
+        MOV r3 3
+        SUB r3 r0
+        SHL r3 1              ; r3 = shift: 6, 4, 2 or 0
+        SHL r2 r3             ; new colour moved into place
+        MOV r0 3
+        SHL r0 r3             ; r0 = mask: the pixel's two bits
+        LDB r3 r1             ; the byte
+        OR r3 r0              ; set the pixel's bits...
+        SUB r3 r0             ; ...and take them away: now 00
+        OR r3 r2              ; put the new colour in
+        STB r1 r3
+        POP r0
+        RET
+`;
+
+export const IMAGE_MEMORY_MAP = `; MEMORY MAP: Explorer that remembers where it has been. Image
+; memory is used as plain RAM: one byte per tile counts the visits,
+; a 16×16 map that repeats every 16 tiles. Back on a known tile, the
+; rover turns by the number of earlier visits, so it leaves a loop
+; differently every time instead of circling forever.
+; Do not SNAP in this program: a photo would overwrite the map.
+
+ALIAS r0 dir
+ALIAS r1 seen
+ALIAS r2 dist
+ALIAS r3 cell
+
+        ERASE                 ; forget the old map: image memory keeps
+                              ; its contents through reboots
+loop:   SCAN dir -> seen dist
+        JEQ seen NONE go
+        JGT dist 1 go
+turn:   ADD dir 1
+        MOD dir 4
+        JMP loop
+go:     STEP dir 1
+        JNE @STATUS OK turn
+        MOV cell @Y
+        MOD cell 16           ; map row 0–15 (also for negative @Y)
+        MUL cell 16
+        MOV seen @X
+        MOD seen 16           ; map column 0–15
+        ADD cell seen         ; byte address 0–255
+        LDB seen cell         ; earlier visits
+        ADD dir seen          ; known tile: turn by that many quarters
+        MOD dir 4
+        ADD seen 1
+        STB cell seen         ; one more visit (wraps at 256)
+        JMP loop
+`;
+
 /** Program templates (M10): the Code tab's Program slot offers these. */
 export const PROGRAM_TEMPLATES: Record<string, string> = {
   'First steps': PROGRAM_FIRST_STEPS,
   Explorer: PROGRAM_EXPLORER,
   Prospector: PROGRAM_PROSPECTOR,
   'Fetch supply crate': PROGRAM_FETCH,
+  'Image: Line': IMAGE_LINE,
+  'Image: Test pattern': IMAGE_TEST_PATTERN,
+  'Image: Negative': IMAGE_NEGATIVE,
+  'Image: Stamp': IMAGE_STAMP,
+  'Image: Plot': IMAGE_PLOT,
+  'Image: Memory map': IMAGE_MEMORY_MAP,
 };
 
 /**

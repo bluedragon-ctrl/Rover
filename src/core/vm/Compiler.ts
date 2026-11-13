@@ -103,6 +103,16 @@ function tokenize(source: string): RawLine[] {
  * Compile Rover-ASM source to a Program.
  * @param extraConstants e.g. tile constNames from WorldRegistry.
  */
+/** Does compiled code contain `op`? (null / failed compiles: no) */
+export const usesOp = (r: CompileResult | null | undefined, op: Op): boolean => !!r?.program?.instrs.some((i) => i.op === op);
+
+/**
+ * M12 (SPEC §3.8.7): `code` takes photos (SNAP) but nothing ever records them: neither it nor
+ * the other slot on the rover has a SEND, so every photo stays in image memory.
+ */
+export const snapsWithoutSend = (code: CompileResult | null | undefined, otherSlot: CompileResult | null | undefined): boolean =>
+  usesOp(code, 'SNAP') && !usesOp(code, 'SEND') && !usesOp(otherSlot, 'SEND');
+
 export function compile(source: string, chassis: ChassisDef, extraConstants: Record<string, number> = {}, opts: CompileOptions = {}): CompileResult {
   const slot = opts.slot ?? 'firmware';
   const otherBytes = opts.otherBytes ?? 0;
