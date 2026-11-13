@@ -8,6 +8,22 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 const MSAA_SAMPLES = 4;
 
 /**
+ * UnrealBloomPass with its mip chain starting at quarter resolution instead of half: every
+ * blur pass costs a quarter as much. Each mip therefore covers twice the screen area, so the
+ * widest mips are weighted down to keep the glow from spreading too far.
+ */
+class QuarterResBloomPass extends UnrealBloomPass {
+  constructor(strength: number, radius: number, threshold: number) {
+    super(new THREE.Vector2(256, 256), strength, radius, threshold);
+    this.compositeMaterial.uniforms.bloomFactors.value = [1.0, 0.8, 0.5, 0.25, 0.08];
+  }
+
+  override setSize(width: number, height: number): void {
+    super.setSize(Math.max(2, Math.round(width / 2)), Math.max(2, Math.round(height / 2)));
+  }
+}
+
+/**
  * Bloom post-processing. The threshold keeps the dim terrain grid crisp while bright
  * lines (ore, beacons, FX, lit headlight tiles) glow. Can be switched off for slow GPUs.
  *
@@ -31,7 +47,7 @@ export class PostFx {
     this.composer = new EffectComposer(renderer, target);
     this.renderPass = new RenderPass(scene, camera);
     this.composer.addPass(this.renderPass);
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.65, 0.4, 0.42);
+    this.bloom = new QuarterResBloomPass(0.65, 0.4, 0.42);
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
   }
