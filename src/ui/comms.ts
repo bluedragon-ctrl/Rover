@@ -301,9 +301,21 @@ export function frameFields(b: readonly number[], d: Dictionaries): FrameField[]
 
 const escHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
 
-/** Fields as a table: bytes | name | value | ; comment (Comms, Reference → Radio). */
-export function fieldsHtml(fields: readonly FrameField[]): string {
+/**
+ * Fields as a table: bytes | name | value ; comment (Comms, Reference → Radio).
+ * `seenHeaders` (Comms): a header comment is shown only on the first row that explains
+ * that header layout; later rows of the list leave it out (the bits differ, the
+ * explanation does not).
+ */
+export function fieldsHtml(fields: readonly FrameField[], seenHeaders?: Set<string>): string {
   const rows = fields
+    .map((f) => {
+      if (!seenHeaders || f.name !== 'header' || !f.note) return f;
+      const key = f.note.replace(/^bits [01|]+: /, '');
+      if (seenHeaders.has(key)) return { ...f, note: '' };
+      seenHeaders.add(key);
+      return f;
+    })
     .map((f) => `<tr><td class="fb">${hex(f.bytes)}</td><td class="fn">${escHtml(f.name)}</td><td class="fv"><span class="v">${escHtml(f.value)}</span>${f.note ? ` <span class="fc">; ${escHtml(f.note)}</span>` : ''}</td></tr>`)
     .join('');
   return `<table class="frame-fields">${rows}</table>`;

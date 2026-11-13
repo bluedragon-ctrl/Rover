@@ -43,6 +43,8 @@ interface Item {
  */
 export class CommsPanel {
   private decode = false;
+  /** Header layouts already explained in this render (comment on the first row only). */
+  private headerSeen = new Set<string>();
   private filter: Filter = 'all';
   private lastKey = '';
   private dicts: DictionaryCache;
@@ -134,7 +136,7 @@ export class CommsPanel {
     const e = this.engine;
     const multi = e.units.length > 1;
     const who = (id: number) => (multi ? `<span class="who">${esc(e.getUnit(id)?.name ?? `#${id}`)}</span>` : '');
-    const bytes = (b: readonly number[]) => (this.decode ? `<div class="row-fields">${fieldsHtml(frameFields(b, d))}</div>` : '');
+    const bytes = (b: readonly number[]) => (this.decode ? `<div class="row-fields">${fieldsHtml(frameFields(b, d), this.headerSeen)}</div>` : '');
     const out: Item[] = [];
     let order = 0;
 
@@ -182,7 +184,7 @@ export class CommsPanel {
         ...base,
         cls: 'snap',
         merge: '',
-        html: () => `<div class="row snap"><span class="t">t${f.tick}</span><span class="dir down">▼</span><span class="chip snap ${dump.slot}">DUMP</span><div class="txt">${who(f.unitId)}<span class="card-h">${what}</span>${at}</div><div class="row-fields">${fieldsHtml(frameFields(f.bytes, d))}</div></div>`,
+        html: () => `<div class="row snap"><span class="t">t${f.tick}</span><span class="dir down">▼</span><span class="chip snap ${dump.slot}">DUMP</span><div class="txt">${who(f.unitId)}<span class="card-h">${what}</span>${at}</div><div class="row-fields">${fieldsHtml(frameFields(f.bytes, d), this.headerSeen)}</div></div>`,
       };
     }
     const fr = decodeFrame(f.bytes);
@@ -222,6 +224,7 @@ export class CommsPanel {
         prev.last = it.tick;
       } else runs.push({ item: it, count: 1, last: it.tick });
     }
+    this.headerSeen = new Set();
     const rows = runs.map((r) => r.item.html(r.count, r.last));
     if (!rows.length)
       rows.push(

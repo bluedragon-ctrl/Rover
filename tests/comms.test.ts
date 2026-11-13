@@ -4,7 +4,7 @@ import { SENT_KEEP, SimulationEngine } from '../src/core/SimulationEngine';
 import type { Unit } from '../src/core/Unit';
 import { DumpKind, encodeCpuDump, encodeLog, encodeStackDump } from '../src/core/downlink';
 import { ProgState } from '../src/core/types';
-import { emptyDictionary, frameFields, latestSnapshot, pendingRequests, replyTo, sentText, snapshotOutdated, type Dictionaries } from '../src/ui/comms';
+import { emptyDictionary, fieldsHtml, frameFields, latestSnapshot, pendingRequests, replyTo, sentText, snapshotOutdated, type Dictionaries } from '../src/ui/comms';
 
 /** Keep the dish on the orbiter (full signal) before every tick. */
 function run(e: SimulationEngine, ticks: number): void {
@@ -145,6 +145,22 @@ describe('Byte-by-byte decoding (Comms "Decode bytes", Reference → Radio)', ()
     expect(row('r1 seen')).toMatchObject({ bytes: [0, 0, 0, 0xff], value: '255' });
     expect(row('r2')).toMatchObject({ bytes: [0xff, 0xff, 0xff, 0xff], value: '-1' });
     expect(row('r2').note).toMatch(/negative/);
+  });
+
+  it('Comms explains each header layout once: LOG and system share one, dumps have their own', () => {
+    const seen = new Set<string>();
+    const comment = (b: number[]) => fieldsHtml(frameFields(b, d), seen).includes('value size');
+    const dumpComment = (b: number[]) => fieldsHtml(frameFields(b, d), seen).includes('length byte');
+    expect(comment(encodeLog(2, 812))).toBe(true);
+    expect(comment(encodeLog(2, 811))).toBe(false);
+    expect(comment(encodeLog(15, 2))).toBe(false);
+    const dump = encodeStackDump([], [], DumpKind.PROG_STACKS);
+    expect(dumpComment(dump)).toBe(true);
+    expect(dumpComment(dump)).toBe(false);
+    // The header value (tag, size) stays on every row.
+    expect(fieldsHtml(frameFields(encodeLog(2, 811), d), seen)).toContain('LOG tag 2 T_BAT, 2-byte value');
+    // Without a set (Reference) every comment is shown.
+    expect(fieldsHtml(frameFields(encodeLog(2, 811), d))).toContain('value size');
   });
 
   it('LOG and boot messages: header bits, tag names, values, boot reasons', () => {
