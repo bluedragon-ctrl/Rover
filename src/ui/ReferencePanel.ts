@@ -2,7 +2,9 @@ import { PORT_CODES, PORTS } from '../core/ports';
 import { HARDWARE_OPS, OPCODE_NUMBERS, type Op } from '../core/vm/isa';
 import { formatSig, OPCODES } from '../core/vm/Compiler';
 import type { TileDef, WorldRegistry } from '../core/WorldRegistry';
-import { CHASSIS_MK1, ENCODING as E } from '../core/balance';
+import { BALANCE, CHASSIS_MK1, ENCODING as E } from '../core/balance';
+import { BOOT_REASON_NAMES, DumpKind, encodeCpuDump, encodeLog, encodeStackDump } from '../core/downlink';
+import { emptyDictionary, fieldsHtml, frameFields, type Dictionaries } from './comms';
 import { TOOLS } from '../core/tools';
 import { UPGRADES } from '../core/upgrades';
 import { Alert, Dir, Layer, LightColor, ProgState, Status, SystemId } from '../core/types';
@@ -61,6 +63,7 @@ const SECTIONS = [
   ['ports', 'Ports'],
   ['tools', 'Tools'],
   ['consts', 'Constants'],
+  ['radio', 'Radio'],
 ] as const;
 
 /** Split `items` into the named groups (in order) plus an "Other" group for leftovers. */
@@ -203,6 +206,72 @@ function constantsHtml(registry: WorldRegistry): string {
     <h4>Hardpoints (ACT)</h4>${toolSlots}`;
 }
 
+/** Example program the Radio examples are decoded against (as if it were on the rover). */
+const EXAMPLE_DICT: Dictionaries = {
+  firmware: emptyDictionary(),
+  program: {
+    tags: { 2: { names: ['T_BAT'], lines: [55] }, 3: { names: ['T_SEEN'], lines: [21] } },
+    regs: { 0: ['dir'], 1: ['seen'], 2: ['dist'] },
+    lineAt: (a) => ({ 0x26: 18, 0x1a: 9 })[a] ?? 0,
+  },
+};
+
+/**
+ * Radio: what goes up and down and every byte of what comes down (SPEC §3.8). The example
+ * tables come from the same decoder as the Comms tab's "Decode bytes", so they always match.
+ */
+function radioHtml(): string {
+  const ex = (bytes: number[]) => fieldsHtml(frameFields(bytes, EXAMPLE_DICT));
+  const regs = encodeCpuDump({ ip: 0x26, status: 0, state: ProgState.PROG_RUNNING, regs: [3, 255, -1, 0], dsDepth: 2, csDepth: 1 }, DumpKind.PROG_CPU);
+  const stacks = encodeStackDump([5, -2], [0x1a], DumpKind.PROG_STACKS);
+  const ch = CHASSIS_MK1;
+  return `
+    <p class="small dim">The rover and mission control talk by radio through the relay orbiter. The <b>Comms</b> tab lists
+    everything; its <b>Decode bytes</b> shows any message like the examples below. Examples assume a program with
+    <code>ALIAS r0 dir</code>, <code>ALIAS r1 seen</code>, <code>ALIAS r2 dist</code> and <code>CONST T_BAT 2</code>.</p>
+    <h4>▲ Up and ▼ down</h4>
+    <table class="radio-kv">
+      <tr><td>▲ up</td><td>Code uploads (Code tab), <b>Dump registers</b>, <b>Dump stacks</b>, <b>Resume after BRK</b>, <b>Restart</b>.
+        Each costs battery (less at a good signal) and needs signal ${BALANCE.linkMinSignal} or more.</td></tr>
+      <tr><td>▼ down</td><td>${ch.linkBytesPerTick} B per tick at full signal, nothing below ${BALANCE.linkMinSignal}. Order: dumps first,
+        then <code>LOG</code> messages (a ${ch.logFifoBytes} B queue: when it is full new ones are <b>lost</b>, <code>@LOG_LOST</code>),
+        then science (photos, spectra: Gallery).</td></tr>
+      <tr><td>never</td><td>The rover never sends its code back: mission control keeps a copy of what it uploaded (<b>Revert</b> uses it).</td></tr>
+    </table>
+    <h4>Header byte</h4>
+    <p class="small dim">Every message starts with one header byte, read as bits <code>k|tttt|ss|0</code>:</p>
+    <table class="radio-kv">
+      <tr><td><code>k</code> bit 7</td><td>0 = <code>LOG</code> or system message; 1 = a frame with a length (dumps, science)</td></tr>
+      <tr><td><code>tttt</code> bits 6–3</td><td>tag 0–14 (your <code>LOG tag</code>, named by your <code>CONST</code>); 15 = system</td></tr>
+      <tr><td><code>ss</code> bits 2–1</td><td>value size: <code>00</code> none, <code>01</code> 1 byte, <code>10</code> 2 bytes, <code>11</code> 4 bytes</td></tr>
+    </table>
+    <h4>Numbers</h4>
+    <table class="radio-kv">
+      <tr><td>byte order</td><td>High byte first: <code>03 2C</code> = 3 × 256 + 44 = 812.</td></tr>
+      <tr><td>negative</td><td>Two's complement, counted down from all ones: <code>FF</code> = −1, <code>FE</code> = −2;
+        in 4 bytes <code>FF FF FF FF</code> = −1, <code>00 00 00 FF</code> = 255.</td></tr>
+      <tr><td>LOG size</td><td><code>LOG</code> uses the smallest size that fits: −128…127 1 byte, up to ±32767 2 bytes, else 4. Small values queue faster.</td></tr>
+      <tr><td>addresses</td><td>2 bytes, a byte address in the slot's machine code (the listing's address column).</td></tr>
+    </table>
+    <h4>LOG message: <code>LOG T_BAT 812</code></h4>${ex(encodeLog(2, 812))}
+    <h4>LOG without a value: <code>LOG T_SEEN</code></h4>${ex(encodeLog(3, null))}
+    <h4>System message: reboot</h4>${ex(encodeLog(15, 2))}
+    <table class="radio-kv">${Object.entries(BOOT_REASON_NAMES).map(([v, n]) => `<tr><td>boot reason ${v}</td><td>${n}</td></tr>`).join('')}</table>
+    <h4>Register dump (▲ Dump registers)</h4>
+    <p class="small dim">The CPU state of one slot at the moment the request arrived. A firmware dump (kind 1) has the same
+    layout; its state is the CPU's: RUNNING, BLOCKED, HALTED or FAULT.</p>
+    ${ex(regs)}
+    <h4>Stack dump (▲ Dump stacks)</h4>
+    <p class="small dim">The values <code>PUSH</code>ed and not yet <code>POP</code>ped, and where each unfinished <code>CALL</code>
+    returns to. Firmware: kind 2.</p>
+    ${ex(stacks)}
+    <h4>Dump kinds</h4>
+    <table class="radio-kv">
+      <tr><td><code>01</code></td><td>firmware registers</td></tr><tr><td><code>02</code></td><td>firmware stacks</td></tr>
+      <tr><td><code>03</code></td><td>program registers</td></tr><tr><td><code>04</code></td><td>program stacks</td></tr>
+    </table>`;
+}
+
 /** Generated language reference: always in sync with the compiler, port, tool and tile tables. */
 export function renderReference(el: HTMLElement, registry: WorldRegistry): void {
   const panes: Record<string, string> = {
@@ -211,6 +280,7 @@ export function renderReference(el: HTMLElement, registry: WorldRegistry): void 
     ports: portsHtml(),
     tools: toolsHtml(),
     consts: constantsHtml(registry),
+    radio: radioHtml(),
   };
   el.innerHTML = `
     <div class="ref-head">

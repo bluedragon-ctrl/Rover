@@ -1,9 +1,9 @@
 /**
  * Code tab / Comms review page (preview.html?editor=1): the Code tab with the machine-code
- * listing pane (SPEC §5.7.1) and the M11 "Look inside" box, the Comms tab and the Mission
+ * listing pane (SPEC §5.7.1) and the M11 "Dump program state" box, the Comms tab and the Mission
  * events strip, on a live headless engine at the game's panel widths.
  * Options: &slot=firmware, &program=<template name>, &width=<px>,
- * &comms=0 (the current game: old Console, no Look inside box).
+ * &comms=0 (the current game: old Console, no Dump box).
  */
 import '../style.css';
 import { DEFAULT_FIRMWARE, PROGRAM_TEMPLATES } from '../core/programs';
@@ -42,7 +42,7 @@ export function mountUiLab(el: HTMLElement, q: URLSearchParams): void {
   const width = Number(q.get('width')) || 520;
   el.hidden = false;
   el.innerHTML = `
-    <div class="pl-head"><b>M11 · CODE TAB (LOOK INSIDE) · COMMS · MISSION EVENTS</b>
+    <div class="pl-head"><b>M11 · CODE TAB (DUMP STATE) · COMMS · REFERENCE RADIO · MISSION EVENTS</b>
       <span class="dim">live engine, seed 42, tick ${e.tick}: default firmware + ${name} program · ${comms ? '&comms=0 shows the current game' : 'current game (old Console)'}</span></div>
     <div class="ui-lab">
       <aside class="ui-side" style="width:${width}px"><div class="tabs"><button class="tab active">Code</button><button class="tab">${comms ? 'Comms' : 'Console'}</button></div>

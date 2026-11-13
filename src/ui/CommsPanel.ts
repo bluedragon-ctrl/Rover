@@ -1,10 +1,8 @@
 import { BALANCE } from '../core/balance';
-import { BOOT_REASON_NAMES, decodeDump, decodeFrame, hex, PRODUCT_NAMES, productFrameBytes, SYSTEM_TAG, type DecodedDump, type ReceivedFrame, type ReceivedProduct } from '../core/downlink';
+import { BOOT_REASON_NAMES, decodeDump, decodeFrame, hex, PRODUCT_NAMES, productFrameBytes, SYSTEM_TAG, type ReceivedFrame, type ReceivedProduct } from '../core/downlink';
 import type { SimulationEngine } from '../core/SimulationEngine';
-import { Status } from '../core/types';
 import type { Unit } from '../core/Unit';
-import { formatAddr } from '../core/vm/isa';
-import { addrText, costText, DictionaryCache, replyTo, sentText, snapKindOf, tagName, tagSource, type Dictionaries } from './comms';
+import { costText, DictionaryCache, fieldsHtml, frameFields, replyTo, sentText, snapKindOf, tagName, tagSource, type Dictionaries } from './comms';
 import { hint } from './hint';
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
@@ -17,10 +15,11 @@ const HELP = (fifo: number, rate: number) => `Everything that went between missi
   <br><b class="down">▼ Received</b> (down), what the rover sends:
   <br>· <b>LOG</b>: your <code>LOG tag value</code> lines. Names like <code>T_BAT</code> come from the <code>CONST</code>s in the
   code you uploaded; <code>fw L55</code> = firmware line 55. Repeats are merged (×12).
-  <br>· <b>COPY</b>: copies of registers or stacks you asked for (Code tab, <i>Look inside</i>, <i>Ask for a copy of</i>).
+  <br>· <b>DUMP</b>: the registers or stacks you asked for (Code tab, <i>Dump program state</i>), byte by byte.
   <br>· <b>SYS</b>: the rover itself, e.g. after a reboot.
   <br>· <b>SCI</b>: photos and spectra (shown in the <b>Gallery</b>).
-  <br><br>The rover sends copies first, then the log, then science, ${rate} B per tick at full signal and nothing below
+  <br><br><b>Decode bytes</b> explains every byte of LOG and system messages too. All formats: <b>Reference → Radio</b>.
+  <br><br>The rover sends dumps first, then the log, then science, ${rate} B per tick at full signal and nothing below
   signal ${BALANCE.linkMinSignal}. Log messages wait in a ${fifo} B queue; when it is full new ones are <b>lost</b>.
   <br><br>Goals, weather and supplies are in <b>Mission events</b> at the bottom.`;
 
@@ -39,11 +38,11 @@ interface Item {
 /**
  * Comms tab (M11, game ?comms=1, preview.html?editor=1): the radio link as one two-way
  * timeline. ▲ what mission control sent (commands, uploads) with the state of its reply,
- * ▼ what the rover sent (LOG, copies, system, science). Read-only: sending happens in the
+ * ▼ what the rover sent (LOG, dumps byte by byte, system, science). Read-only: sending happens in the
  * Code tab. Replaces the Console once the owner approves it.
  */
 export class CommsPanel {
-  private raw = false;
+  private decode = false;
   private filter: Filter = 'all';
   private lastKey = '';
   private dicts: DictionaryCache;
@@ -63,9 +62,9 @@ export class CommsPanel {
       <section class="panel-box grow">
         <div class="toolbar small">
           <span class="seg small" id="comms-filter">
-            <button data-filter="all">All</button><button data-filter="sent" class="up" title="What you sent up: uploads and requests">▲ Sent</button><button data-filter="log" title="Your LOG lines">LOG</button><button data-filter="snap" title="Copies of registers and stacks you asked for">Copies</button><button data-filter="system" title="Reboots and other messages from the rover itself">System</button><button data-filter="science" title="Photos and spectra">Science</button>
+            <button data-filter="all">All</button><button data-filter="sent" class="up" title="What you sent up: uploads and requests">▲ Sent</button><button data-filter="log" title="Your LOG lines">LOG</button><button data-filter="snap" title="Dumps of registers and stacks you asked for">Dumps</button><button data-filter="system" title="Reboots and other messages from the rover itself">System</button><button data-filter="science" title="Photos and spectra">Science</button>
           </span>
-          <label title="Show the raw bytes of each received message"><input type="checkbox" id="comms-raw" /> Bytes</label>
+          <label title="Explain every byte of each received message (dumps always are)"><input type="checkbox" id="comms-raw" /> Decode bytes</label>
           <span class="spacer"></span>
           <button class="small" id="comms-newest" title="Scroll to the newest message">↓</button>
         </div>
@@ -83,7 +82,7 @@ export class CommsPanel {
     };
     filters.forEach((b) => b.addEventListener('click', () => setFilter(b.dataset.filter as Filter)));
     el.querySelector<HTMLInputElement>('#comms-raw')!.addEventListener('change', (e) => {
-      this.raw = (e.target as HTMLInputElement).checked;
+      this.decode = (e.target as HTMLInputElement).checked;
       this.lastKey = '';
       this.update();
     });
@@ -103,7 +102,7 @@ export class CommsPanel {
     const { d, changed } = this.dicts.get(u);
     const e = this.engine;
     const g = e.gallery.at(-1);
-    const key = [e.received.length, e.received.at(-1)?.tick, e.sent.length, e.sent.at(-1)?.tick, e.gallery.length, g?.arrived, g?.received, this.raw, this.filter, e.units.length].join(':');
+    const key = [e.received.length, e.received.at(-1)?.tick, e.sent.length, e.sent.at(-1)?.tick, e.gallery.length, g?.arrived, g?.received, this.decode, this.filter, e.units.length].join(':');
     if (key !== this.lastKey || changed) {
       this.lastKey = key;
       this.list.innerHTML = this.rows(d).join('');
@@ -135,7 +134,7 @@ export class CommsPanel {
     const e = this.engine;
     const multi = e.units.length > 1;
     const who = (id: number) => (multi ? `<span class="who">${esc(e.getUnit(id)?.name ?? `#${id}`)}</span>` : '');
-    const bytes = (b: readonly number[]) => (this.raw ? `<span class="hex">${hex(b)}</span>` : '');
+    const bytes = (b: readonly number[]) => (this.decode ? `<div class="row-fields">${fieldsHtml(frameFields(b, d))}</div>` : '');
     const out: Item[] = [];
     let order = 0;
 
@@ -150,8 +149,8 @@ export class CommsPanel {
         merge: '',
         html: () => {
           let state = '';
-          if (kind) state = reply ? `<span class="ok">✓ copy arrived t${reply.frame.tick}</span>` : '<span class="dim">… waiting for the copy</span>';
-          const chip = r.kind === 'PROGRAM' || r.kind === 'FIRMWARE' ? '<span class="chip code">CODE</span>' : '<span class="chip cmd">ASK</span>';
+          if (kind) state = reply ? `<span class="ok">✓ dump arrived t${reply.frame.tick}</span>` : '<span class="dim">… waiting for the dump</span>';
+          const chip = r.kind === 'PROGRAM' || r.kind === 'FIRMWARE' ? '<span class="chip code">CODE</span>' : '<span class="chip cmd">CMD</span>';
           return `<div class="row sent"><span class="t">t${r.tick}</span><span class="dir up">▲</span>${chip}<span class="txt">${who(r.unitId)}${esc(sentText(r))} <span class="dim">· ${costText(r.cost)}</span> ${state}</span></div>`;
         },
       });
@@ -177,14 +176,21 @@ export class CommsPanel {
     const base = { tick: f.tick, order, unitId: f.unitId };
     const dump = decodeDump(f.bytes);
     if (dump) {
-      return { ...base, cls: 'snap', merge: '', html: () => `<div class="row snap"><span class="t">t${f.tick}</span><span class="dir down">▼</span><span class="chip snap ${dump.slot}">COPY</span><div class="txt">${who(f.unitId)}${copyCard(dump, f.taken, d)}${bytes(f.bytes)}</div></div>` };
+      const what = `${dump.slot === 'program' ? 'Program' : 'Firmware'} ${dump.kind === 1 ? 'registers' : 'stacks'}`;
+      const at = f.taken === undefined ? '' : ` <span class="dim">· dumped on the rover at t${f.taken}</span>`;
+      return {
+        ...base,
+        cls: 'snap',
+        merge: '',
+        html: () => `<div class="row snap"><span class="t">t${f.tick}</span><span class="dir down">▼</span><span class="chip snap ${dump.slot}">DUMP</span><div class="txt">${who(f.unitId)}<span class="card-h">${what}</span>${at}</div><div class="row-fields">${fieldsHtml(frameFields(f.bytes, d))}</div></div>`,
+      };
     }
     const fr = decodeFrame(f.bytes);
     const rep = (n: number) => (n > 1 ? `<span class="rep" title="${n} identical messages in a row">×${n}</span>` : '');
     const time = (n: number, last: number) => (n > 1 ? `t${f.tick}–${last}` : `t${f.tick}`);
     if (fr.tag === SYSTEM_TAG) {
       const text = fr.value !== null && BOOT_REASON_NAMES[fr.value] ? `Rover rebooted: ${BOOT_REASON_NAMES[fr.value]}` : `system${fr.value === null ? '' : ` ${fr.value}`}`;
-      return { ...base, cls: 'system', merge: `${f.unitId}:${hex(f.bytes)}`, html: (n, last) => `<div class="row system"><span class="t">${time(n, last)}</span><span class="dir down">▼</span><span class="chip sys">SYS</span><span class="txt">${who(f.unitId)}${esc(text)}${rep(n)}${bytes(f.bytes)}</span></div>` };
+      return { ...base, cls: 'system', merge: `${f.unitId}:${hex(f.bytes)}`, html: (n, last) => `<div class="row system"><span class="t">${time(n, last)}</span><span class="dir down">▼</span><span class="chip sys">SYS</span><span class="txt">${who(f.unitId)}${esc(text)}${rep(n)}</span>${bytes(f.bytes)}</div>` };
     }
     const { name } = tagName(fr.tag, d);
     const src = tagSource(fr.tag, d);
@@ -193,7 +199,7 @@ export class CommsPanel {
       ...base,
       cls: 'log',
       merge: `${f.unitId}:${hex(f.bytes)}`,
-      html: (n, last) => `<div class="row log"><span class="t">${time(n, last)}</span><span class="dir down">▼</span><span class="chip log">LOG</span><span class="txt">${who(f.unitId)}${esc(name)}${value}${rep(n)}<span class="src" title="${esc(src.long)}">${esc(src.short)}</span>${bytes(f.bytes)}</span></div>`,
+      html: (n, last) => `<div class="row log"><span class="t">${time(n, last)}</span><span class="dir down">▼</span><span class="chip log">LOG</span><span class="txt">${who(f.unitId)}${esc(name)}${value}${rep(n)}<span class="src" title="${esc(src.long)}">${esc(src.short)}</span></span>${bytes(f.bytes)}</div>`,
     };
   }
 
@@ -221,28 +227,8 @@ export class CommsPanel {
       rows.push(
         items.length || this.filter !== 'all'
           ? '<div class="dim empty">Nothing of this kind yet.</div>'
-          : '<div class="dim empty">Nothing yet. Upload code or ask for a copy of the registers in the <b>Code</b> tab (▲); the rover sends what your code <code>LOG</code>s (▼, the default firmware logs <code>T_BAT</code>, the battery, while idle) whenever the dish reaches the orbiter.</div>',
+          : '<div class="dim empty">Nothing yet. Upload code or dump the registers in the <b>Code</b> tab (▲); the rover sends what your code <code>LOG</code>s (▼, the default firmware logs <code>T_BAT</code>, the battery, while idle) whenever the dish reaches the orbiter.</div>',
       );
     return rows;
   }
 }
-
-/** A received copy of registers or stacks as a small card. */
-function copyCard(dump: DecodedDump, taken: number | undefined, d: Dictionaries): string {
-  const slot = dump.slot;
-  const at = taken === undefined ? '' : ` <span class="dim">· copied on the rover at t${taken}</span>`;
-  if (dump.kind === 1) {
-    const line = d[slot].lineAt(dump.ip);
-    const regs = dump.regs.map((v, i) => `<span><i>r${i}</i>${v}</span>`).join('');
-    return `<div class="card"><div class="card-h">${slot === 'program' ? 'Program' : 'Firmware'} registers${at}</div>
-      <div class="kv2"><i>next</i>${esc(formatAddr(dump.ip, slot))}${line ? ` <span class="dim">line ${line}</span>` : ''}</div>
-      <div class="kv2"><i>state</i>${esc(dump.state)} <span class="dim">· @STATUS</span> ${esc(Status[dump.status] ?? String(dump.status))}</div>
-      <div class="regs">${regs}</div></div>`;
-  }
-  const ds = dump.dataStack.length ? dump.dataStack.join(' ') : '<span class="dim">empty</span>';
-  const cs = dump.callStack.length ? dump.callStack.map((a) => esc(addrText(a, slot, d))).join(' ← ') : '<span class="dim">empty</span>';
-  return `<div class="card"><div class="card-h">${slot === 'program' ? 'Program' : 'Firmware'} stacks${at}</div>
-    <div class="kv2"><i>data</i>${ds}</div>
-    <div class="kv2"><i>returns</i>${cs}</div></div>`;
-}
-

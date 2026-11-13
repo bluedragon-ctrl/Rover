@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { deserialize, migrate, SAVE_VERSION, serialize } from '../src/core/SaveManager';
 import { SENT_KEEP, SimulationEngine } from '../src/core/SimulationEngine';
 import type { Unit } from '../src/core/Unit';
-import { latestSnapshot, pendingRequests, replyTo, sentText, snapshotOutdated } from '../src/ui/comms';
+import { DumpKind, encodeCpuDump, encodeLog, encodeStackDump } from '../src/core/downlink';
+import { ProgState } from '../src/core/types';
+import { emptyDictionary, frameFields, latestSnapshot, pendingRequests, replyTo, sentText, snapshotOutdated, type Dictionaries } from '../src/ui/comms';
 
 /** Keep the dish on the orbiter (full signal) before every tick. */
 function run(e: SimulationEngine, ticks: number): void {
@@ -106,11 +108,51 @@ describe('Pairing requests with copies', () => {
     expect(snapshotOutdated(s, e.sent, u.id)).toBe(true);
   });
 
-  it('player-facing names say what is copied and never say dump', () => {
+  it('player-facing names say what is dumped from which slot', () => {
     const r = { unitId: 1, tick: 1, slot: 'program' as const, cost: 0 };
-    expect(sentText({ ...r, kind: 'DUMP' })).toBe("Request a copy of the program's registers");
-    expect(sentText({ ...r, kind: 'DUMP_STACKS', slot: 'firmware' })).toBe("Request a copy of the firmware's stacks");
-    for (const kind of ['DUMP', 'DUMP_STACKS', 'CONTINUE', 'RUN_AGAIN', 'PROGRAM', 'FIRMWARE'] as const) expect(sentText({ ...r, kind })).not.toMatch(/dump/i);
+    expect(sentText({ ...r, kind: 'DUMP' })).toBe("Dump the program's registers");
+    expect(sentText({ ...r, kind: 'DUMP_STACKS', slot: 'firmware' })).toBe("Dump the firmware's stacks");
+  });
+});
+
+describe('Byte-by-byte decoding (Comms "Decode bytes", Reference → Radio)', () => {
+  const d: Dictionaries = {
+    firmware: emptyDictionary(),
+    program: { tags: { 2: { names: ['T_BAT'], lines: [5] } }, regs: { 0: ['dir'], 1: ['seen'] }, lineAt: (a) => (a === 0x26 ? 18 : 0) },
+  };
+  const joined = (b: number[]) => frameFields(b, d).flatMap((f) => f.bytes);
+
+  it('explains every byte exactly once', () => {
+    const frames = [
+      encodeLog(2, 812),
+      encodeLog(3, null),
+      encodeLog(1, -70000),
+      encodeLog(15, 2),
+      encodeCpuDump({ ip: 0x26, status: 0, state: ProgState.PROG_RUNNING, regs: [3, 255, -1, 0], dsDepth: 1, csDepth: 0 }, DumpKind.PROG_CPU),
+      encodeCpuDump({ ip: 5, status: 0, state: 'HALTED', regs: [1, 2, 3, 4, 5, 6, 7, 8], dsDepth: 0, csDepth: 0 }),
+      encodeStackDump([5, -2], [0x1a, 0x30], DumpKind.PROG_STACKS),
+      encodeStackDump([], []),
+    ];
+    for (const b of frames) expect(joined(b)).toEqual(b);
+  });
+
+  it('names registers by ALIAS, decodes signed values, addresses and lines', () => {
+    const f = frameFields(encodeCpuDump({ ip: 0x26, status: 0, state: ProgState.PROG_RUNNING, regs: [3, 255, -1, 0], dsDepth: 1, csDepth: 0 }, DumpKind.PROG_CPU), d);
+    const row = (name: string) => f.find((x) => x.name === name)!;
+    expect(row('kind').value).toBe('program registers');
+    expect(row('next')).toMatchObject({ bytes: [0x00, 0x26], value: 'prog:0x026 → line 18' });
+    expect(row('state').value).toBe('PROG_RUNNING');
+    expect(row('r1 seen')).toMatchObject({ bytes: [0, 0, 0, 0xff], value: '255' });
+    expect(row('r2')).toMatchObject({ bytes: [0xff, 0xff, 0xff, 0xff], value: '-1' });
+    expect(row('r2').note).toMatch(/negative/);
+  });
+
+  it('LOG and boot messages: header bits, tag names, values, boot reasons', () => {
+    const log = frameFields(encodeLog(2, 812), d);
+    expect(log[0].value).toBe('LOG tag 2 T_BAT, 2-byte value');
+    expect(log[0].note).toContain('0|0010|10|0');
+    expect(log[1]).toMatchObject({ bytes: [0x03, 0x2c], value: '812' });
+    expect(frameFields(encodeLog(15, 2), d)[1].value).toBe('2 = rebooted: watchdog');
   });
 });
 

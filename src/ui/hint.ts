@@ -10,5 +10,5 @@ export function hint(html: string, place: '' | 'up' = ''): string {
 /** The message strip with the Comms tab (game ?comms=1): only the world and the game. */
 export const MISSION_EVENTS_HELP = `What happens in the world and the game: goals, weather, supply crates, upgrades, alarms about the
   rover, and actions that could not be done.
-  <br><br>What you <b>sent</b> to the rover and what it <b>sent back</b> (your <code>LOG</code>s, copies of registers) is in the
+  <br><br>What you <b>sent</b> to the rover and what it <b>sent back</b> (your <code>LOG</code>s, dumps) is in the
   <b>Comms</b> tab.`;

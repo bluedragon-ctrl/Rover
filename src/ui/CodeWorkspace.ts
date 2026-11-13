@@ -18,7 +18,7 @@ export interface CodeWorkspaceOptions {
   starterProgram?: string;
   onSlotChange?: (slot: Slot) => void;
   /**
-   * Show the "Look inside" box (M11, game ?comms=1): sends a console command for a slot and
+   * Show the "Dump program state" box (M11, game ?comms=1): sends a console command for a slot and
    * returns why it was rejected, or null.
    */
   inspect?: (cmd: UplinkCommand, slot: Slot) => string | null;
@@ -76,7 +76,7 @@ export class CodeWorkspace {
       <p class="cw-hint small dim" id="cw-hint"></p>
       <div class="toolbar">
         <button id="cw-upload" class="primary" title="Ctrl+Enter / Ctrl+S"></button>
-        <button id="cw-revert" title="Load the code that is on the rover">Revert</button>
+        <button id="cw-revert" title="Back to the code you last uploaded (mission control keeps a copy; nothing is sent)">Revert</button>
         <select id="cw-template"></select>
       </div>
       <div class="toolbar small"><span id="cw-state"></span><span class="dim" id="cw-cost"></span></div>

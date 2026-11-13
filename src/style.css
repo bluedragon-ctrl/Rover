@@ -199,7 +199,7 @@ b.up, b.down, .ins-flow .up, .ins-flow .down { color: var(--dir); }
 #comms-filter button.up { color: #ffb020cc; }
 #comms-filter button.up.active { color: #ffb020; background: #3a2a08; }
 #comms-list { font-family: var(--mono); font-size: 12px; flex: 1; min-height: 140px; overflow: auto; border: 1px solid var(--line); border-radius: 4px; padding: 2px 0; }
-#comms-list .row { display: flex; gap: 6px; align-items: baseline; padding: 2px 6px; border-bottom: 1px solid #111824; }
+#comms-list .row { display: flex; flex-wrap: wrap; gap: 0 6px; align-items: baseline; padding: 2px 6px; border-bottom: 1px solid #111824; }
 #comms-list .row .t { color: var(--dim); flex: none; min-width: 76px; font-size: 11px; }
 #comms-list .row .txt { flex: 1; min-width: 0; }
 #comms-list .row .src { color: #5d7a9a; margin-left: 8px; font-size: 11px; cursor: help; }
@@ -220,7 +220,7 @@ b.up, b.down, .ins-flow .up, .ins-flow .down { color: var(--dir); }
 .card-h { color: var(--info); }
 .kv2 i, .regs i { color: var(--dim); font-style: normal; display: inline-block; min-width: 62px; }
 .regs { display: grid; grid-template-columns: repeat(4, auto); gap: 0 10px; justify-content: start; font-family: var(--mono); }
-.regs i { min-width: 22px; }
+.regs i { min-width: 22px; margin-right: 5px; }
 .inspect { flex: none; }
 .ins-ctl { display: inline-flex; gap: 4px; }
 .ins-flow { font-size: 11px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; color: var(--dim); }
@@ -241,3 +241,14 @@ button.link { border: none; background: none; padding: 0; color: var(--info); te
 .lst-row.snap .a::before { content: '◆'; color: #5ad0ff; position: absolute; margin-left: -9px; }
 #log-head { display: flex; align-items: center; padding: 3px 8px 0; border-top: 1px solid var(--line); font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 1px; }
 #log-head + #log { border-top: none; }
+/* Byte-by-byte frame tables (Comms "Decode bytes", dumps; Reference → Radio). */
+.frame-fields { border-collapse: collapse; font-family: var(--mono); font-size: 11px; margin: 2px 0 4px; width: 100%; }
+#reference .frame-fields td, .frame-fields td { padding: 1px 8px 1px 0; vertical-align: top; border: none; font-size: 11px; width: auto; }
+.frame-fields .fb { color: #ffd23a; white-space: nowrap; }
+.frame-fields .fn { color: var(--info); white-space: nowrap; }
+.frame-fields .fv { width: 100%; }
+.frame-fields .fv .v { color: var(--text); }
+.frame-fields .fc { color: #5d7a9a; font-style: italic; }
+#reference table.frame-fields { table-layout: auto; }
+#reference table.radio-kv td:first-child { width: 92px; color: var(--dim); }
+#comms-list .row-fields { flex-basis: 100%; padding: 0 0 2px 22px; }

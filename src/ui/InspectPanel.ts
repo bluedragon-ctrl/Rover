@@ -4,32 +4,32 @@ import { Status } from '../core/types';
 import type { Unit } from '../core/Unit';
 import type { Slot } from '../core/vm/Compiler';
 import { formatAddr } from '../core/vm/isa';
-import { addrText, costText, DictionaryCache, latestSnapshot, pendingRequests, snapshotOutdated, type Dictionaries, type Snapshot, type SnapKind } from './comms';
+import { addrText, costText, regLabel, DictionaryCache, latestSnapshot, pendingRequests, snapshotOutdated, type Dictionaries, type Snapshot, type SnapKind } from './comms';
 import { hint } from './hint';
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 
-const HELP = (slot: Slot) => `You cannot see inside the rover directly: you can only <b>ask</b> it.
-  <br><br><b>Ask for a copy of ▲ registers</b> sends a request <b>up</b> to the rover. The moment it arrives, the rover <b>copies</b>
-  the ${slot}'s registers <code>r0</code>…, the instruction it runs next, its state and <code>@STATUS</code>, and sends the copy
-  <b>down</b> ahead of your <code>LOG</code> messages. It shows up here, and the next instruction is marked in the listing.
-  <br><b>▲ stacks</b> does the same for the data stack and the return addresses of <code>CALL</code>s.
-  <br><br>A copy is a photo of one moment: the ${slot} keeps running. Ask again to see it move.
-  Programmers call such a copy a <i>memory dump</i>.
+const HELP = (slot: Slot) => `You cannot see inside the rover directly: you can only <b>ask</b> it for a <b>dump</b>.
+  <br><br><b>▲ Dump registers</b> sends a small request <b>up</b> to the rover. The moment it arrives, the rover copies
+  the ${slot}'s CPU state (the instruction it runs next, its state, <code>@STATUS</code> and the registers <code>r0</code>…)
+  and sends it <b>down</b>, ahead of your <code>LOG</code> messages. It shows up here, and the next instruction is marked ◆ in the listing.
+  <br><b>▲ Dump stacks</b> does the same for the data stack (<code>PUSH</code>) and the return addresses of <code>CALL</code>s.
+  <br><br>A dump is only the ${slot}'s CPU, not the whole rover (battery, position… are ports: read them in code and <code>LOG</code> them).
+  It is a photo of one moment: the ${slot} keeps running. Dump again to see it move.
+  <br><br>The <b>Comms</b> tab shows every byte of a dump with a comment; <b>Reference → Radio</b> explains each field.
   <br><br><b>▶ Resume after BRK</b>: <code>BRK</code> pauses the ${slot} like a breakpoint; this lets it go on.
-  ${slot === 'program' ? '<br><b>↻ Restart program</b>: the program starts again from its first line.' : ''}
-  <br><br>Every request costs a little battery and needs the dish to reach the orbiter. Everything you send and
-  receive is listed in the <b>Comms</b> tab.`;
+  ${slot === 'program' ? '<br><b>↻ Restart</b>: the program starts again from its first line.' : ''}
+  <br><br>Every request costs a little battery and needs the dish to reach the orbiter.`;
 
-/** Where a register copy says the code was, for the listing (0 = nothing to mark). */
+/** Where a register dump says the code was, for the listing (0 = nothing to mark). */
 export interface SnapMark {
   line: number;
   title: string;
 }
 
 /**
- * Code tab: "Look inside" box (M11). Requests a copy of the edited slot's registers or
- * stacks (uplink DUMP / DUMP_STACKS), shows the newest copy that came down and what is
+ * Code tab: "Dump program / firmware state" box (M11). Requests a dump of the edited slot's
+ * registers or stacks (uplink DUMP / DUMP_STACKS), shows the newest dump that came down and what is
  * still on its way. Mission control only knows what the rover sent.
  */
 export class InspectPanel {
@@ -44,7 +44,7 @@ export class InspectPanel {
   slot: Slot = 'program';
   /** Set by the Code tab: jump the editor to a line of the uploaded code. */
   onGoToLine?: (line: number) => void;
-  /** Called when the register copy's line for the listing changes. */
+  /** Called when the register dump's line for the listing changes. */
   onMark?: (slot: Slot, mark: SnapMark | null) => void;
   private marks: Record<Slot, string> = { firmware: '', program: '' };
 
@@ -62,12 +62,11 @@ export class InspectPanel {
       <header><span><b id="ins-title"></b><span id="ins-help"></span></span>
         <span class="ins-ctl"><button data-cmd="CONTINUE" class="small" title="BRK pauses the code like a breakpoint: this lets it go on">▶ Resume after BRK</button><button data-cmd="RUN_AGAIN" class="small" id="ins-run-again" title="Start the program again from its first line">↻ Restart</button></span></header>
       <div class="ins-flow" aria-hidden="true">
-        <span class="up">▲ you ask</span><i>→</i><span>the rover copies the values at once</span><i>→</i><span class="down">▼ the copy comes down</span>
+        <span class="up">▲ you ask</span><i>→</i><span>the rover dumps its state at that moment</span><i>→</i><span class="down">▼ the dump comes down</span>
       </div>
       <div class="toolbar">
-        <span class="dim small">Ask for a copy of</span>
-        <button data-cmd="DUMP" class="up" title="Ask the rover for a copy of the registers: where it is in the code, its state, @STATUS and r0…">▲ registers</button>
-        <button data-cmd="DUMP_STACKS" class="up" title="Ask the rover for a copy of the data stack and the CALL return addresses">▲ stacks</button>
+        <button data-cmd="DUMP" class="up" title="Ask the rover to send its registers: where it is in the code, its state, @STATUS and r0…">▲ Dump registers</button>
+        <button data-cmd="DUMP_STACKS" class="up" title="Ask the rover to send the data stack and the CALL return addresses">▲ Dump stacks</button>
         <span class="dim small" id="ins-cost"></span>
       </div>
       <div class="ins-msg small" id="ins-msg" hidden></div>
@@ -97,7 +96,7 @@ export class InspectPanel {
 
   setSlot(slot: Slot): void {
     this.slot = slot;
-    this.title.textContent = `Look inside the ${slot}`;
+    this.title.textContent = `Dump ${slot} state`;
     this.help.innerHTML = hint(HELP(slot));
     this.runAgain.hidden = slot !== 'program';
     this.msg.hidden = true;
@@ -130,15 +129,15 @@ export class InspectPanel {
     if (pending.length) {
       const r = pending[pending.length - 1];
       const why = sig < BALANCE.linkMinSignal ? `<span class="warn">no downlink: signal ${sig}, needs ${BALANCE.linkMinSignal}</span>` : 'on its way down';
-      wait = `<div class="ins-wait">▲ asked at t${r.tick}${pending.length > 1 ? ` (+${pending.length - 1} more)` : ''}: the copy is waiting on the rover · ${why}</div>`;
+      wait = `<div class="ins-wait">▲ asked at t${r.tick}${pending.length > 1 ? ` (+${pending.length - 1} more)` : ''}: the dump is waiting on the rover · ${why}</div>`;
     }
     if (!snap) {
       const what = kind === 'regs' ? 'the next instruction, state, <code>@STATUS</code>, <code>r0</code>…' : 'data stack, <code>CALL</code> return addresses';
-      return `<div class="ins-card empty"><div class="snap-h">${name} <span class="dim">· no copy yet (${what})</span></div>${wait}</div>`;
+      return `<div class="ins-card empty"><div class="snap-h">${name} <span class="dim">· no dump yet (${what})</span></div>${wait}</div>`;
     }
     const age = e.tick - snap.taken;
     const outdated = snapshotOutdated(snap, e.sent, u.id);
-    const head = `<div class="snap-h">${name} <span class="dim">· copied on the rover at t${snap.taken}, ${age} tick${age === 1 ? '' : 's'} ago</span></div>`;
+    const head = `<div class="snap-h">${name} <span class="dim">· dumped on the rover at t${snap.taken}, ${age} tick${age === 1 ? '' : 's'} ago</span></div>`;
     const old = outdated ? `<div class="warn small">New ${slot} code was uploaded since: addresses point into the old code.</div>` : '';
     return `<div class="ins-card ${outdated ? 'old' : ''}">${head}${old}${this.body(snap, d, outdated)}${wait}</div>`;
   }
@@ -153,7 +152,7 @@ export class InspectPanel {
           ? ` <button class="link" data-goto="${line}" title="Show this line in the editor (marked ◆ in the listing)">line ${line}</button>`
           : ` <span class="dim" title="Your draft differs from the code on the rover">line ${line} of the uploaded code</span>`
         : '';
-      const regs = dump.regs.map((v, i) => `<span><i>r${i}</i>${v}</span>`).join('');
+      const regs = dump.regs.map((v, i) => `<span><i>${esc(regLabel(i, slot, d))}</i>${v}</span>`).join('');
       return `<div class="kv2"><i>next</i>${esc(formatAddr(dump.ip, slot))}${goto}</div>
         <div class="kv2"><i>state</i>${esc(dump.state)} <span class="dim">· @STATUS</span> ${esc(Status[dump.status] ?? String(dump.status))} <span class="dim">· stacks ${dump.dsDepth}/${dump.csDepth}</span></div>
         <div class="regs">${regs}</div>`;
@@ -163,7 +162,7 @@ export class InspectPanel {
     return `<div class="kv2"><i>data</i>${ds} <span class="dim">(top last)</span></div><div class="kv2"><i>returns</i>${cs}</div>`;
   }
 
-  /** The listing marks the instruction the newest register copy of each slot says is next. */
+  /** The listing marks the instruction the newest register dump of each slot says is next. */
   private updateMarks(u: Unit): void {
     const { d } = this.dicts.get(u);
     for (const slot of ['firmware', 'program'] as Slot[]) {
@@ -171,7 +170,7 @@ export class InspectPanel {
       let mark: SnapMark | null = null;
       if (s && s.dump.kind === 1 && !snapshotOutdated(s, this.engine.sent, u.id) && this.draftIsUploaded(slot)) {
         const line = d[slot].lineAt(s.dump.ip);
-        if (line) mark = { line, title: `◆ The ${slot} was about to run this instruction when the rover copied its registers (t${s.taken}).` };
+        if (line) mark = { line, title: `◆ The ${slot} was about to run this instruction when the rover dumped its registers (t${s.taken}).` };
       }
       const key = mark ? `${mark.line}:${mark.title}` : '';
       if (key !== this.marks[slot]) {

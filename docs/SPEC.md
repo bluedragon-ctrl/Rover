@@ -573,30 +573,38 @@ running uplinked command sequences, or a small OS starting user programs:
 * The Console decodes log tags with both slots' `CONST` names; a tag both slots name
   differently shows both (`T_BAT|T_X`), with lines per slot (`(fw L12, prog L3)`). Dumps
   show their slot: `PROGRAM DUMP (snapshot t254): next prog:0x02A (L13) · PROG_HALTED · …`.
-* **Comms tab and *Look inside* [M11, in owner review]** (game `?comms=1`,
+* **Comms tab and *Dump program state* [M11, in owner review]** (game `?comms=1`,
   `preview.html?editor=1`; replaces the `?console=2` proposal). Organised by the player's
   question instead of by link direction:
-  * **Code tab → *Look inside the program / firmware*** (follows the Code tab's slot; the
-    Console's own slot switch is gone): *Ask for a copy of ▲ registers / ▲ stacks* (uplink
-    `DUMP` / `DUMP_STACKS`), *▶ Resume after BRK*, *↻ Restart* (program only). A one-line
-    flow says the direction: *▲ you ask → the rover copies the values at once → ▼ the copy
-    comes down*. The newest copy of each kind is shown as a card ("copied on the rover at
-    t2132, 35 ticks ago"; next address with a link to its line; state, `@STATUS`, stack
-    depths, registers), with a *waiting* line while a request is unanswered (and why: no
-    downlink below signal 20). The listing marks the copied next instruction with ◆ while the
-    editor holds the uploaded code. A copy taken before a later upload of its slot is
-    flagged as pointing into old code. The word *dump* appears only in the help hint.
+  * **Code tab → *Dump program / firmware state*** (follows the Code tab's slot; the
+    Console's own slot switch is gone): *▲ Dump registers*, *▲ Dump stacks* (uplink `DUMP` /
+    `DUMP_STACKS`), *▶ Resume after BRK*, *↻ Restart* (program only). A flow line says the
+    direction: *▲ you ask → the rover dumps its state at that moment → ▼ the dump comes
+    down*. The help says a dump is one slot's CPU, not the whole rover. The newest dump of
+    each kind is a card ("dumped on the rover at t2132, 35 ticks ago"; next address with a
+    link to its line; state, `@STATUS`, stack depths; registers named by `ALIAS`: `r1 seen`),
+    with a *waiting* line while a request is unanswered (and why: no downlink below signal
+    20). The listing marks the dumped next instruction with ◆ while the editor holds the
+    uploaded code. A dump taken before a later upload of its slot is flagged as pointing into
+    old code.
   * **Comms tab** (renamed Console): a *Radio link* box (▼ signal meter with the minimum,
     log queue, science recorder, lost; ▲ request cost) and one timeline of both directions:
-    ▲ sent (`CODE` uploads, `ASK` requests with *✓ copy arrived t…* / *… waiting*), ▼ received
-    (`LOG` with merged repeats, `COPY` cards, `SYS`, `SCI` products → Gallery, `LOST`).
-    Filters All / ▲ Sent / LOG / Copies / System / Science, *Bytes*, ↓ newest. Read-only.
+    ▲ sent (`CODE` uploads, `CMD` requests with *✓ dump arrived t…* / *… waiting*), ▼ received
+    (`LOG` with merged repeats, `DUMP`, `SYS`, `SCI` products → Gallery, `LOST`). Dumps are
+    always shown **byte by byte**: each field's bytes, name, value and a `; comment`
+    (`00 00 00 FF  r1 seen  255`, `FF FF FF FF  r2 dist  -1 ; negative…`); *Decode bytes*
+    does the same for LOG and system messages (header bits `0|0001|01|0`, value). Filters
+    All / ▲ Sent / LOG / Dumps / System / Science, ↓ newest. Read-only.
+  * **Reference → Radio**: what goes up and down (and that code never comes back down), the
+    header byte, numbers (byte order, two's complement, LOG value sizes, addresses), and
+    every frame type as a decoded example (LOG, LOG without value, boot message, register
+    dump, stack dump, dump kinds). The examples come from the same decoder as Comms.
   * **Mission events** (the strip under the side panel): world and game only (goals,
     weather, supplies, upgrades, admin, rejected actions, rover alarms). Receipts for what
     was sent are left to Comms (`LOG` event `category`: `world` / `sent` / `rover`).
   * Mission control's sent record (`engine.sent`, last 100, saved v13): pairs a request
-    with its copy by rover, slot, kind and the tick the copy was taken (= the tick it was
-    sent). Not part of the simulation.
+    with its dump by rover, slot, kind and the tick the dump was taken (= the tick it was
+    sent). Not part of the simulation. The compiler exports `ALIAS` names (`regNames`).
   * Later (needs a rules decision): rover-internal alarms (`CPU FAULT`, program fault,
     watchdog) only via the downlink, so mission control knows only what it received.
 

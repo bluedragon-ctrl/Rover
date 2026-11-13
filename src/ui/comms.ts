@@ -3,7 +3,7 @@
  * (tag names, source lines), how received frames read, and which reply answers which
  * request. Shared by the Comms tab, the Code tab's Inspect box and the old Console.
  */
-import { BOOT_REASON_NAMES, decodeDump, decodeFrame, SYSTEM_TAG, type DecodedDump, type ReceivedFrame } from '../core/downlink';
+import { BOOT_REASON_NAMES, decodeDump, decodeFrame, hex, SYSTEM_TAG, type DecodedDump, type ReceivedFrame } from '../core/downlink';
 import type { SentKind, SentRecord, SimulationEngine } from '../core/SimulationEngine';
 import { Status } from '../core/types';
 import type { Unit } from '../core/Unit';
@@ -15,19 +15,22 @@ export type LogDictionary = CompileResult['logTags'];
 /** What mission control knows about one uploaded slot: its log tags and where its instructions are. */
 export interface SlotDictionary {
   tags: LogDictionary;
+  /** `ALIAS` names per register number. */
+  regs: Record<number, string[]>;
   /** Source line of the instruction at a byte address (0 if none). */
   lineAt: (addr: number) => number;
 }
 
 export type Dictionaries = Record<Slot, SlotDictionary>;
 
-export const emptyDictionary = (): SlotDictionary => ({ tags: {}, lineAt: () => 0 });
+export const emptyDictionary = (): SlotDictionary => ({ tags: {}, regs: {}, lineAt: () => 0 });
 
 /** Dictionary of a compiled slot. */
 export function slotDictionary(res: CompileResult): SlotDictionary {
   const p = res.program;
   return {
     tags: res.logTags,
+    regs: res.regNames ?? {},
     lineAt: (addr) => {
       const k = p?.indexAt.get(addr);
       return k === undefined ? 0 : p!.instrs[k].line;
@@ -190,9 +193,9 @@ export function sentText(r: SentRecord): string {
   const s = SLOT_WORD[r.slot];
   switch (r.kind) {
     case 'DUMP':
-      return `Request a copy of the ${s}'s registers`;
+      return `Dump the ${s}'s registers`;
     case 'DUMP_STACKS':
-      return `Request a copy of the ${s}'s stacks`;
+      return `Dump the ${s}'s stacks`;
     case 'CONTINUE':
       return `Resume the ${s} after BRK`;
     case 'RUN_AGAIN':
@@ -205,3 +208,103 @@ export function sentText(r: SentRecord): string {
 }
 
 export const costText = (cost: number): string => (cost ? `${(cost / 1000).toFixed(1)}% battery` : 'free');
+
+// ---------------------------------------------------------------- byte by byte (Comms "Decode bytes", Reference → Radio)
+
+/** One field of a received frame: its bytes as they arrived, what it is, its value and a short comment. */
+export interface FrameField {
+  bytes: number[];
+  name: string;
+  value: string;
+  note: string;
+}
+
+const SIZE_OF_CODE = [0, 1, 2, 4];
+const bits = (b: number) => `${b >> 7}|${((b >> 3) & 15).toString(2).padStart(4, '0')}|${((b >> 1) & 3).toString(2).padStart(2, '0')}|${b & 1}`;
+const DUMP_KIND_TEXT: Record<number, string> = { 1: 'firmware registers', 2: 'firmware stacks', 3: 'program registers', 4: 'program stacks' };
+
+/** `prog:0x026 → line 18` */
+function addrValue(addr: number, slot: Slot, d: Dictionaries): string {
+  const line = d[slot].lineAt(addr);
+  return `${formatAddr(addr, slot)}${line ? ` → line ${line}` : ''}`;
+}
+
+/** Register name with its ALIASes: `r1 seen`. */
+export function regLabel(i: number, slot: Slot, d: Dictionaries): string {
+  const names = d[slot].regs[i];
+  return names?.length ? `r${i} ${names.join('/')}` : `r${i}`;
+}
+
+/**
+ * Every byte of a received frame, explained (SPEC §3.8.3, §3.8.4): LOG and system
+ * messages, register and stack dumps. The fields' bytes joined are exactly the frame.
+ */
+export function frameFields(b: readonly number[], d: Dictionaries): FrameField[] {
+  const out: FrameField[] = [];
+  const take = (at: number, n: number) => b.slice(at, at + n) as number[];
+  const be = (at: number, n: number, signed: boolean) => {
+    let v = 0;
+    for (let i = 0; i < n; i++) v = v * 256 + (b[at + i] ?? 0);
+    if (signed && v >= 2 ** (8 * n - 1)) v -= 2 ** (8 * n);
+    return v;
+  };
+  const dump = decodeDump(b);
+  if (dump) {
+    const slot = dump.slot;
+    out.push({ bytes: take(0, 1), name: 'header', value: 'dump', note: `bits ${bits(b[0])}: system frame (tag 15) with a length byte` });
+    out.push({ bytes: take(1, 1), name: 'kind', value: DUMP_KIND_TEXT[b[1]] ?? `kind ${b[1]}`, note: '1/2 firmware, 3/4 program; odd = registers, even = stacks' });
+    out.push({ bytes: take(2, 1), name: 'length', value: `${b[2]} bytes follow`, note: '' });
+    if (dump.kind === 1) {
+      const prog = slot === 'program';
+      out.push({ bytes: take(3, 2), name: 'next', value: addrValue(dump.ip, slot, d), note: 'address of the instruction it runs next' });
+      out.push({ bytes: take(5, 1), name: '@STATUS', value: Status[dump.status] ?? String(dump.status), note: 'result of its last hardware instruction' });
+      out.push({ bytes: take(6, 1), name: 'state', value: dump.state, note: prog ? '@PROG_STATE: running in a slice, waiting, done, faulted, halted by BRK' : 'CPU: RUNNING, BLOCKED (waiting for hardware or RUN), HALTED (BRK), FAULT' });
+      dump.regs.forEach((v, i) => {
+        const note = i === 0 ? '4 bytes per register, signed, high byte first' : v < 0 ? 'negative: counted down from FF FF FF FF = -1' : '';
+        out.push({ bytes: take(7 + i * 4, 4), name: regLabel(i, slot, d), value: String(v), note });
+      });
+      const at = 7 + dump.regs.length * 4;
+      out.push({ bytes: take(at, 1), name: 'data stack', value: `${dump.dsDepth} value${dump.dsDepth === 1 ? '' : 's'}`, note: 'how many PUSHed values wait (Dump stacks shows them)' });
+      out.push({ bytes: take(at + 1, 1), name: 'call stack', value: `${dump.csDepth} return${dump.csDepth === 1 ? '' : 's'}`, note: 'how many CALLs have not RETurned yet' });
+      return out;
+    }
+    let at = 3;
+    const nd = dump.dataStack.length;
+    out.push({ bytes: take(at, 1), name: 'data stack', value: `${nd} value${nd === 1 ? '' : 's'} follow`, note: '4 bytes each, bottom first' });
+    at++;
+    dump.dataStack.forEach((v, i) => {
+      out.push({ bytes: take(at, 4), name: `data ${i}`, value: String(v), note: i === nd - 1 ? 'top: the next POP gets this' : '' });
+      at += 4;
+    });
+    const nc = dump.callStack.length;
+    out.push({ bytes: take(at, 1), name: 'call stack', value: `${nc} return${nc === 1 ? '' : 's'} follow`, note: '2-byte addresses, oldest CALL first' });
+    at++;
+    dump.callStack.forEach((a, i) => {
+      out.push({ bytes: take(at, 2), name: `return ${i}`, value: addrValue(a, slot, d), note: i === nc - 1 ? 'the next RET continues here' : '' });
+      at += 2;
+    });
+    return out;
+  }
+  const h = b[0] ?? 0;
+  const tag = (h >> 3) & 15;
+  const n = SIZE_OF_CODE[(h >> 1) & 3];
+  const sys = tag === SYSTEM_TAG;
+  const what = sys ? 'system message (tag 15)' : `LOG tag ${tag} ${tagName(tag, d).name}`;
+  out.push({ bytes: take(0, 1), name: 'header', value: `${what}${n ? `, ${n}-byte value` : ', no value'}`, note: `bits ${bits(h)}: log, tag, value size (0/1/2/4 B)` });
+  if (n) {
+    const v = be(1, n, true);
+    const boot = sys ? BOOT_REASON_NAMES[v] : undefined;
+    out.push({ bytes: take(1, n), name: 'value', value: boot ? `${v} = rebooted: ${boot}` : String(v), note: sys ? 'boot reason' : n > 1 ? 'signed, high byte first' : 'signed' });
+  }
+  return out;
+}
+
+const escHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+
+/** Fields as a table: bytes | name | value | ; comment (Comms, Reference → Radio). */
+export function fieldsHtml(fields: readonly FrameField[]): string {
+  const rows = fields
+    .map((f) => `<tr><td class="fb">${hex(f.bytes)}</td><td class="fn">${escHtml(f.name)}</td><td class="fv"><span class="v">${escHtml(f.value)}</span>${f.note ? ` <span class="fc">; ${escHtml(f.note)}</span>` : ''}</td></tr>`)
+    .join('');
+  return `<table class="frame-fields">${rows}</table>`;
+}

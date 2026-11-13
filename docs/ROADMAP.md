@@ -390,18 +390,26 @@ what the top bar shows, discoverability for beginners. Proposals with screenshot
 - [x] **Comms reorganisation** (owner agreed with the analysis; "the player needs to
       understand dump: what is copied, in which direction"). Organised by the player's
       question instead of by link direction (SPEC §3.9.3):
-      - *What is my code doing?* → Code tab **Look inside the program / firmware**
-        (`src/ui/InspectPanel.ts`): *Ask for a copy of ▲ registers / ▲ stacks*, flow line
-        *▲ you ask → the rover copies the values at once → ▼ the copy comes down*, newest
-        copy as a card with its age and a waiting line, ◆ mark in the listing, *Resume after
-        BRK*, *Restart*. Follows the Code tab's slot (decision 4 of slice 2 retired).
+      - *What is my code doing?* → Code tab **Dump program / firmware state**
+        (`src/ui/InspectPanel.ts`): *▲ Dump registers / ▲ Dump stacks*, flow line
+        *▲ you ask → the rover dumps its state at that moment → ▼ the dump comes down*,
+        newest dump as a card (registers named by `ALIAS`) with its age and a waiting line,
+        ◆ mark in the listing, *Resume after BRK*, *Restart*. Follows the Code tab's slot
+        (decision 4 of slice 2 retired). Owner: keep the word "dump" (it is the real term),
+        but say it is one slot's CPU state, not the whole rover.
       - *What passed between us and the rover?* → **Comms** tab (`src/ui/CommsPanel.ts`,
         renamed Console): radio-link box and one ▲ sent / ▼ received timeline with
-        request → copy status, merged LOG repeats, copies, system, science, lost.
+        request → dump status, merged LOG repeats, dumps, system, science, lost. Dumps are
+        shown byte by byte with a `; comment` per field (`00 00 00 FF  r1 seen  255`);
+        *Decode bytes* does the same for LOG / system messages.
+      - *What does each byte mean?* → **Reference → Radio** sub-tab: up/down, header byte,
+        numbers (byte order, two's complement), every frame type as a decoded example from
+        the same decoder (`frameFields` in `src/ui/comms.ts`).
       - *What is happening in the world?* → **Mission events** strip: receipts for sent
         things left to Comms (`LOG` event `category`).
       - Core: `engine.sent` (last 100 commands and uploads, saved, **save v13**), `LOG`
-        categories; shared non-DOM helpers in `src/ui/comms.ts`. Tests `tests/comms.test.ts`.
+        categories, compiler `regNames` (`ALIAS` names); shared non-DOM helpers in
+        `src/ui/comms.ts`. Tests `tests/comms.test.ts`.
       - Behind `?comms=1` in the game, always on in `preview.html?editor=1` (`&comms=0` shows
         the current game). **Waiting for owner review**, then: make it the default, delete
         `ConsolePanel.ts` and the flag.
@@ -528,3 +536,4 @@ window with a fixed dish?
 | 2026-11-13 | `claude/modest-bell-w0qqbq` | Reference tab split into sub-tabs (Basics, Instructions, Ports, Tools, Registry) with grouped sections and a row filter; Registry lists tiles by layer (costs, tools, science, repairs) and constants by family. Unlisted opcodes/ports fall into "Other", so they still appear automatically. |
 | 2026-11-13 | `claude/modest-bell-w0qqbq` (2) | Reference: Registry sub-tab renamed **Constants** (Tiles part, then Other constants); new **Registers** section in Basics (count per chassis, register-file upgrades, signed 32-bit wrap, all general purpose, `ALIAS`, separate per slot, zeroed on reboot). |
 | 2026-11-13 | `ccr-2a541ea4-pbkrmo` | M11: Console analysis (three streams sorted by link direction, Mission log knows rover internals, request/reply split, two slot switches); Comms reorganisation behind `?comms=1`: Code tab *Look inside* (ask for a copy of registers / stacks, direction flow, copy cards, ◆ listing mark), Comms tab (radio link + one ▲/▼ timeline with request → copy status), Mission events strip; `engine.sent` + `LOG` categories, save v13; `?console=2` proposal removed. |
+| 2026-11-13 | `ccr-2a541ea4-pbkrmo` (2) | M11 review feedback: "dump" wording kept (*Dump program state*, *▲ Dump registers / stacks*, one slot's CPU, not the whole rover); dumps in Comms byte by byte with a comment per field and `ALIAS` register names; *Decode bytes* for LOG / system messages; new **Reference → Radio** sub-tab (header byte, numbers, every frame type as a decoded example). |
