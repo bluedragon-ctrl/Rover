@@ -207,8 +207,8 @@ if (q.has('fx')) {
 }
 if (q.get('crt') === '0') view.classList.remove('crt'), (state.crt = false);
 
-// ------------------------------------------------------------------ M10 slice 2: Code tab, listing, Console
-// ?editor=1: the redesigned Code tab with the machine-code listing and the Console (uiLab.ts).
+// ------------------------------------------------------------------ Code tab, listing, Comms
+// ?editor=1: the Code tab with the machine-code listing and dumps, and the Comms tab (uiLab.ts).
 if (q.get('editor') === '1') void import('./uiLab').then((m) => m.mountUiLab(document.getElementById('photolab')!, q));
 
 // ------------------------------------------------------------------ science products (POC)

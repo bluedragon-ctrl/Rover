@@ -18,7 +18,7 @@ export interface CodeWorkspaceOptions {
   starterProgram?: string;
   onSlotChange?: (slot: Slot) => void;
   /**
-   * Show the "Dump program state" box (M11, game ?comms=1): sends a console command for a slot and
+   * Show the "Dump program state" box (M11): sends an uplink command for a slot and
    * returns why it was rejected, or null.
    */
   inspect?: (cmd: UplinkCommand, slot: Slot) => string | null;

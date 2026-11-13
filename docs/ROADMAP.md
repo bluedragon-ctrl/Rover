@@ -22,7 +22,7 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | Flash bytes | Program size in machine-code bytes instead of lines (SPEC §5.7) | ✅ done; the byte gutter became the M10 listing pane |
 | **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | ✅ slices 1–6 done (link layer, `LOG`, Console tab; recorder, spectra, Gallery tab; dumps, `BRK`, admin-only debugger; `@POST` display; camera + photos; upgrades, camera modes 3–5, fossil anomalies; save v9) |
 | **M10** | **Firmware + program slot (SPEC §3.9)** | 🚧 slice 1 (core, save v10) done; slice 2 (machine code + byte addresses, save v11, Code tab / Console redesign, listing pane) in review |
-| M11 | User interface review (after M10) | 🚧 Comms tab + Code tab *Look inside* + Mission events in owner review (`?comms=1`, save v13) |
+| M11 | User interface review (after M10) | 🚧 Comms tab, Code tab dump box, Reference → Radio, Mission events: default since 2026-11-13 (save v13); `BRK` reports itself |
 | M12 | Multiple rovers (after single-rover tuning) | planned |
 
 ## Done: Flash measured in bytes
@@ -410,16 +410,14 @@ what the top bar shows, discoverability for beginners. Proposals with screenshot
       - Core: `engine.sent` (last 100 commands and uploads, saved, **save v13**), `LOG`
         categories, compiler `regNames` (`ALIAS` names); shared non-DOM helpers in
         `src/ui/comms.ts`. Tests `tests/comms.test.ts`.
-      - Behind `?comms=1` in the game, always on in `preview.html?editor=1` (`&comms=0` shows
-        the current game). **Waiting for owner review**, then: make it the default, delete
-        `ConsolePanel.ts` and the flag.
+      - **Default in the game** (owner, 2026-11-13): the `?comms=1` flag, the Console tab and
+        `ConsolePanel.ts` are gone; review page `preview.html?editor=1`.
 - [x] Clarity pass (owner picked items 1–7 of the suggestions): not-running dumps, value
       comments for state / `@STATUS`, source links (Comms → Code tab), waiting estimate,
       foldable dump box, rejected sends in Comms, and **`BRK` sends a register dump by
       itself** (SPEC §3.8.4, rules change approved). Tests in `tests/comms.test.ts`.
-- [ ] Open suggestions: a teaching goal ("dump your program's registers"); make Comms the
-      default and delete the old Console; tab bar too wide (merge Goals + Upgrades into a
-      *Mission* tab?).
+- [ ] Open suggestions: a teaching goal ("dump your program's registers"); tab bar too wide
+      (merge Goals + Upgrades into a *Mission* tab?).
 - [ ] Phase 2 (rules decision for the owner): mission control knows the rover only from what
       it received: program faults and `BRK` hits as `SYS` frames, `CPU FAULT` / watchdog /
       battery alarms replaced by a ground-side "no contact for N ticks". Harder game; add a
@@ -545,3 +543,4 @@ window with a fixed dish?
 | 2026-11-13 | `ccr-2a541ea4-pbkrmo` | M11: Console analysis (three streams sorted by link direction, Mission log knows rover internals, request/reply split, two slot switches); Comms reorganisation behind `?comms=1`: Code tab *Look inside* (ask for a copy of registers / stacks, direction flow, copy cards, ◆ listing mark), Comms tab (radio link + one ▲/▼ timeline with request → copy status), Mission events strip; `engine.sent` + `LOG` categories, save v13; `?console=2` proposal removed. |
 | 2026-11-13 | `ccr-2a541ea4-pbkrmo` (2) | M11 review feedback: "dump" wording kept (*Dump program state*, *▲ Dump registers / stacks*, one slot's CPU, not the whole rover); dumps in Comms byte by byte with a comment per field and `ALIAS` register names; *Decode bytes* for LOG / system messages; new **Reference → Radio** sub-tab (header byte, numbers, every frame type as a decoded example). |
 | 2026-11-13 | `ccr-2a541ea4-pbkrmo` (3) | M11 clarity pass: `BRK` sends a register dump by itself (*sent by BRK*, "stopped at the BRK on line 5"); not-running program dumps marked; value comments for state / `@STATUS`; `fw L55` and dump addresses link to the Code tab; waiting estimate; foldable dump box; rejected sends listed in Comms (`engine.sent` `rejected`). |
+| 2026-11-13 | `ccr-2a541ea4-pbkrmo` (4) | Comms is the default: Console tab, `ConsolePanel.ts`, its CSS and the `?comms=1` flag removed; "Console" wording replaced (Reference, shipped firmware comments, admin banner, SPEC). |

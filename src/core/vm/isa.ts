@@ -239,7 +239,7 @@ export function decodeProgram(code: ArrayLike<number>): DecodedInstr[] {
   return out;
 }
 
-/** Address as the listing and the Console show it: `fw:0x02A` / `prog:0x010`. */
+/** Address as the listing and the Comms tab show it: `fw:0x02A` / `prog:0x010`. */
 export function formatAddr(addr: number, slot?: 'firmware' | 'program'): string {
   const a = `0x${addr.toString(16).toUpperCase().padStart(3, '0')}`;
   return slot ? `${slot === 'firmware' ? 'fw' : 'prog'}:${a}` : a;

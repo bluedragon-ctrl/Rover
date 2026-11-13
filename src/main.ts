@@ -13,7 +13,6 @@ import { renderReference } from './ui/ReferencePanel';
 import { PerfHud } from './ui/PerfHud';
 import { CompassHud } from './ui/CompassHud';
 import { GoalsPanel } from './ui/GoalsPanel';
-import { ConsolePanel } from './ui/ConsolePanel';
 import { CommsPanel } from './ui/CommsPanel';
 import { hint, MISSION_EVENTS_HELP } from './ui/hint';
 import { GalleryPanel } from './ui/GalleryPanel';
@@ -57,22 +56,16 @@ const debuggerPanel = new DebuggerPanel($('#debugger'), engine);
 if (import.meta.env.DEV) Object.assign(window, { __rover: { engine, scene, rover } });
 const compass = new CompassHud($<HTMLCanvasElement>('#compass'), engine);
 const goalsPanel = new GoalsPanel($('#goals'), engine);
-// ?comms=1 (M11, in owner review with preview.html?editor=1): the Console becomes the Comms
-// tab (one two-way timeline), copies of registers / stacks are requested from the Code tab
-// ("Look inside"), and the strip below the side panel becomes Mission events.
-const commsMode = params.get('comms') === '1';
-/** Send a console command; rejections go to the mission log. */
+// M11: the Comms tab (one two-way timeline of the radio link), dumps requested from the Code
+// tab ("Dump program state"), and the Mission events strip below the side panel.
+/** Send an uplink command; rejections go to Mission events (and Comms lists them). */
 function sendCommand(cmd: UplinkCommand, slot: Slot): string | null {
   const err = engine.command(rover, cmd, slot);
   if (err) log('warn', `Not sent: ${err}.`);
   return err;
 }
-const commsPanel = commsMode ? new CommsPanel($('#console'), engine, () => rover) : null;
-const consolePanel: { update(): void } = commsPanel ?? new ConsolePanel($('#console'), engine, () => rover, (cmd, slot) => sendCommand(cmd, slot));
-if (commsMode) {
-  $('[data-tab="console"]').textContent = 'Comms';
-  $('#log').insertAdjacentHTML('beforebegin', `<div id="log-head">Mission events${hint(MISSION_EVENTS_HELP, 'up')}</div>`);
-}
+const commsPanel = new CommsPanel($('#comms'), engine, () => rover);
+$('#log').insertAdjacentHTML('beforebegin', `<div id="log-head">Mission events${hint(MISSION_EVENTS_HELP, 'up')}</div>`);
 const galleryPanel = new GalleryPanel($('#gallery'), engine);
 galleryPanel.onFlag = (g, err) => {
   if (err) log('warn', `Cannot flag photo #${g.seq}: ${err}.`);
@@ -102,15 +95,14 @@ const code = new CodeWorkspace({
   log: (level, m) => log(level, m),
   listing: params.get('listing') !== '0',
   starterProgram: PROGRAM_FIRST_STEPS,
-  inspect: commsMode ? sendCommand : undefined,
+  inspect: sendCommand,
 });
 // Comms: a source line (fw L55, a dump's next address) opens it in the Code tab.
-if (commsPanel)
-  commsPanel.onGoto = (slot, line) => {
-    $('[data-tab="code"]').click();
-    code.setSlot(slot);
-    code.editorOf(slot).goToLine(line);
-  };
+commsPanel.onGoto = (slot, line) => {
+  $('[data-tab="code"]').click();
+  code.setSlot(slot);
+  code.editorOf(slot).goToLine(line);
+};
 
 // ---------------------------------------------------------------- log
 const logEl = $('#log');
@@ -124,7 +116,7 @@ function log(level: 'info' | 'warn' | 'error', message: string): void {
 }
 engine.events.on('LOG', (e) => {
   // With the Comms tab, receipts for what was sent are listed there (▲), not here.
-  if (commsMode && e.category === 'sent') return;
+  if (e.category === 'sent') return;
   log(e.level, `${engine.getUnit(e.unitId)?.name}: ${e.message}`);
 });
 log('info', `World seed ${seed}. Open ?seed=${seed} to start a fresh copy of this world.`);
@@ -362,7 +354,7 @@ function frame(now: number): void {
     compass.update(rover, scene.yaw);
     updateBanner();
     goalsPanel.update();
-    consolePanel.update();
+    commsPanel.update();
     galleryPanel.update();
     upgradesPanel.update();
     creditsEl.textContent = `◆ ${engine.credits} credits`;

@@ -76,9 +76,6 @@ main { display: flex; height: calc(100% - 44px); }
 .ref-pane[data-ref=ports] td:first-child { width: 128px; } .ref-pane[data-ref=ports] td:nth-child(3) { width: 26px; }
 .ref-pane[data-ref=tools] td:first-child { width: 150px; }
 .ref-pane[data-ref=consts] td:first-child { width: 108px; } .ref-pane[data-ref=consts] td:nth-child(3) { width: 96px; }
-#console-list { font-family: var(--mono); font-size: 11px; flex: 1; min-height: 140px; overflow: auto; border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; }
-#console-list .hex { color: #5d7a9a; }
-#console-list .warn { color: var(--warn); }
 #gallery-list { max-height: 65vh; overflow: auto; margin: 6px 0; }
 .product { border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; margin-bottom: 6px; }
 .product.partial { border-style: dashed; }
@@ -118,10 +115,9 @@ input[type=checkbox] { width: auto; }
 #goals .evh { margin: 14px 0 2px; color: var(--accent); }
 #upgrades .ok { color: var(--accent); } #upgrades .info { color: var(--info); } #upgrades .warn { color: var(--warn); }
 #upgrades button[disabled] { opacity: 0.45; cursor: not-allowed; }
-#console-list .dumps { color: var(--info); margin: 2px 0; }
 .admin-banner { margin-top: 8px; padding: 3px 6px; border: 1px dashed var(--warn); color: var(--warn); border-radius: 4px; }
 
-/* ---- M10 slice 2: segmented switches, Code workspace, listing, Console ---- */
+/* ---- M10 slice 2: segmented switches, Code workspace, listing ---- */
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; flex: none; }
 .seg button { border: none; border-radius: 0; background: #0f1520; color: var(--dim); padding: 4px 10px; }
 .seg button + button { border-left: 1px solid var(--line); }
@@ -165,16 +161,11 @@ input[type=checkbox] { width: auto; }
 .lst-row.err { background: #ff4d4d14; } .lst-row.err .h { color: var(--bad); }
 .lst-foot { border-top: 1px solid var(--line); padding: 3px 8px; color: var(--dim); text-align: right; }
 
-.console-panel { display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 0; }
 .panel-box { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; display: flex; flex-direction: column; gap: 6px; }
 .panel-box header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .panel-box header b { color: var(--accent); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
 .panel-box.grow { flex: 1; min-height: 0; }
 .panel-box button[disabled] { opacity: 0.45; cursor: not-allowed; }
-.badge { font-size: 10px; padding: 0 4px; border-radius: 3px; border: 1px solid currentColor; }
-.badge.firmware { color: #8fa6ff; } .badge.program { color: var(--accent); }
-#console-list .system { color: var(--dim); }
-details.help summary { cursor: pointer; } details.help p { margin: 4px 0; }
 /* Help hints: a small "?" with a tooltip on hover / focus / tap. */
 .hint { position: static; display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; padding: 0; margin-left: 6px; border-radius: 50%; border: 1px solid var(--dim); background: none; color: var(--dim); font-size: 10px; line-height: 1; vertical-align: 1px; cursor: help; text-transform: none; letter-spacing: 0; }
 .hint:hover, .hint:focus { border-color: var(--accent); color: var(--accent); outline: none; }
@@ -185,7 +176,7 @@ details.help summary { cursor: pointer; } details.help p { margin: 4px 0; }
 .hint .tip b { color: var(--text); font-size: inherit; font-weight: 600; text-transform: none; letter-spacing: 0; }
 .hint:hover .tip, .hint:focus .tip { display: block; }
 .hint .tip code { color: var(--accent); }
-/* M11: Comms tab, Code tab "Look inside" (game ?comms=1, preview.html?editor=1). */
+/* M11: Comms tab, Code tab dump box (review page preview.html?editor=1). */
 .up { --dir: #ffb020; } .down { --dir: #5ad0ff; }
 .dir { flex: none; color: var(--dir, var(--dim)); font-size: 10px; }
 b.up, b.down, .ins-flow .up, .ins-flow .down { color: var(--dir); }
@@ -204,7 +195,6 @@ b.up, b.down, .ins-flow .up, .ins-flow .down { color: var(--dir); }
 #comms-list .row .txt { flex: 1; min-width: 0; }
 #comms-list .row .src { color: #5d7a9a; margin-left: 8px; font-size: 11px; cursor: help; }
 #comms-list .row .rep { color: var(--info); margin-left: 6px; font-size: 11px; }
-#comms-list .row .hex { color: #5d7a9a; margin-left: 8px; font-size: 11px; }
 #comms-list .row .who { color: var(--info); margin-right: 6px; }
 #comms-list .row .ok { color: var(--accent); }
 #comms-list .row.sent { background: #ffb02008; }

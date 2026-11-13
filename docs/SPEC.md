@@ -249,7 +249,7 @@ prerequisites and count neither toward goals nor toward "seen" prerequisites.
 `SaveManager.serialize/deserialize` (headless). A save (`version: 13`; v1–v12 files are migrated
 by `migrate()`) holds the seed, supply drops, installed upgrades, each rover's downlink
 (log FIFO, transmitter budget, `@LOG_LOST`, recorder descriptors and progress, sequence
-number, dump replies waiting), the console's last 200 received frames, the gallery's last 100 products,
+number, dump replies waiting), mission control's last 200 received frames, the gallery's last 100 products,
 mission control's last 100 sent commands and uploads (v13, the Comms timeline),
 tick, credits, stats, cheats, storyteller state (RNG, schedule, completed goals), full
 unit and VM state (firmware source is recompiled on load), and **only chunks that are
@@ -359,13 +359,13 @@ kind 1 = science frame   size = 0; followed by 1 sequence byte, then the product
 * `@TX_DATA` (W) is shorthand for `LOG 0 value`, kept for old programs. It still
   writes `@STATUS` (`OK`, or `ERR_FULL` when the frame was dropped). It no longer carries
   science.
-* **Console** (mission-control tab): every received frame with its tick of arrival,
-  raw hex and the decoded value. Tags are named from the uploaded program, like a
-  `defmt` / spacecraft-EVR dictionary: with `CONST T_BAT 5`, `LOG T_BAT @BAT` shows as
-  `T_BAT = 812 (L17)`. A raw-hex toggle hides the decoding. Lost frames show as a gap
-  ("⚠ 3 frames lost"): the transmitter counts drops and reports the count with the next
-  frame that gets through (link-layer bookkeeping, not part of the frame bytes). The
-  console keeps the last 200 frames (saved).
+* **Comms tab** (mission control; the M9 *Console* until M11, §3.9.3): every received frame
+  with its tick of arrival and the decoded value. Tags are named from the uploaded program,
+  like a `defmt` / spacecraft-EVR dictionary: with `CONST T_BAT 5`, `LOG T_BAT @BAT` shows as
+  `T_BAT = 812 fw L17`. *Decode bytes* explains every byte. Lost frames show as a gap
+  ("LOST 3 LOG messages dropped"): the transmitter counts drops and reports the count with
+  the next frame that gets through (link-layer bookkeeping, not part of the frame bytes).
+  Mission control keeps the last 200 frames (saved).
 * **`@POST` (RW, 0–255) [M9]:** a two-digit hexadecimal display (red seven-segment
   digits, `00`–`FF`, `b` and `d` lower case) on a bezel at the **back of the cabin**, like a
   PC POST card. Free, no link needed, no `@STATUS`; writes clamp to 0–255; physical
@@ -376,7 +376,8 @@ kind 1 = science frame   size = 0; followed by 1 sequence byte, then the product
 
 ### 3.8.4 Memory dumps and `BRK`
 
-* **Uplinked commands** (Console buttons *Dump*, *Dump stacks*, *Continue*): paid like a
+* **Uplinked commands** (Code tab dump box: *Dump registers*, *Dump stacks*, *Resume after
+  BRK* = `CONTINUE`, *Restart* = `RUN_AGAIN`): paid like a
   small upload, `commandCost` = `ceil(dumpEnergy × 100 / max(10, @SIGNAL_STR))` with
   `dumpEnergy` = 150 (1.5 % battery at full signal, 15 % at signal ≤ 10); free with the
   admin *Free uploads* cheat. Rejected (nothing paid) while the rover is powered off,
@@ -390,7 +391,7 @@ kind 1 = science frame   size = 0; followed by 1 sequence byte, then the product
     signal), 38 B with 8 registers. Example: `F8 01 16 00 09 00 02 …`.
   * *Dump stacks* (kind 2): data-stack depth 1 B + 4 B per entry, call-stack depth 1 B
     + 2 B (return IP) per entry.
-  * The Console shows a dump as a **snapshot with the tick it was taken**, never as a live
+  * Mission control shows a dump as a **snapshot with the tick it was taken**, never as a live
     view, with IPs turned into source lines of the uploaded program:
     `FIRMWARE DUMP (snapshot t254): next fw:0x02A (L13) · HALTED · @STATUS OK · r0=20 … · stacks 3/0`
     (byte addresses since M10, §5.7.1).
@@ -571,16 +572,16 @@ running uplinked command sequences, or a small OS starting user programs:
   edited slot counts its draft, the other slot what is on the rover), and a warning when
   the firmware has no `RUN`. New rovers ship the default firmware and no program (the
   Program slot shows *First steps* as an unsent draft).
-* **Console**: Uplink and Downlink panels. A **Firmware / Program** switch selects the slot for *Dump*, *Dump stacks*
-  and *Continue*; downlink filters All / Log / Dumps / System. Program dumps are kinds 3 and 4, laid out like kinds 1 and 2 (§3.8.4)
-  with `@PROG_STATE` in the CPU-state byte. *Run again* (an uplinked command, paid like a
-  dump) restarts the program from the top, like the firmware writing `PROG_READY`;
-  rejected if there is no program.
-* The Console decodes log tags with both slots' `CONST` names; a tag both slots name
-  differently shows both (`T_BAT|T_X`), with lines per slot (`(fw L12, prog L3)`). Dumps
-  show their slot: `PROGRAM DUMP (snapshot t254): next prog:0x02A (L13) · PROG_HALTED · …`.
-* **Comms tab and *Dump program state* [M11, in owner review]** (game `?comms=1`,
-  `preview.html?editor=1`; replaces the `?console=2` proposal). Organised by the player's
+* **Commands per slot**: *Dump registers*, *Dump stacks* and *Resume after BRK* address one
+  slot (the Code tab's). Program dumps are kinds 3 and 4, laid out like kinds 1 and 2
+  (§3.8.4) with `@PROG_STATE` in the CPU-state byte. *Restart* (uplink `RUN_AGAIN`, paid like
+  a dump) restarts the program from the top, like the firmware writing `PROG_READY`;
+  rejected if there is no program. (M10 had these on a Console tab with its own slot
+  switch; M11 moved them to the Code tab.)
+* Mission control decodes log tags with both slots' `CONST` names; a tag both slots name
+  differently shows both (`T_BAT|T_X`), with lines per slot (`fw L12 prog L3`).
+* **Comms tab and *Dump program state* [M11]** (review page `preview.html?editor=1`;
+  replaced the M9/M10 Console). Organised by the player's
   question instead of by link direction:
   * **Code tab → *Dump program / firmware state*** (follows the Code tab's slot; the
     Console's own slot switch is gone): *▲ Dump registers*, *▲ Dump stacks* (uplink `DUMP` /
@@ -632,7 +633,7 @@ shipped programs need 20–79 B (First steps 20, Explorer 46, Fetch 72, Prospect
 
 * Core: keep the dish on the orbiter; stow the array on a squall warning; charge below a
   threshold (`CONST LOW_BAT`, `FULL_BAT`) and give the program no slices while charging;
-  give time slices (`CONST SLICE`); log the outcome (Console: `T_DONE = 3` with the result, or `T_FAULT`) and
+  give time slices (`CONST SLICE`); log the outcome (Comms: `T_DONE = 3` with the result, or `T_FAULT`) and
   acknowledge it.
 * Comfort: program-state lamp (`@IND1`), battery/charging lamp (`@IND2`), uplink lamp
   (`@IND3`), automatic

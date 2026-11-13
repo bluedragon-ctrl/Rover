@@ -39,10 +39,10 @@ interface Item {
 }
 
 /**
- * Comms tab (M11, game ?comms=1, preview.html?editor=1): the radio link as one two-way
+ * Comms tab (M11; review page preview.html?editor=1): the radio link as one two-way
  * timeline. ▲ what mission control sent (commands, uploads) with the state of its reply,
  * ▼ what the rover sent (LOG, dumps byte by byte, system, science). Read-only: sending happens in the
- * Code tab. Replaces the Console once the owner approves it.
+ * Code tab. Replaced the M9 Console.
  */
 export class CommsPanel {
   private decode = false;

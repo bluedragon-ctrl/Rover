@@ -46,7 +46,7 @@ export interface SupplyDrop {
   landed: boolean;
 }
 
-/** Console commands sent over the uplink (SPEC §3.8.4). */
+/** Commands sent over the uplink (Code tab dump box; SPEC §3.8.4). */
 export type UplinkCommand = 'DUMP' | 'DUMP_STACKS' | 'CONTINUE' | 'RUN_AGAIN';
 export const UPLINK_COMMAND_NAMES: Record<UplinkCommand, string> = { DUMP: 'Dump', DUMP_STACKS: 'Dump stacks', CONTINUE: 'Continue', RUN_AGAIN: 'Run again' };
 

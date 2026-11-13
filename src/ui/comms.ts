@@ -1,7 +1,7 @@
 /**
  * Mission control's view of the radio link (no DOM): what it knows about the uploaded code
  * (tag names, source lines), how received frames read, and which reply answers which
- * request. Shared by the Comms tab, the Code tab's Inspect box and the old Console.
+ * request. Shared by the Comms tab, the Code tab's dump box and Reference → Radio.
  */
 import { BOOT_REASON_NAMES, decodeDump, decodeFrame, hex, SYSTEM_TAG, type DecodedDump, type ReceivedFrame } from '../core/downlink';
 import type { SentKind, SentRecord, SimulationEngine } from '../core/SimulationEngine';
