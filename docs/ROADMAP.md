@@ -253,7 +253,7 @@ Slices, one PR each, in order. Every slice: tests green, build, SPEC markers upd
 
 Later (backlog): `@REC_PEEK` so firmware can inspect recorder bytes (on-board triage,
 compression); bit errors at low signal and a checksum lesson; panorama `SNAP` of the
-horizon; unknown minerals identified only by spectrum.
+horizon; unknown minerals identified only by spectrum. Rare local fauna and flora (see Backlog) reuse this pipeline.
 
 ## M10 — Firmware + program slot (outline)
 
@@ -330,6 +330,20 @@ window with a fixed dish?
 
 ## Backlog / ideas
 
+- **Local rare fauna and flora (planned, owner request 2026-11-13).** Rare native life to
+  discover, so the planet gives the player much more to explore than rocks and fossils.
+  Builds on the M9 science pipeline (photos, spectra, gallery flagging, first-of-a-kind
+  credits). Ideas to settle when it is planned: flora as rare tiles tied to habitats (lichen
+  mats near acid vents, crystal-like growths on cliffs, night-blooming patches that are only
+  visible or active in the dark); fauna as small slow-moving creatures (seeded, deterministic
+  movement through `src/core/`, no `Math.random`) that wander, hide from the headlight or
+  come out at dusk, so finding them means planning when and where to look; a species
+  catalogue in mission control (discovered / photographed / analyzed, with rarity and
+  biome), identified from photos and spectra (biosignature bands); rewards per new species,
+  with goals for catalogue milestones; rules for not harming life (the drill or grabber on a
+  living tile costs credits or reputation). Visuals (3D markers, photo scenes) go through
+  the preview first, as always.
+
 - More storyteller events using the catalogue: dust devils that push the rover, solar
   flares that scramble the uplink, ore-rich meteor falls (reward events), distress beacon
   missions. Teaching variants first.
@@ -367,3 +381,4 @@ window with a fixed dish?
 | 2026-11-13 | `ccr-2c7af876-8dzljn` | M9 slice 5: mast camera `SNAP dir [mode]`, integer-only photo generator (all 5 formats), light and subject rules, partial photos in the gallery, first-of-a-kind credits, goal *Photographer*, save v8. |
 | 2026-11-13 | `ccr-2c7af876-8dzljn` (2) | M9 slice 5: landscape photos when nothing is within reach (ridges from real cliffs and ore, ground, sun, night sky with headlight foreground). |
 | 2026-11-13 | `ccr-1e08ca42-e1n32b` | M9 slice 6: downlink/camera upgrades (recorder 2/4 KB, amplifier, trace buffer, camera modes 3–5), fossil anomalies (preview reviewed, subtle look), gallery flagging, goal *Anomaly hunter*, save v9. M9 complete. |
+| 2026-11-13 | `ccr-1e08ca42-e1n32b` (2) | Docs: rare local fauna and flora noted as planned future exploration content (Backlog). |
