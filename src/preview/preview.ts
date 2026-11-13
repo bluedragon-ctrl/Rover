@@ -16,7 +16,7 @@ import { Dust } from '../render/Dust';
 import { compile } from '../core/vm/Compiler';
 import { PROSPECTOR, TEMPLATES } from '../core/programs';
 import { EditorPanel } from '../ui/EditorPanel';
-import { buildRoverRig, drawFogTile, drawTileVec, FillBatch, indicatorHex, LineBatch, LIGHT_HEX } from '../render/VectorFactory';
+import { buildRoverRig, drawFogTile, drawTileSym, drawTileVec, FillBatch, indicatorHex, LineBatch, LIGHT_HEX, RIDGE } from '../render/VectorFactory';
 import { mountPhotoLab } from './photos';
 import { mountAnomalyLab } from './anomalies';
 
@@ -51,7 +51,9 @@ for (let y = -R; y <= R; y++)
   for (let x = -R; x <= R; x++) cells.set(key(x, y), { terrain: (hash3(3, x, y) & 7) < 2 ? T.ROUGH_GRAVEL : T.FLAT_SAND, obstacle: 0, item: 0 });
 const put = (x: number, y: number, k: keyof Cell, id: number) => (cells.get(key(x, y))![k] = id);
 // Cliff ridge to the north-east, ore at its foot, a vent field to the west, pickups south.
-for (const [x, y] of [[3, 4], [4, 4], [5, 4], [5, 5], [6, 5], [4, 5], [6, 6], [7, 6], [2, 4], [-6, 7], [-5, 7], [-5, 8], [8, -3], [8, -4], [9, -4]]) put(x, y, 'obstacle', T.CLIFF_WALL);
+for (const [x, y] of [[3, 4], [4, 4], [5, 4], [5, 5], [6, 5], [4, 5], [6, 6], [7, 6], [2, 4], [-6, 7], [-5, 7], [-5, 8], [8, -3], [8, -4], [9, -4],
+  // A small massif (3×3 core) to judge how merged ranges read.
+  [-7, -5], [-6, -5], [-5, -5], [-7, -6], [-6, -6], [-5, -6], [-7, -7], [-6, -7], [-5, -7], [-4, -6], [-8, -6], [-6, -8]]) put(x, y, 'obstacle', T.CLIFF_WALL);
 put(3, 2, 'obstacle', T.IRON_ORE);
 put(5, 3, 'obstacle', T.IRON_ORE);
 put(-2, 3, 'obstacle', T.SILICON_ORE);
@@ -64,10 +66,19 @@ put(0, 3, 'item', T.SAMPLE);
 
 const specimens: [string, number, number][] = [
   ['CLIFF_WALL', 5, 5], ['IRON_ORE', 3, 2], ['SILICON_ORE', -2, 3], ['ACID_VENT', -4, 0], ['REPAIR_KIT', 2, -2],
-  ['SAMPLE', -2, -2], ['SUPPLY_CRATE', 0, -4], ['ROUGH_GRAVEL', -1, 0], ['unexplored', 11, 0],
+  ['SAMPLE', -2, -2], ['SUPPLY_CRATE', 0, -4], ['ROUGH_GRAVEL', -1, 0], ['massif', -6, -6], ['unexplored', 11, 0],
 ];
 put(0, 0, 'terrain', T.FLAT_SAND);
 put(-1, 0, 'terrain', T.ROUGH_GRAVEL);
+
+// Tile style: 'v2' (what the game draws) or 'symbolic' (orbital-scan legend proposal).
+let style: 'v2' | 'symbolic' = new URLSearchParams(location.search).get('style') === 'symbolic' ? 'symbolic' : 'v2';
+let geoStats = '';
+/** RIDGE bits of the neighbours sharing the obstacle at (x, y). */
+function ridgeMask(x: number, y: number, id: number): number {
+  const same = (dx: number, dy: number) => cells.get(key(x + dx, y + dy))?.obstacle === id;
+  return (same(0, 1) ? RIDGE.N : 0) | (same(1, 0) ? RIDGE.E : 0) | (same(0, -1) ? RIDGE.S : 0) | (same(-1, 0) ? RIDGE.W : 0);
+}
 
 function buildPatch(): THREE.Group {
   const b = new LineBatch();
@@ -83,9 +94,11 @@ function buildPatch(): THREE.Group {
       for (const id of [c.terrain, c.obstacle, c.item]) {
         if (!id) continue;
         const d = reg.get(id)!;
-        drawTileVec(b, f, d.shape, d.color, x, y, variant);
+        if (style === 'symbolic') drawTileSym(b, f, d.shape, d.color, x, y, variant, d.shape === 'wall' ? ridgeMask(x, y, id) : 0);
+        else drawTileVec(b, f, d.shape, d.color, x, y, variant);
       }
     }
+  geoStats = `${style} · ${b.count / 2} segs · ${f.count / 3} tris`;
   const g = new THREE.Group();
   const lines = new THREE.LineSegments(b.build(), lighting.lineMaterial);
   const fills = new THREE.Mesh(f.build(), lighting.fillMaterial);
@@ -93,8 +106,14 @@ function buildPatch(): THREE.Group {
   g.add(fills, lines);
   return g;
 }
-const patch = buildPatch();
+let patch = buildPatch();
 worldRoot.add(patch);
+function rebuildPatch(): void {
+  worldRoot.remove(patch);
+  for (const o of patch.children) (o as THREE.Mesh).geometry.dispose();
+  patch = buildPatch();
+  worldRoot.add(patch);
+}
 
 // ------------------------------------------------------------------ dust
 const dust = new Dust();
@@ -163,6 +182,10 @@ button('SCAN', 'Scan pulse + radar wave', () => false, () => {
   fx.scan(Math.round(state.x), Math.round(state.y), [0, 1, 2, 3][state.facing], 4, dx === 1 && dy === 0 ? 0xff5a4a : 0x3affc8, performance.now());
 });
 button('@TX_DATA', 'Uplink', () => false, () => fx.uplink(Math.round(state.x), Math.round(state.y), true, 40, performance.now(), true));
+button('STYLE', 'Tiles', () => style.toUpperCase(), () => {
+  style = style === 'v2' ? 'symbolic' : 'v2';
+  rebuildPatch();
+});
 button('POST', 'Bloom', () => state.bloom, () => (post.enabled = state.bloom = !state.bloom));
 button('POST', 'CRT scanlines', () => state.crt, () => view.classList.toggle('crt', (state.crt = !state.crt)));
 button('UI', 'Labels', () => state.labels, () => (state.labels = !state.labels));
@@ -367,7 +390,7 @@ function frame(now: number): void {
     fps = frames / fpsT;
     frames = 0;
     fpsT = 0;
-    statsEl.textContent = `${fps.toFixed(0)} fps · ${(1000 / Math.max(1, fps)).toFixed(1)} ms\nzoom ${rig.dist.toFixed(1)} tiles · pitch ${((rig.pitch * 180) / Math.PI).toFixed(0)}°\nsun ${Math.min(100, state.sun)} · sensor ${sensor} tiles`;
+    statsEl.textContent = `${fps.toFixed(0)} fps · ${(1000 / Math.max(1, fps)).toFixed(1)} ms\nzoom ${rig.dist.toFixed(1)} tiles · pitch ${((rig.pitch * 180) / Math.PI).toFixed(0)}°\nsun ${Math.min(100, state.sun)} · sensor ${sensor} tiles\n${geoStats}`;
   }
   requestAnimationFrame(frame);
 }

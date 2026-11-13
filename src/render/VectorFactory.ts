@@ -511,6 +511,116 @@ export function drawTileVec(b: LineBatch, f: FillBatch, shape: TileShape, color:
   }
 }
 
+// ----------------------------------------------------------------------------- symbolic (preview)
+
+/** Neighbour mask bits for `drawTileSym` ridges: same-shape neighbour to the N, E, S, W. */
+export const RIDGE = { N: 1, E: 2, S: 4, W: 8 } as const;
+
+/**
+ * Symbolic tile style (preview only, `?style=symbolic`): the map as an orbital scan read
+ * through a legend, not scenery. Low 3D symbols that say what matters for driving:
+ * passable / slow / hazard / obstacle / drillable / pickup.
+ * - wall: pyramid; `ridge` (RIDGE bits) joins neighbouring walls into a mountain range
+ * - rough: 3 flat hatch strokes (scree on a topographic map)
+ * - mound / crystal: low obstacle pyramid + resource marker (diamond / hex crystal)
+ * - vent: hazard rings around a glowing pit
+ * Faces of pyramids are shaded by direction so they read in the top-down view too.
+ */
+export function drawTileSym(b: LineBatch, f: FillBatch, shape: TileShape, color: number, lx: number, ly: number, variant: number, ridge = 0): void {
+  const x0 = lx;
+  const z0 = -ly - 1;
+  const cx = lx + 0.5;
+  const cz = -ly - 0.5;
+  b.at(cx, cz);
+  f.at(cx, cz);
+  const ground = (hex: number, fill = 0.09) => {
+    b.color(hex, 0.42).seg(x0, 0, z0 + 1, x0 + 1, 0, z0 + 1).seg(x0, 0, z0, x0, 0, z0 + 1);
+    b.color(hex, 0.6).seg(x0 + 1, 0, z0 + 1, x0 + 0.9, 0, z0 + 1).seg(x0 + 1, 0, z0 + 1, x0 + 1, 0, z0 + 0.9);
+    f.color(hex, fill).quad([x0, 0, z0], [x0 + 1, 0, z0], [x0 + 1, 0, z0 + 1], [x0, 0, z0 + 1]);
+  };
+  /** Face fill by side (N, E, S, W): a fixed "sun" from the south-east. */
+  const SHADE = [0.55, 1.15, 1, 0.7];
+  /**
+   * Square pyramid. `inset` from the tile edge, `h` peak height, `ridges` sides joined to a
+   * saddle on the shared edge. Returns the peak.
+   */
+  const pyramid = (edge: number, edgeK: number, fill: number, inset: number, h: number, ridges = 0): V3 => {
+    const a = x0 + inset, A = x0 + 1 - inset, c = z0 + inset, C = z0 + 1 - inset;
+    const corners: V3[] = [[a, 0, c], [A, 0, c], [A, 0, C], [a, 0, C]];
+    const peak: V3 = [cx + (jit(variant, 1) - 0.5) * 0.16 * (1 - 2 * inset), h, cz + (jit(variant, 2) - 0.5) * 0.16 * (1 - 2 * inset)];
+    const HS = 0.38;
+    const saddle: V3[] = [[cx, HS, z0], [x0 + 1, HS, cz], [cx, HS, z0 + 1], [x0, HS, cz]];
+    for (let i = 0; i < 4; i++) {
+      const p = corners[i], q = corners[(i + 1) % 4];
+      f.color(edge, fill * SHADE[i]);
+      if (ridges & (1 << i)) {
+        f.tri(p, saddle[i], peak).tri(saddle[i], q, peak);
+        b.color(edge, edgeK).seg(...peak, ...saddle[i]);
+      } else {
+        f.tri(p, q, peak);
+        b.color(edge, edgeK * 0.7).seg(...p, ...q);
+      }
+      // Slope edge down to the corner, unless the corner is inside a range (ridges on both
+      // sides): those valley lines turned a massif into an egg crate.
+      const inner = ridges & (1 << i) && ridges & (1 << ((i + 3) % 4));
+      if (!inner) b.color(edge, edgeK).seg(...p, ...peak);
+    }
+    return peak;
+  };
+  switch (shape) {
+    case 'floor':
+      ground(color);
+      break;
+    case 'rough': {
+      ground(color, 0.1);
+      // Three short parallel strokes lying flat, like scree hatching on a map.
+      b.color(color, 0.55);
+      for (let k = 0; k < 3; k++) {
+        const px = x0 + 0.22 + jit(variant, k * 2 + 3) * 0.56;
+        const pz = z0 + 0.22 + jit(variant, k * 2 + 4) * 0.56;
+        b.seg(px - 0.07, 0.002, pz + 0.07, px + 0.07, 0.002, pz - 0.07);
+      }
+      break;
+    }
+    case 'vent': {
+      // Hazard: outer warning ring, inner rim, glowing pit.
+      ground(0x7a5a3a);
+      const ring = (r: number, n: number, y: number): V3[] => {
+        const out: V3[] = [];
+        for (let i = 0; i < n; i++) out.push([cx + Math.cos((i / n) * Math.PI * 2) * r, y, cz + Math.sin((i / n) * Math.PI * 2) * r]);
+        return out;
+      };
+      const outer = ring(0.4, 12, 0.003);
+      const inner = ring(0.22, 8, 0.006);
+      const pit = ring(0.11, 6, 0.008);
+      b.color(color, 0.5).loop(outer);
+      b.color(color, 0.9).loop(inner);
+      f.color(color, 0.25).poly(inner);
+      f.color(color, 0.6).poly(pit);
+      break;
+    }
+    case 'wall':
+      pyramid(color, 0.95, 0.12, 0.03, 0.45 + (variant % 5) * 0.08, ridge);
+      break;
+    case 'mound': {
+      // Low obstacle pyramid + floating ore diamond.
+      const p = pyramid(color, 0.45, 0.1, 0.14, 0.24);
+      f.color(color, 0.45).octa(p[0], p[1] + 0.2, p[2], 0.11, 0.13);
+      b.color(color, 1).octa(p[0], p[1] + 0.2, p[2], 0.11, 0.13);
+      break;
+    }
+    case 'crystal': {
+      // Low obstacle pyramid + one upright hexagonal crystal.
+      const p = pyramid(color, 0.45, 0.1, 0.14, 0.2);
+      prism(b, f, color, new THREE.Vector3(p[0], p[1] - 0.06, p[2]), new THREE.Vector3(0, 1, 0), 0.075, 0.3);
+      break;
+    }
+    default:
+      // Pickups are already simple symbols.
+      drawTileVec(b, f, shape, color, lx, ly, variant);
+  }
+}
+
 // ----------------------------------------------------------------------------- rover v2
 
 /**

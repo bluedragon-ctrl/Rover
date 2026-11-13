@@ -152,6 +152,20 @@ tests must stay untouched. Do it in small PRs, checking frame time at each step.
 - [x] **LOD by zoom (terrain):** beyond camera distance 36 (back below 30) chunks drop corner
       ticks, ripples, pebbles, strata and vent smoke (line verts −47%, fill tris −37%).
       Rover detail levels still open (wheels, hinges, dish ribs).
+- [ ] **Symbolic ground tiles (proposal, in preview; owner review pending).** The map is an
+      orbital scan read through a legend, not scenery; low 3D symbols say what matters for
+      driving (owner: low-poly 3D, rover keeps its detailed model). `preview.html?style=symbolic`
+      or the STYLE button; code in `drawTileSym` (`VectorFactory.ts`).
+      - Cliff wall → pyramid (height by variant); neighbouring walls join with ridgelines to
+        a saddle on the shared edge (`RIDGE` mask), so clusters read as ranges.
+      - Rough gravel → 3 flat hatch strokes (was 3 pebble prisms); flat sand → no ripples.
+      - Iron ore → low pyramid + floating diamond; silicon ore → low pyramid + upright hex
+        crystal (same obstacle shape, marker differs by shape, not only colour).
+      - Acid vent → warning ring, rim and glowing pit. Pickups unchanged.
+      - Pyramid faces shaded by direction so they read in the top-down view.
+      - Preview patch: 5,981 → 2,627 line segments (−56%), 4,840 → 1,007 triangles (−79%).
+      - If approved: switch `ChunkPool` to it (ridge mask needs neighbour lookups across
+        chunk edges), drop the far-zoom LOD, tighten the geometry budget test.
 - [ ] **Zoom range** 0.15×–8×, zoom to cursor; far zoom switches to a minimap-like style.
 - [x] **Camera:** perspective orbit camera, smooth follow, rotate with right-drag; the
       compass rotates with it (done in the renderer switch).
@@ -363,6 +377,12 @@ window with a fixed dish?
   living tile costs credits or reputation). Visuals (3D markers, photo scenes) go through
   the preview first, as always.
 
+- **Orbital pre-survey + sky (idea, owner liked it 2026-11-13; after symbolic tiles).** The
+  view is a satellite scan, so unexplored tiles could show coarse orbital data (e.g. faint
+  mountain outlines only, no ore or items) while the rover's sensors fill in the detail.
+  Changes what the player knows before exploring (fog rules in `src/core/`), so it is a
+  gameplay decision; pair it with a visible sky (horizon, orbiting satellite passes).
+
 - More storyteller events using the catalogue: dust devils that push the rover, solar
   flares that scramble the uplink, ore-rich meteor falls (reward events), distress beacon
   missions. Teaching variants first.
@@ -402,3 +422,4 @@ window with a fixed dish?
 | 2026-11-13 | `ccr-1e08ca42-e1n32b` | M9 slice 6: downlink/camera upgrades (recorder 2/4 KB, amplifier, trace buffer, camera modes 3–5), fossil anomalies (preview reviewed, subtle look), gallery flagging, goal *Anomaly hunter*, save v9. M9 complete. |
 | 2026-11-13 | `ccr-1e08ca42-e1n32b` (2) | Docs: rare local fauna and flora noted as planned future exploration content (Backlog). |
 | 2026-11-13 | `ccr-2bb4c6cf-qz99l5` | M8 performance pass: compact chunk vertices, in-place fog patching, vertex-shader culling, frustum culling, MSAA under bloom, merged rover rig, shader dust/squall, quarter-res bloom, adaptive pixel ratio, far-zoom LOD, idle throttle. |
+| 2026-11-13 | `ccr-2bb4c6cf-qz99l5` (2) | Proposal in preview: symbolic ground tiles (pyramids with ridgelines, hatched gravel, ore markers, vent rings), `?style=symbolic`; orbital pre-survey idea in Backlog. |
