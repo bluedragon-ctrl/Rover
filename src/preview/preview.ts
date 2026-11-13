@@ -17,6 +17,7 @@ import { PROSPECTOR, TEMPLATES } from '../core/programs';
 import { EditorPanel } from '../ui/EditorPanel';
 import { buildRoverRig, drawFogTile, drawTileVec, FillBatch, indicatorHex, LineBatch, LIGHT_HEX } from '../render/VectorFactory';
 import { mountPhotoLab } from './photos';
+import { mountAnomalyLab } from './anomalies';
 
 const view = document.getElementById('view')!;
 const labelsEl = document.getElementById('labels')!;
@@ -228,6 +229,8 @@ if (q.get('editor') === '1') {
 // ------------------------------------------------------------------ science products (POC)
 // ?photos=1 shows what a 16-byte camera / spectrometer product could look like.
 if (q.get('photos') === '1') mountPhotoLab(document.getElementById('photolab')!, q);
+// ?anomaly=1: M9 slice 6 fossil anomalies through every camera mode (game generator).
+if (q.get('anomaly') === '1') mountAnomalyLab(document.getElementById('photolab')!);
 
 // ------------------------------------------------------------------ frame
 function resize(): void {
