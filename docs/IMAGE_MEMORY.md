@@ -42,7 +42,8 @@ and only those products are sent to Earth.
 | `SNAP dir [mode]` | blocks 10 ticks, 200 energy | Photograph the subject in `dir` into image memory (overwrites all of it). Writes `@STATUS`. |
 | `LDB dst addr` | 1 cycle | `dst` = byte at `addr` (always 0–255). |
 | `STB addr src` | 1 cycle | Byte at `addr` = `src` (only the low 8 bits are kept: 256 → 0, −1 → 255). |
-| `SEND [type]` | blocks 1 tick | Copy image memory into the recorder as a product of `type` (default: the mode of the last `SNAP`). Writes `@STATUS`: `ERR_FULL` (no room in the recorder), `ERR_INVALID` (bad type, or the type is bigger than image memory). |
+| `SEND [type]` | blocks 1 tick, 10 energy | Copy image memory into the recorder as a product of `type` (default: the mode of the last `SNAP`). Image memory is kept. Writes `@STATUS`: `ERR_FULL` (no room in the recorder), `ERR_INVALID` (bad type, or the type is bigger than image memory), `ERR_LOW_POWER`. |
+| `ERASE` | blocks 2 ticks, 10 energy | Set every byte of image memory to 0 and forget the last `SNAP` (a `SEND` after it is a drawn picture). Writes `@STATUS`: `ERR_LOW_POWER`. |
 
 `LDB` and `STB` are compute instructions like `MOV`: no energy, no `@STATUS`.
 
@@ -126,13 +127,15 @@ In mode 5 one byte is one pixel: **address = y × 32 + x**, the easiest mode to 
 
 ## 4. Things to know
 
-* **Image memory survives reboots** (it is hardware, like the solar array), and is
-  cleared only when the rover is powered off. A program that needs a blank picture must
-  clear it first (example 1).
+* **Image memory keeps its contents** through reboots and even when the battery runs
+  flat: like a real camera's flash memory. Only two things clear it: a new `SNAP`
+  (overwrites it) and `ERASE`. A program that needs a blank picture starts with `ERASE`
+  (example 1).
 * **`SNAP` overwrites all of it.** Do not mix photos with data you want to keep.
 * **Addresses wrap** around the memory size: on Mk-I, address 256 is byte 0 and −1 is
   byte 255. No error, so check your arithmetic.
-* **`SEND` copies**: image memory is unchanged afterwards and can be sent again.
+* **`SEND` copies**: image memory is unchanged afterwards and can be sent again (only the
+  first `SEND` after a `SNAP` earns credits).
 * **`SEND type` only says how mission control decodes the bytes.** `SEND 1` on a drawing
   shows it as a 32×32 grey photo; sending a mode-3 colour picture as `SEND 1` shows noise.
 * **Mission control sees what you did.** The product header says whether the picture is
@@ -153,16 +156,17 @@ In mode 5 one byte is one pixel: **address = y × 32 + x**, the easiest mode to 
 
 ## 5. Examples
 
-Measured on Mk-I (4 cycles per tick). Ticks are CPU time only; the `SNAP` adds 10 ticks.
+Measured on Mk-I (4 cycles per tick). Ticks are CPU time only; `SNAP` adds 10 ticks, `SEND`
+1 and `ERASE` 2.
 
 | # | Example | Teaches | Flash | CPU time |
 | :--- | :--- | :--- | :--- | :--- |
-| 1 | Line | rows, addresses, clearing | 41 B | 796 cycles ≈ 200 ticks |
+| 1 | Line | rows, addresses, `ERASE` | 27 B | 28 cycles ≈ 7 ticks |
 | 2 | Test pattern | grey levels, computing from the address | 34 B | 1795 cycles ≈ 450 ticks |
 | 3 | Negative | `SNAP` → change → `SEND` | 41 B | 1541 cycles ≈ 390 ticks |
 | 4 | Stamp | numbers as bytes (masks and shifts), negative numbers | 60 B | 27 cycles ≈ 7 ticks |
 | 5 | Plot | single pixels inside a byte (bit instructions) | 95 B | 773 cycles ≈ 190 ticks |
-| 6 | Memory map | image memory as plain RAM | 86 B | runs forever |
+| 6 | Memory map | image memory as plain RAM | 72 B | runs forever |
 
 ### Example 1: Line, your first picture
 
@@ -172,10 +176,7 @@ Measured on Mk-I (4 cycles per tick). Ticks are CPU time only; the `SNAP` adds 1
 
 ALIAS r0 addr
 
-        MOV addr 0
-clear:  STB addr 0            ; 0 = 00 00 00 00 = four black pixels
-        ADD addr 1
-        JLT addr 256 clear    ; 256 bytes = the whole 32×32 picture
+        ERASE                 ; every byte 0 = 00 00 00 00 = four black pixels
         MOV addr 128          ; row 16 starts at byte 16 × 8 = 128
 line:   STB addr 0xFF         ; 0xFF = 11 11 11 11 = four white pixels
         ADD addr 1
@@ -185,8 +186,10 @@ line:   STB addr 0xFF         ; 0xFF = 11 11 11 11 = four white pixels
 ```
 
 The Gallery shows a black square with one white line through the middle, labelled
-*drawn*. **Try:** draw the line at the top (row 0) or bottom (row 31); draw a thick line
-(rows 15–17); draw a border round the picture.
+*drawn*. Without the `ERASE` the line would be drawn over whatever image memory still
+holds, for example your last photo. **Try:** clear it yourself with a loop of `STB`
+instead of `ERASE` (256 bytes: how long does it take?); draw the line at the top (row 0)
+or bottom (row 31); draw a thick line (rows 15–17); draw a border round the picture.
 
 ### Example 2: Test pattern, grey levels
 
@@ -351,10 +354,8 @@ ALIAS r1 seen
 ALIAS r2 dist
 ALIAS r3 cell
 
-        MOV cell 0
-clear:  STB cell 0            ; forget old contents: image memory
-        ADD cell 1            ; survives reboots
-        JLT cell 256 clear
+        ERASE                 ; forget the old map: image memory keeps
+                              ; its contents through reboots
 loop:   SCAN dir -> seen dist
         JEQ seen NONE go
         JGT dist 1 go
@@ -383,7 +384,9 @@ kept going and covered 780–850 tiles in the same time. Memory turns a reflex i
 strategy. **Try:** send the map home with `SEND 1` and decode it in the Gallery's hex
 view: byte `row × 16 + column` is the visit count of that tile. As a picture it looks
 scrambled (one map row of 16 bytes fills two photo rows, and a count of 1 is a single
-dark-grey pixel), so making it readable is a nice puzzle.
+dark-grey pixel), so making it readable is a nice puzzle. Or remove the `ERASE`: image
+memory keeps its contents through reboots and power loss, so the rover then remembers
+its map even after a watchdog reboot or a flat battery.
 
 ## 6. Ideas for your own programs
 

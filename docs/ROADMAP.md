@@ -484,14 +484,20 @@ Slices:
        (from the guide: diagram, rows and addresses, bits in a byte, modes table); Gallery
        labels *raw / edited / drawn* and a hex view per photo; compiler warning "`SNAP`
        without `SEND`"; Reference `SNAP` note updated.
-3. [ ] **Goals.** A teaching goal (*Darkroom*: deliver an edited photo) and maybe
-       *Postcard home* (a drawn picture). Rewards to decide.
+   - [x] Review of slice 1 (owner, 2026-11-13): `SEND` costs a little energy
+         (`sendEnergy` 10, `ERR_LOW_POWER`); image memory is **non-volatile** (like a
+         camera's flash: kept through reboots and power-off) and is cleared only by a new
+         `SNAP` or on request with the new **`ERASE`** (`1F 06`, 2 ticks, 10 energy; also
+         drops the capture), never by `SEND`. Guide: *Line* and *Memory map* start with
+         `ERASE` (27 / 72 B instead of 41 / 86 B). No rewards for drawn pictures for now.
+3. [ ] **Goals.** A teaching goal (*Darkroom*: deliver an edited photo). Drawn pictures
+       earn nothing for now (owner, 2026-11-13), so no *Postcard home* reward.
 
 Open (decide during slice 1 or in playtests):
 - ~~`plot` needs 103 B on Mk-I: bit instructions?~~ → added (slice 0). Still open: `XOR` /
   `NOT` if clearing bits with `OR` + `SUB` proves too obscure.
-- `SEND` energy (0 now: the transmitter pays per byte) and whether drawn pictures earn
-  anything beyond goals.
+- ~~`SEND` energy; rewards for drawn pictures~~ → `SEND` 10 energy; no rewards for drawn
+  pictures for now (owner, 2026-11-13).
 - Later techniques on top: deleting products from the recorder (triage), holding the
   transmitter, hardware crop / thumbnails, compressed formats (`SEND type len`), stacking
   night photos.
@@ -619,3 +625,4 @@ window with a fixed dish?
 | 2026-11-13 | `claude/gallant-bell-hb1kyd` | M12 designed with the owner: image memory (`SNAP` → `LDB` / `STB` → `SEND`, SPEC §3.8.7) and player guide `docs/IMAGE_MEMORY.md` with six examples checked on a prototype interpreter; multiple rovers dropped from the plan (one rover is plenty of work). |
 | 2026-11-13 | `claude/gallant-bell-hb1kyd` (2) | M12 slice 0: bit instructions `AND` / `OR` / `SHL` / `SHR`, opcode `1F` as extension prefix (2-byte opcodes; 1D / 1E reserved for `LDB` / `STB`), Reference *Bits* group; guide examples `plot` and `put16` rewritten with them and re-checked on the prototype. |
 | 2026-11-13 | `claude/gallant-bell-hb1kyd` (3) | M12 slice 1: image memory in the core (`SNAP` into memory, `LDB` 1D / `STB` 1E, `SEND` 1F 05, raw / edited / drawn levels in the science header, credits per capture, save v14); minimal Gallery / Reference updates; tests run the six guide examples from the Markdown. |
+| 2026-11-13 | `claude/gallant-bell-hb1kyd` (4) | M12 slice 1 review: `SEND` costs 10 energy; image memory non-volatile (kept through power-off), cleared only by `SNAP` or the new `ERASE` (`1F 06`); guide *Line* / *Memory map* use `ERASE`; no rewards for drawn pictures. |

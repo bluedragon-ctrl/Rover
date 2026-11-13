@@ -50,11 +50,12 @@ function rover(firmware: string, opts: { program?: string; link?: boolean; seed?
 const px = (b: ArrayLike<number>, x: number, y: number): number => (b[y * 8 + (x >> 2)] >> (6 - 2 * (x & 3))) & 3;
 
 describe('image memory instructions (SPEC §3.8.7)', () => {
-  it('encode as LDB 1D, STB 1E, SEND 1F 05 and decode back', () => {
-    const r = compile('LDB r0 r1\nSTB 5 r0\nSEND\nSEND 2', CHASSIS_MK1, consts);
+  it('encode as LDB 1D, STB 1E, SEND 1F 05, ERASE 1F 06 and decode back', () => {
+    const r = compile('LDB r0 r1\nSTB 5 r0\nSEND\nSEND 2\nERASE', CHASSIS_MK1, consts);
     expect(r.errors).toEqual([]);
-    expect(hex(r.program!.code)).toBe('1D 10 11 1E 05 10 1F 05 3F 05 02');
-    expect(decodeProgram(r.program!.code).map((i) => i.op)).toEqual(['LDB', 'STB', 'SEND', 'SEND']);
+    expect(hex(r.program!.code)).toBe('1D 10 11 1E 05 10 1F 05 3F 05 02 1F 06');
+    expect(decodeProgram(r.program!.code).map((i) => i.op)).toEqual(['LDB', 'STB', 'SEND', 'SEND', 'ERASE']);
+    expect(compile('ERASE 1', CHASSIS_MK1, consts).errors).toHaveLength(1);
     expect(compile('LDB 5 r0', CHASSIS_MK1, consts).errors).toHaveLength(1); // destination must be writable
   });
 
@@ -120,20 +121,56 @@ describe('image memory instructions (SPEC §3.8.7)', () => {
     expect(headerLevel(productFrame(e.seed, p)[0])).toBe(Level.EDITED);
   });
 
-  it('SEND errors: ERR_INVALID for a bad type or one bigger than image memory, ERR_FULL; 1 tick, no energy', () => {
+  it('SEND errors: ERR_INVALID for a bad type or one bigger than image memory, ERR_FULL, ERR_LOW_POWER; 1 tick, sendEnergy', () => {
     const { e, u } = rover('SEND 0\nMOV r0 @STATUS\nSEND 3\nMOV r1 @STATUS\nSEND 9\nMOV r2 @STATUS\nSEND 1\nMOV r3 @STATUS\nSLEEP 100000');
     while (u.link.recFree(u.chassis.recorderBytes) >= 258) e.recordProduct(u, { type: 1, subject: 0, x: 0, y: 0, credits: 0 });
     run(e, 12);
     expect([u.vm.regs[0], u.vm.regs[1], u.vm.regs[2], u.vm.regs[3]]).toEqual([Status.ERR_INVALID, Status.ERR_INVALID, Status.ERR_INVALID, Status.ERR_FULL]);
 
     const ok = rover('SEND 1\nSLEEP 100000');
+    const idle = rover('SLEEP 100000');
     ok.e.advanceTick();
+    idle.e.advanceTick();
     expect(ok.u.action).toMatchObject({ kind: 'WAIT', ticksLeft: BALANCE.sendTicks });
     expect(ok.u.link.products).toHaveLength(1);
-    expect(BALANCE.batteryCapacity - ok.u.energy).toBeLessThan(BALANCE.snapEnergy); // only the passive drain
+    expect(idle.u.energy - ok.u.energy).toBe(BALANCE.sendEnergy);
+    expect(BALANCE.sendEnergy).toBeGreaterThan(0);
+
+    const low = rover('SEND 1\nMOV r0 @STATUS\nSLEEP 100000');
+    low.u.energy = BALANCE.sendEnergy - 1 + BALANCE.idleDrainPerTick; // one short after this tick's drain
+    low.e.advanceTick(); // SEND fails, ends the tick (hardware)
+    low.e.advanceTick(); // MOV r0 @STATUS
+    expect(low.u.vm.regs[0]).toBe(Status.ERR_LOW_POWER);
+    expect(low.u.link.products).toHaveLength(0);
   });
 
-  it('survives a reboot, is cleared when the rover powers off, grows with camera upgrades', () => {
+  it('ERASE zeroes image memory and drops the capture on request: 2 ticks, eraseEnergy; SEND keeps the memory', () => {
+    const { e, u } = rover('SNAP NORTH\nSEND\nLDB r1 7\nERASE\nMOV r0 @STATUS\nSEND\nSLEEP 100000');
+    const idle = rover('SLEEP 100000');
+    let snapped: number[] = [];
+    until(e, () => {
+      if (u.link.products.length === 1 && !snapped.length) snapped = [...u.img];
+      return u.link.products.length === 2;
+    });
+    expect(snapped.some((b) => b !== 0)).toBe(true); // SEND left the photo in image memory
+    expect(u.vm.regs[1]).toBe(snapped[7]);
+    expect([...u.img].every((b) => b === 0)).toBe(true);
+    expect(u.vm.regs[0]).toBe(Status.OK);
+    expect(u.link.products[1]).toMatchObject({ level: Level.DRAWN }); // the capture went with the ERASE
+    expect(productPayload(e.seed, u.link.products[1]).every((b) => b === 0)).toBe(true);
+
+    const er = rover('ERASE\nSLEEP 100000');
+    er.u.img[5] = 9;
+    er.u.capture = { type: 1, subject: 0, x: 0, y: 0, noise: { tick: 0, seq: 0 } };
+    er.e.advanceTick();
+    idle.e.advanceTick();
+    expect(er.u.action).toMatchObject({ kind: 'WAIT', ticksLeft: BALANCE.eraseTicks });
+    expect(idle.u.energy - er.u.energy).toBe(BALANCE.eraseEnergy);
+    expect(er.u.img[5]).toBe(0);
+    expect(er.u.capture).toBeNull();
+  });
+
+  it('is non-volatile: survives a reboot and power-off; grows with camera upgrades', () => {
     const { e, u } = rover('STB 3 77\nSLEEP 100000');
     run(e, 2);
     e.upload(u, 'SLEEP 100000', { factory: true });
@@ -143,8 +180,8 @@ describe('image memory instructions (SPEC §3.8.7)', () => {
     u.energy = 1;
     run(e, 3);
     expect(u.vm.state).toBe(CpuState.POWER_OFF);
-    expect(u.img[3]).toBe(0);
-    expect(u.capture).toBeNull();
+    expect(u.img[3]).toBe(77);
+    expect(u.capture).not.toBeNull();
 
     const g = rover('STB 3 77\nSLEEP 100000');
     run(g.e, 2);

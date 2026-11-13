@@ -511,20 +511,25 @@ program templates follow (slice 2). Player guide with six worked examples, run b
 
 * **Image memory:** one flat byte array per rover, as big as the largest photo the
   installed camera modes take (`imageBytes(chassis)`: Mk-I 256 B; 512 B with *Colour
-  filter wheel*, 1024 B with *Hi-res sensor* or *Colour sensor*). Physical: survives
-  reboots, zeroed when the rover is powered off (and at landing). Saved.
+  filter wheel*, 1024 B with *Hi-res sensor* or *Colour sensor*). **Non-volatile**, like a
+  real camera's flash (owner, 2026-11-13): it keeps its contents through reboots and
+  power-off; only a new `SNAP` (overwrites it) and `ERASE` clear it, never `SEND`. Zeroed
+  at landing. Saved.
 * **`SNAP dir [mode]`** (timing, energy, subject and light rules unchanged, §3.8.5)
   writes the photo's bytes (layout §3.8.5) into image memory instead of the recorder and
   remembers the **capture** (the descriptor, the mode and the noise seed). `ERR_FULL` no
-  longer applies. Like the memory, the capture survives reboots and is lost at power-off.
+  longer applies. Like the memory, the capture survives reboots and power-off.
 * **`LDB dst addr`** / **`STB addr src`** (1 cycle each, compute: no energy, no `@STATUS`;
   opcodes 1D / 1E): read a byte (0–255) / write `src & 255`. Addresses wrap modulo the
   memory size. The bit instructions (`AND`, `OR`, `SHL`, `SHR`, §5.4) take pixels apart.
-* **`SEND [type]`** (hardware, blocks 1 tick, no energy; extended opcode `1F 05`): copies the first
-  `photoBytes(type)` bytes into the recorder as a product of `type` (photo types 1–5;
-  default: the mode of the last `SNAP`, else 1). Writes `@STATUS`: `OK`; `ERR_FULL` if
-  the recorder lacks room; `ERR_INVALID` for a bad type or one larger than image memory.
-  Image memory is unchanged.
+* **`SEND [type]`** (hardware, blocks `sendTicks` 1 tick, `sendEnergy` 10; extended
+  opcode `1F 05`): copies the first `photoBytes(type)` bytes into the recorder as a product
+  of `type` (photo types 1–5; default: the mode of the last `SNAP`, else 1). Writes
+  `@STATUS`: `OK`; `ERR_FULL` if the recorder lacks room; `ERR_INVALID` for a bad type or
+  one larger than image memory; `ERR_LOW_POWER`. Image memory is unchanged.
+* **`ERASE`** (hardware, blocks `eraseTicks` 2, `eraseEnergy` 10; extended opcode
+  `1F 06`): zeroes image memory and drops the capture (a `SEND` after it is *drawn*).
+  `@STATUS` `OK` or `ERR_LOW_POWER`. The only way to clear image memory besides a `SNAP`.
 * **Provenance:** bits 2–1 of a science frame's header (unused so far) carry the
   processing level: `00` *raw* (sent as captured), `01` *edited* (an `STB` since the
   `SNAP`), `10` *drawn* (no capture behind it). The Gallery labels photos by it, from the
@@ -532,7 +537,8 @@ program templates follow (slice 2). Player guide with six worked examples, run b
 * **Credits** come from the capture, never from the bytes: the **first** `SEND` after a
   `SNAP`, with `type` = the `SNAP`'s mode, carries the capture (lit photo 1, +5 first of a
   subject type; anomaly flags allowed, checked against the real tile). Every other `SEND`
-  is *drawn*: no credits, cannot be flagged. Goal *Photographer* counts captured photos.
+  is *drawn*: no credits, cannot be flagged (owner, 2026-11-13: no rewards for drawn
+  pictures for now). Goal *Photographer* counts captured photos.
 * **Storage:** raw products stay descriptors in the recorder and gallery (bytes
   regenerated, as today); edited and drawn products store their bytes (`data`, hex), and
   captured ones keep the noise seed, so the original photo can always be regenerated.
@@ -764,7 +770,8 @@ friction, but the set should stay small enough to learn in one sitting.
 | | `PEEK slot -> dst` | 1 cycle | Item ID in cargo `slot` (0 = empty); bad slot → `ERR_INVALID`. |
 | | `USE slot` | 5 ticks | Consume a cargo item (§3.3.2). |
 | | `SNAP dir [mode]` | blocks 10 | **[M9]** Photograph the subject in `dir` (§3.8.5); **[M12]** into image memory (§3.8.7). |
-| | `SEND [type]` | blocks 1 | **[M12]** Copy image memory into the science recorder as a photo product (§3.8.7). |
+| | `SEND [type]` | blocks 1 | **[M12]** Copy image memory into the science recorder as a photo product; 10 energy (§3.8.7). |
+| | `ERASE` | blocks 2 | **[M12]** Zero image memory and drop the capture; 10 energy (§3.8.7). |
 | Memory | `LDB dst addr` | 1 cycle | **[M12]** Load the byte at `addr` of image memory (0–255); compute (§3.8.7). |
 | | `STB addr src` | 1 cycle | **[M12]** Store `src & 255` at `addr` of image memory; compute (§3.8.7). |
 | Debug | `LOG tag [src]` | 1 cycle | **[M9]** Queue a log frame for the downlink; compute, no `@STATUS` (§3.8.3). |
@@ -861,7 +868,7 @@ slot, assembled on the ground (free) while typing.
   instructions of image loops: the last one-byte numbers.
 * **Extended instructions:** `nnnnn` = `1F` is a prefix; the next byte is the
   instruction's number in a second table (append only): `AND` 01, `OR` 02, `SHL` 03,
-  `SHR` 04, `SEND` 05. Like the prefix bytes of real CPUs (Z80 `CB` / `ED`, x86
+  `SHR` 04, `SEND` 05, `ERASE` 06. Like the prefix bytes of real CPUs (Z80 `CB` / `ED`, x86
   `0F`): one byte longer, same speed. `AND r0 3` = `1F 01 10 03`. `kkk` in the prefix byte
   counts optional operands as usual.
 * `kkk` counts the
