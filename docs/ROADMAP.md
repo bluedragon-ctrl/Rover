@@ -25,6 +25,22 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | M11 | User interface review (after M10) | 🚧 Comms tab, Code tab dump box, Reference → Radio, Mission events: default since 2026-11-13 (save v13); `BRK` reports itself |
 | M12 | Image memory: `SNAP` → `LDB` / `STB` → `SEND` (SPEC §3.8.7, guide [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md)) | ✅ done (bit instructions; image memory in the core, save v14; templates, Reference → Image, Gallery labels + hex view, `SNAP` warning; goal *Darkroom* + first-edit bonus per camera mode, save v15) |
 
+## Done: program templates as lessons
+
+Owner, 2026-11-13: the shipped programs are teaching material, so they must cover the
+basic operations and explain themselves. SPEC §3.9.4 has the table.
+
+- [x] Every non-image template has a header: what it does, `; Learn:`, `; Try:` (tested).
+- [x] New: *Photographer* (`SNAP` / `SEND`, `@HEADING`, `@REC_FREE`), *Field repair*
+      (`PEEK` / `USE`), *Spiral* (`CALL` arguments, `POP`, `LOG`, `BRK`), *Seismic survey*
+      (`TOOL_3` upgrade, minimum search), *Weather station* (`@TICK`, `DIV`, alerts).
+- [x] Reworked: Explorer logs acid vents (`ERR_HAZARD`, `LOG`); Prospector analyzes in a
+      `CALL lab` subroutine that `PEEK`s for empty slots; Fetch picks a direction with
+      "default, then jump" and ENDs 2 when blocked. All-in-one firmware headers explain
+      what they lack.
+- [x] Tests: the templates together use every instruction but `RUN`; each one runs and
+      does what its header says (`tests/programs.test.ts`).
+
 ## Done: Flash measured in bytes
 
 Decided with the owner: program size reflects real machine code (SPEC §5.7) instead of
@@ -636,3 +652,4 @@ window with a fixed dish?
 | 2026-11-13 | `claude/gallant-bell-hb1kyd` (4) | M12 slice 1 review: `SEND` costs 10 energy; image memory non-volatile (kept through power-off), cleared only by `SNAP` or the new `ERASE` (`1F 06`); guide *Line* / *Memory map* use `ERASE`; no rewards for drawn pictures. |
 | 2026-11-13 | `claude/gallant-bell-hb1kyd` (5) | M12 slice 2: six *Image: …* program templates (= the guide's examples, test-enforced), Reference → Image sub-tab, Gallery *raw / edited / drawn* chips and hex view, Code tab warning for `SNAP` without `SEND`. |
 | 2026-11-13 | `claude/gallant-bell-hb1kyd` (6) | M12 slice 3: goal *Darkroom* (a lit edited photo, 15 cr); first-edit bonus +5 per camera mode (`editedTypes`, save v15). M12 complete. |
+| 2026-11-13 | `claude/gallant-bell-hb1kyd` (7) | Program templates reworked as lessons (owner: they are teaching material): headers with *Learn* / *Try*, five new templates (Photographer, Field repair, Spiral, Seismic survey, Weather station), Explorer logs acid vents, Prospector `CALL lab` + `PEEK`, Fetch result 2 when blocked; tests: every instruction used, every template run. |
