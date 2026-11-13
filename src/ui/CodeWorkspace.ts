@@ -1,0 +1,309 @@
+import { FIRMWARE_TEMPLATES, PROGRAM_TEMPLATES } from '../core/programs';
+import type { SimulationEngine } from '../core/SimulationEngine';
+import type { Unit } from '../core/Unit';
+import type { CompileResult, Slot } from '../core/vm/Compiler';
+import { formatAddr } from '../core/vm/isa';
+import { EditorPanel } from './EditorPanel';
+import { buildListing, chunk, LISTING_BYTES_PER_ROW } from './listing';
+
+export interface CodeWorkspaceOptions {
+  el: HTMLElement;
+  engine: SimulationEngine;
+  rover: () => Unit;
+  log: (level: 'info' | 'warn' | 'error', message: string) => void;
+  /** Show the machine-code listing pane (preview first: SPEC §5.7.1). */
+  listing?: boolean;
+  /** Draft shown in the Program slot while the rover has no program. */
+  starterProgram?: string;
+  onSlotChange?: (slot: Slot) => void;
+}
+
+interface SlotUi {
+  editor: EditorPanel;
+  host: HTMLElement;
+  result: CompileResult | null;
+  source: string;
+}
+
+/** Source column: `label:` padded to a tab stop, then the instruction, no indentation. */
+function sourceCell(code: string): string {
+  const m = /^\s*([A-Za-z_][A-Za-z0-9_]*:)\s*(.*)$/.exec(code);
+  return m ? `${m[1].padEnd(8)}${m[2]}`.trimEnd() : `${' '.repeat(8)}${code.trim()}`;
+}
+
+const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+const SLOT_TEXT: Record<Slot, string> = {
+  program:
+    'Your task: drive, mine, photograph. The firmware runs it in time slices (<code>RUN</code>); finish with <code>END [value]</code>. Uploading is cheap and does not reboot.',
+  firmware:
+    'Advanced: keeps the rover alive (sun, dish, squalls, battery) and decides when the program runs with <code>RUN</code>. Uploading costs more and reboots the CPU.',
+};
+
+/**
+ * Code tab (M10, SPEC §3.9): two sources, one flash. The Program slot is the default;
+ * the Firmware slot is for advanced players. Each slot keeps its own editor (and undo).
+ */
+export class CodeWorkspace {
+  slot: Slot = 'program';
+  private slots: Record<Slot, SlotUi>;
+  private q = <T extends HTMLElement>(s: string) => this.opts.el.querySelector(s) as T;
+  private listingEl: HTMLElement | null;
+  private cursorLine: Record<Slot, number> = { firmware: 1, program: 1 };
+  private execLine: Record<Slot, number> = { firmware: 0, program: 0 };
+
+  constructor(private opts: CodeWorkspaceOptions) {
+    const { el } = opts;
+    el.classList.add('code-ws');
+    el.innerHTML = `
+      <div class="cw-head">
+        <span class="seg" id="cw-slots">
+          <button data-slot="program" title="Your program (default)">Program</button>
+          <button data-slot="firmware" title="Firmware (advanced): keeps the rover alive and runs the program">Firmware <small>advanced</small></button>
+        </span>
+        <div class="cw-flash" id="cw-flash" title="Flash: firmware and program share it. The slot you edit counts its draft, the other slot what is on the rover.">
+          <div class="flashbar"><i class="fw"></i><i class="prog"></i></div>
+          <span id="cw-flash-text"></span>
+        </div>
+      </div>
+      <p class="cw-hint small dim" id="cw-hint"></p>
+      <div class="toolbar">
+        <button id="cw-upload" class="primary" title="Ctrl+Enter / Ctrl+S"></button>
+        <button id="cw-compile" title="Assemble on the ground (free): machine code, addresses and the byte count">Compile</button>
+        <button id="cw-revert" title="Load the code that is on the rover">Revert</button>
+        <select id="cw-template"></select>
+      </div>
+      <div class="toolbar small"><span id="cw-state"></span><span class="dim" id="cw-cost"></span></div>
+      <div class="cw-warn small" id="cw-warn" hidden></div>
+      <div class="cw-editors">
+        <div class="cw-editor" data-ed="program"></div>
+        <div class="cw-editor" data-ed="firmware"></div>
+      </div>
+      ${opts.listing ? '<div class="cw-listing" id="cw-listing"></div>' : ''}`;
+    this.listingEl = opts.listing ? this.q('#cw-listing') : null;
+
+    const u = opts.rover();
+    const make = (slot: Slot, initial: string): SlotUi => {
+      const host = this.q<HTMLElement>(`[data-ed="${slot}"]`);
+      const ui: SlotUi = { host, result: null, source: initial, editor: null! };
+      ui.editor = new EditorPanel({
+        parent: host,
+        initial,
+        compile: (src) => opts.engine.compileFor(opts.rover(), src, slot),
+        onUpload: () => this.upload(),
+        onChange: (src, res) => {
+          ui.source = src;
+          ui.result = res;
+          if (slot === this.slot) this.refresh();
+        },
+        onCursor: (line) => {
+          this.cursorLine[slot] = line;
+          if (slot === this.slot) this.highlightRows();
+        },
+      });
+      return ui;
+    };
+    this.slots = {
+      program: make('program', u.programSource || opts.starterProgram || ''),
+      firmware: make('firmware', u.sourceCode),
+    };
+
+    el.querySelectorAll<HTMLButtonElement>('#cw-slots button').forEach((b) => b.addEventListener('click', () => this.setSlot(b.dataset.slot as Slot)));
+    this.q('#cw-upload').addEventListener('click', () => this.upload());
+    this.q('#cw-compile').addEventListener('click', () => this.compileNow());
+    this.q('#cw-revert').addEventListener('click', () => {
+      const r = opts.rover();
+      this.current.editor.setSource(this.slot === 'program' ? r.programSource : r.sourceCode);
+    });
+    const sel = this.q<HTMLSelectElement>('#cw-template');
+    sel.addEventListener('change', () => {
+      const t = (this.slot === 'program' ? PROGRAM_TEMPLATES : FIRMWARE_TEMPLATES)[sel.value];
+      if (t !== undefined) this.current.editor.setSource(t);
+      sel.value = '';
+    });
+    this.listingEl?.addEventListener('click', (e) => {
+      const row = (e.target as HTMLElement).closest<HTMLElement>('[data-line]');
+      if (row) this.current.editor.goToLine(Number(row.dataset.line));
+    });
+    this.setSlot('program');
+  }
+
+  get current(): SlotUi {
+    return this.slots[this.slot];
+  }
+
+  editorOf(slot: Slot): EditorPanel {
+    return this.slots[slot].editor;
+  }
+
+  setSlot(slot: Slot): void {
+    this.slot = slot;
+    this.opts.el.querySelectorAll<HTMLButtonElement>('#cw-slots button').forEach((b) => b.classList.toggle('active', b.dataset.slot === slot));
+    for (const s of ['program', 'firmware'] as Slot[]) this.slots[s].host.hidden = s !== slot;
+    this.current.editor.refresh();
+    this.q('#cw-hint').innerHTML = SLOT_TEXT[slot];
+    this.q('#cw-upload').textContent = slot === 'program' ? 'Upload program' : 'Upload firmware & reboot';
+    const sel = this.q<HTMLSelectElement>('#cw-template');
+    sel.innerHTML = '';
+    sel.add(new Option(slot === 'program' ? 'Programs…' : 'Firmware…', ''));
+    for (const name of Object.keys(slot === 'program' ? PROGRAM_TEMPLATES : FIRMWARE_TEMPLATES)) sel.add(new Option(name, name));
+    sel.title = slot === 'program' ? 'Load a program template into the editor' : 'Load a firmware into the editor (the all-in-one examples do not run a program)';
+    this.opts.el.classList.toggle('slot-firmware', slot === 'firmware');
+    this.refresh();
+    this.opts.onSlotChange?.(slot);
+  }
+
+  /** Upload the selected slot over the uplink. */
+  upload(): void {
+    const { engine, rover, log } = this.opts;
+    const u = rover();
+    const src = this.current.editor.source;
+    const res = this.slot === 'program' ? engine.uploadProgram(u, src) : engine.upload(u, src);
+    if (!res.program) log('error', `Upload rejected: ${res.errors.length} compile error(s). First: line ${res.errors[0].line}: ${res.errors[0].message}`);
+    else if (res.rejected) log('error', `Upload failed: ${res.rejected} Align the dish with @ANTENNA_ANGLE, or charge first.`);
+    this.refresh();
+  }
+
+  /** Compile (free, on the ground): report the slot's size and address range. */
+  compileNow(): void {
+    const { engine, rover, log } = this.opts;
+    const res = engine.compileFor(rover(), this.current.editor.source, this.slot);
+    this.current.result = res;
+    this.refresh();
+    const name = this.slot === 'program' ? 'Program' : 'Firmware';
+    if (!res.program) log('warn', `Compile: ${name} has ${res.errors.length} error(s). First: line ${res.errors[0].line}: ${res.errors[0].message}`);
+    else {
+      const range = res.flashUsed ? ` at ${formatAddr(0, this.slot)}–${formatAddr(res.flashUsed - 1, this.slot)}` : '';
+      log('info', `Compiled ${name.toLowerCase()}: ${res.flashUsed} B${range} · ${this.totalsText()}.`);
+    }
+    this.listingEl?.classList.add('flash');
+    setTimeout(() => this.listingEl?.classList.remove('flash'), 400);
+  }
+
+  private sizes(): { fw: number; prog: number; cap: number } {
+    const u = this.opts.rover();
+    const draft = this.current.result?.flashUsed ?? 0;
+    return {
+      fw: this.slot === 'firmware' ? draft : u.firmwareBytes,
+      prog: this.slot === 'program' ? draft : u.programBytes,
+      cap: u.chassis.flashBytes,
+    };
+  }
+
+  private totalsText(): string {
+    const s = this.sizes();
+    return `firmware ${s.fw} + program ${s.prog} = ${s.fw + s.prog} / ${s.cap} B`;
+  }
+
+  private totalsHtml(): string {
+    const s = this.sizes();
+    return `<span class="fwc">firmware ${s.fw}</span> + <span class="progc">program ${s.prog}</span> = ${s.fw + s.prog} / ${s.cap} B`;
+  }
+
+  /** Flash bar, state, warnings and listing for the selected slot. */
+  refresh(): void {
+    const u = this.opts.rover();
+    const ui = this.current;
+    const res = ui.result;
+    const s = this.sizes();
+    const over = s.fw + s.prog > s.cap;
+    const bar = this.q('#cw-flash');
+    bar.classList.toggle('over', over);
+    const pct = (n: number) => `${Math.min(100, (n * 100) / s.cap)}%`;
+    this.q<HTMLElement>('.flashbar .fw').style.width = pct(s.fw);
+    this.q<HTMLElement>('.flashbar .prog').style.width = pct(Math.max(0, Math.min(s.prog, s.cap - s.fw)));
+    this.q('#cw-flash-text').innerHTML = this.totalsHtml();
+
+    const onRover = this.slot === 'program' ? u.programSource : u.sourceCode;
+    const st = this.q('#cw-state');
+    if (res && res.errors.length) {
+      st.className = 'small bad';
+      st.textContent = `✗ ${res.errors.length} error${res.errors.length > 1 ? 's' : ''}`;
+    } else if (ui.editor.source !== onRover) {
+      st.className = 'small warn';
+      st.textContent = '● not uploaded';
+    } else {
+      st.className = 'small ok';
+      st.textContent = '✓ on the rover';
+    }
+
+    const warn = this.q('#cw-warn');
+    const msgs: string[] = [];
+    const hasRun = (r: CompileResult | null) => !!r?.program?.instrs.some((i) => i.op === 'RUN');
+    if (this.slot === 'firmware' && res?.program && !hasRun(res))
+      msgs.push('This firmware has no <code>RUN</code>: it never runs the program. Fine for an all-in-one firmware; load <i>Default firmware</i> to use the Program slot.');
+    if (this.slot === 'program' && !hasRun(this.opts.engine.compileFor(u, u.sourceCode, 'firmware')))
+      msgs.push('The firmware on the rover has no <code>RUN</code>, so no program runs. Switch to <b>Firmware</b> and upload <i>Default firmware</i> (or add <code>RUN</code>).');
+    warn.hidden = !msgs.length;
+    warn.innerHTML = msgs.map((m) => `⚠ ${m}`).join('<br>');
+    this.renderListing();
+  }
+
+  /** Upload cost for the selected slot (called from the UI loop: signal and battery change). */
+  updateCost(): void {
+    const { engine, rover } = this.opts;
+    const u = rover();
+    const bytes = this.current.result?.flashUsed ?? 0;
+    const el = this.q('#cw-cost');
+    const cost = this.slot === 'program' ? engine.programUploadCost(u, bytes) : engine.uploadCost(u, bytes);
+    const sig = engine.signalOf(u);
+    el.textContent = engine.cheats.freeUpload ? 'Upload cost: free (admin)' : `Upload ${this.slot} ≈ ${(cost / 1000).toFixed(1)}% battery · signal ${sig}`;
+    el.classList.toggle('bad', sig < 50 || cost >= u.energy);
+  }
+
+  /** Admin debugger: the line each slot executes next (0 = none). */
+  setExecLine(slot: Slot, line: number): void {
+    this.slots[slot].editor.setExecLine(line);
+    if (this.execLine[slot] !== line) {
+      this.execLine[slot] = line;
+      if (slot === this.slot) this.highlightRows();
+    }
+  }
+
+  // ------------------------------------------------------------------ listing (SPEC §5.7.1)
+
+  private renderListing(): void {
+    const el = this.listingEl;
+    const res = this.current.result;
+    if (!el || !res) return;
+    const l = buildListing(this.current.editor.source, res, this.slot);
+    const rows: string[] = [];
+    for (const r of l.rows) {
+      const cls = `lst-row ${r.kind}${r.error ? ' err' : ''}`;
+      const addr = r.addr === null ? '' : `<span class="pfx">${this.slot === 'firmware' ? 'fw:' : 'prog:'}</span>${formatAddr(r.addr)}`;
+      const chunks = r.kind === 'instr' ? chunk(r.bytes ?? new Array(r.size).fill(-1)) : [''];
+      const title = r.error ? ` title="${esc(r.error)}"` : '';
+      chunks.forEach((c, i) => {
+        if (i === 0)
+          rows.push(
+            `<div class="${cls}" data-line="${r.line}"${title}><span class="a">${addr}</span><span class="h">${c}</span><span class="s">${esc(sourceCell(r.code))}</span></div>`,
+          );
+        else rows.push(`<div class="lst-row cont" data-line="${r.line}"><span class="a"><span class="pfx">${this.slot === 'firmware' ? 'fw:' : 'prog:'}</span>${formatAddr(r.addr! + i * LISTING_BYTES_PER_ROW)}</span><span class="h">${c}</span><span class="s"></span></div>`);
+      });
+    }
+    const name = this.slot === 'program' ? 'PROGRAM' : 'FIRMWARE';
+    const range = l.bytes ? `${formatAddr(0, this.slot)}–${formatAddr(l.bytes - 1)}` : 'empty';
+    const status = l.ok ? '' : ` · <span class="bad">not assembled (${res.errors.length} error${res.errors.length > 1 ? 's' : ''}), sizes estimated</span>`;
+    const top = el.querySelector('.lst-body')?.scrollTop ?? 0;
+    el.innerHTML = `<div class="lst-head"><b>Listing · ${name}</b><span>${range} · ${l.bytes} B${status}</span></div>
+      <div class="lst-cols"><span class="a">address</span><span class="h">machine code</span><span class="s">source</span></div>
+      <div class="lst-body">${rows.join('') || '<div class="dim">No instructions.</div>'}</div>
+      <div class="lst-foot">${this.totalsHtml()}</div>`;
+    el.querySelector('.lst-body')!.scrollTop = top;
+    this.highlightRows(false);
+  }
+
+  private highlightRows(scroll = true): void {
+    const el = this.listingEl;
+    if (!el) return;
+    const cur = this.cursorLine[this.slot];
+    const ex = this.execLine[this.slot];
+    let first: HTMLElement | null = null;
+    el.querySelectorAll<HTMLElement>('.lst-row').forEach((r) => {
+      const line = Number(r.dataset.line);
+      r.classList.toggle('cursor', line === cur);
+      r.classList.toggle('exec', line === ex && ex > 0);
+      if (line === cur && !first) first = r;
+    });
+    if (scroll && first) (first as HTMLElement).scrollIntoView({ block: 'nearest' });
+  }
+}

@@ -1,13 +1,13 @@
 import './style.css';
 import { BALANCE } from './core/balance';
-import { FACTORY_IDLE, TEMPLATES } from './core/programs';
+import { DEFAULT_FIRMWARE, PROGRAM_FIRST_STEPS } from './core/programs';
 import { SimClock } from './core/SimClock';
 import { SimulationEngine } from './core/SimulationEngine';
-import { CpuState, Layer } from './core/types';
+import { CpuState, Layer, ProgState } from './core/types';
 import type { Unit } from './core/Unit';
 import { ThreeScene } from './render/ThreeScene';
 import { DebuggerPanel } from './ui/DebuggerPanel';
-import { EditorPanel } from './ui/EditorPanel';
+import { CodeWorkspace } from './ui/CodeWorkspace';
 import { renderReference } from './ui/ReferencePanel';
 import { PerfHud } from './ui/PerfHud';
 import { CompassHud } from './ui/CompassHud';
@@ -38,7 +38,8 @@ if (loaded.engine) {
 } else {
   engine = new SimulationEngine({ seed: seedParam || Math.floor(Math.random() * 1e9) });
   rover = engine.spawnUnit('Rover-1', 0, 0);
-  engine.upload(rover, FACTORY_IDLE, { factory: true });
+  // M10: every rover ships the default firmware and no program (SPEC §3.9.4).
+  engine.upload(rover, DEFAULT_FIRMWARE, { factory: true });
 }
 const seed = engine.seed;
 
@@ -53,8 +54,8 @@ const debuggerPanel = new DebuggerPanel($('#debugger'), engine);
 if (import.meta.env.DEV) Object.assign(window, { __rover: { engine, scene, rover } });
 const compass = new CompassHud($<HTMLCanvasElement>('#compass'), engine);
 const goalsPanel = new GoalsPanel($('#goals'), engine);
-const consolePanel = new ConsolePanel($('#console'), engine, () => rover, (cmd) => {
-  const err = engine.command(rover, cmd);
+const consolePanel = new ConsolePanel($('#console'), engine, () => rover, (cmd, slot) => {
+  const err = engine.command(rover, cmd, slot);
   if (err) log('warn', `Uplink rejected: ${err}.`);
 });
 const galleryPanel = new GalleryPanel($('#gallery'), engine);
@@ -78,28 +79,16 @@ engine.events.on('GOAL_COMPLETED', (g) => {
 });
 renderReference($('#reference'), engine.registry);
 
-const flashEl = $('#flash');
-const costEl = $('#upload-cost');
-let editorFlash = 0;
-const editor = new EditorPanel({
-  parent: $('#editor'),
-  initial: rover.sourceCode,
-  compile: (src) => engine.compileFor(rover, src),
-  onUpload: () => upload(),
-  onChange: (src, res) => {
-    editorFlash = res.flashUsed;
-    flashEl.textContent = `Flash ${res.flashUsed}/${rover.chassis.flashBytes} B${res.errors.length ? ` · ${res.errors.length} error(s)` : ''}`;
-    flashEl.classList.toggle('over', res.flashUsed > rover.chassis.flashBytes || res.errors.length > 0);
-    flashEl.classList.toggle('dirty', src !== rover.sourceCode);
-  },
+// Code tab: Program / Firmware slots (M10). The listing pane is in review in the preview
+// (preview.html?editor=1); ?listing=1 shows it in the game too.
+const code = new CodeWorkspace({
+  el: $('#code-ws'),
+  engine,
+  rover: () => rover,
+  log: (level, m) => log(level, m),
+  listing: params.get('listing') === '1',
+  starterProgram: PROGRAM_FIRST_STEPS,
 });
-
-function upload(): void {
-  const res = engine.upload(rover, editor.source);
-  if (!res.program) log('error', `Upload rejected: ${res.errors.length} compile error(s). First: line ${res.errors[0].line}: ${res.errors[0].message}`);
-  else if (res.rejected) log('error', `Upload failed: ${res.rejected} Align the dish with @ANTENNA_ANGLE, or charge first.`);
-  flashEl.classList.toggle('dirty', editor.source !== rover.sourceCode);
-}
 
 // ---------------------------------------------------------------- log
 const logEl = $('#log');
@@ -206,7 +195,10 @@ function setAdminDebugger(on: boolean): void {
   admDebugger.checked = on;
   $('#debugger-wrap').hidden = !on;
   $('#btn-step').hidden = !on;
-  if (!on) editor.setExecLine(0);
+  if (!on) {
+    code.setExecLine('firmware', 0);
+    code.setExecLine('program', 0);
+  }
   try {
     localStorage.setItem(ADMIN_DEBUGGER_KEY, on ? '1' : '0');
   } catch {
@@ -231,14 +223,6 @@ hzInput.addEventListener('change', () => {
   const v = Math.min(60, Math.max(1, Math.round(Number(hzInput.value) || 10)));
   hzInput.value = String(v);
   clock.tickHz = v;
-});
-$('#btn-upload').addEventListener('click', upload);
-$('#btn-revert').addEventListener('click', () => editor.setSource(rover.sourceCode));
-const templateSel = $<HTMLSelectElement>('#template');
-for (const name of Object.keys(TEMPLATES)) templateSel.add(new Option(name, name));
-templateSel.addEventListener('change', () => {
-  if (templateSel.value) editor.setSource(TEMPLATES[templateSel.value]);
-  templateSel.value = '';
 });
 $<HTMLInputElement>('#adm-free').addEventListener('change', (e) => (engine.cheats.freeUpload = (e.target as HTMLInputElement).checked));
 $<HTMLInputElement>('#adm-reveal').addEventListener('change', (e) => scene.setRevealAll((e.target as HTMLInputElement).checked));
@@ -274,6 +258,31 @@ document.querySelectorAll<HTMLButtonElement>('.tab').forEach((t) =>
     document.querySelectorAll('.tabpane').forEach((p) => p.classList.toggle('active', p.id === `tab-${t.dataset.tab}`));
   }),
 );
+
+// Side panel width: drag the handle on its left edge (a browser preference).
+const SIDE_KEY = 'rover.sideWidth';
+const side = $('#side');
+try {
+  const w = Number(localStorage.getItem(SIDE_KEY));
+  if (w) side.style.width = `${w}px`;
+} catch {
+  /* storage disabled */
+}
+$('#side-resize').addEventListener('pointerdown', (e) => {
+  const handle = e.currentTarget as HTMLElement;
+  handle.setPointerCapture(e.pointerId);
+  const move = (ev: PointerEvent) => (side.style.width = `${Math.min(window.innerWidth - 320, Math.max(360, window.innerWidth - ev.clientX))}px`);
+  const up = () => {
+    handle.removeEventListener('pointermove', move);
+    try {
+      localStorage.setItem(SIDE_KEY, String(side.offsetWidth));
+    } catch {
+      /* storage disabled */
+    }
+  };
+  handle.addEventListener('pointermove', move);
+  handle.addEventListener('pointerup', up, { once: true });
+});
 
 window.addEventListener('keydown', (e) => {
   if ((e.target as HTMLElement).closest('.cm-editor, input')) return;
@@ -315,10 +324,12 @@ function frame(now: number): void {
   if (uiTimer > 66) {
     uiTimer = 0;
     if (adminDebugger) {
-      debuggerPanel.update(rover);
+      debuggerPanel.update(rover, code.slot);
       const st = rover.vm.state;
       const live = st === CpuState.RUNNING || st === CpuState.BLOCKED || st === CpuState.HALTED || st === CpuState.FAULT;
-      editor.setExecLine(live ? rover.vm.nextLine : 0);
+      code.setExecLine('firmware', live && rover.slice < 0 ? rover.vm.nextLine : 0);
+      const progLive = live && (rover.slice >= 0 || rover.progState === ProgState.PROG_HALTED || rover.progState === ProgState.PROG_READY);
+      code.setExecLine('program', progLive && engine.hasProgram(rover) ? rover.prog.nextLine : 0);
     }
     const sun = engine.sun;
     clockEl.textContent = `sol ${engine.env.dayNumber(engine.tick)} · ${sun.elevation > 0 ? '☀ day' : '☾ night'} · tick ${engine.tick}`;
@@ -329,12 +340,7 @@ function frame(now: number): void {
     galleryPanel.update();
     upgradesPanel.update();
     creditsEl.textContent = `◆ ${engine.credits} credits`;
-    const cost = engine.uploadCost(rover, editorFlash);
-    const sig = engine.signalOf(rover);
-    costEl.textContent = engine.cheats.freeUpload
-      ? 'Upload cost: free (admin)'
-      : `Upload cost ≈ ${(cost / 1000).toFixed(1)}% battery · signal ${sig}`;
-    costEl.classList.toggle('bad', sig < 50 || cost >= rover.energy);
+    code.updateCost();
     hud.textContent = `${rover.name}  (${rover.x}, ${rover.y})  BAT ${rover.batteryPercent}%  HULL ${rover.hull}`;
     if (scene.hover) {
       const { x, y } = scene.hover;

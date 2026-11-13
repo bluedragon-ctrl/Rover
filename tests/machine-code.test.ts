@@ -135,3 +135,37 @@ describe('save v11', () => {
     expect(serialize(b)).toEqual(serialize(a));
   });
 });
+
+describe('listing (SPEC §5.7.1)', async () => {
+  const { buildListing, listingText } = await import('../src/ui/listing');
+  it('shows address | hex | source per slot, continues long instructions, skips comments', () => {
+    const src = '; demo\nCONST BIG 100000\nstart: MOV r0 BIG ; 7 B\nhome:\n  JLE @BAT 20 home\nEND 1';
+    const res = compile(src, CHASSIS_MK1, consts, { slot: 'program' });
+    const l = buildListing(src, res, 'program');
+    expect(l.ok).toBe(true);
+    expect(l.bytes).toBe(7 + 6 + 2);
+    expect(listingText(l)).toBe(
+      [
+        '                              CONST BIG 100000',
+        'prog:0x000 01 10 1A 00 01 86  start: MOV r0 BIG',
+        'prog:0x006 A0',
+        'prog:0x007                    home:',
+        'prog:0x007 0E 40 18 14 00 07  JLE @BAT 20 home',
+        'prog:0x00D 3C 01              END 1',
+      ].join('\n'),
+    );
+  });
+
+  it('still lists a slot with errors, with estimated sizes and unknown bytes', () => {
+    const src = 'MOV r0 1\nFOO r1\nJMP nowhere';
+    const res = compile(src, CHASSIS_MK1, consts);
+    const l = buildListing(src, res, 'firmware');
+    expect(l.ok).toBe(false);
+    expect(l.rows.map((r) => [r.addr, r.size, !!r.error])).toEqual([
+      [0, 3, false],
+      [3, 2, true],
+      [5, 3, true],
+    ]);
+    expect(listingText(l).split('\n')[2]).toBe('fw:0x005   ?? ?? ??           JMP nowhere');
+  });
+});

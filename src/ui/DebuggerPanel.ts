@@ -1,6 +1,7 @@
 import { PORTS } from '../core/ports';
 import type { SimulationEngine } from '../core/SimulationEngine';
-import { CpuState, Dir, Status } from '../core/types';
+import { CpuState, Dir, ProgState, Status } from '../core/types';
+import type { Slot } from '../core/vm/Compiler';
 import type { Unit } from '../core/Unit';
 import { TOOLS } from '../core/tools';
 import { formatAddr } from '../core/vm/isa';
@@ -13,8 +14,12 @@ export class DebuggerPanel {
 
   constructor(private el: HTMLElement, private engine: SimulationEngine) {}
 
-  update(u: Unit): void {
-    const vm = u.vm;
+  /** `slot`: the context to show (the Code tab's slot). */
+  update(u: Unit, slot: Slot = 'firmware'): void {
+    const vm = slot === 'program' ? u.prog : u.vm;
+    const ctx0 = slot === 'program' ? `PROGRAM${u.slice >= 0 ? ` · slice ${u.slice}t left` : ''}` : `FIRMWARE${u.slice >= 0 ? ' · waiting in RUN' : ''}`;
+    const progCls: Record<number, string> = { [ProgState.PROG_RUNNING]: 'ok', [ProgState.PROG_READY]: 'info', [ProgState.PROG_HALTED]: 'warn', [ProgState.PROG_FAULT]: 'bad' };
+    const stateText = slot === 'program' ? ProgState[u.progState] : vm.state;
     const stateClass =
       vm.state === CpuState.RUNNING ? 'ok' : vm.state === CpuState.BLOCKED ? 'info' : vm.state === CpuState.HALTED ? 'warn' : 'bad';
     const regs = Array.from(vm.regs)
@@ -36,9 +41,10 @@ export class DebuggerPanel {
 
     const html = `
       <div class="dbg-row">
-        <span class="pill ${stateClass}">${vm.state}</span>
+        <span class="pill ${slot === 'program' ? (progCls[u.progState] ?? 'dim') : stateClass}">${stateText}</span>
         <span class="pill ${vm.status === Status.OK ? 'dim' : 'warn'}">@STATUS ${Status[vm.status]}</span>
-        <span class="dim">next L${vm.nextLine || '-'} · ${action}</span>
+        <span class="pill dim">${ctx0}</span>
+        <span class="dim">next ${formatAddr(vm.nextIp, slot)} L${vm.nextLine || '-'} · ${action}</span>
       </div>
       ${vm.state === CpuState.FAULT ? `<div class="fault">FAULT: ${esc(vm.faultReason)} — watchdog ${vm.watchdog}t</div>` : ''}
       <div class="meters">

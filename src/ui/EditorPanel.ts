@@ -1,7 +1,7 @@
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { linter, lintGutter, type Diagnostic } from '@codemirror/lint';
 import { EditorState, StateEffect, StateField, RangeSetBuilder } from '@codemirror/state';
-import { Decoration, EditorView, gutter, GutterMarker, highlightActiveLine, keymap, lineNumbers, type DecorationSet } from '@codemirror/view';
+import { Decoration, EditorView, highlightActiveLine, keymap, lineNumbers, type DecorationSet } from '@codemirror/view';
 import type { CompileResult } from '../core/vm/Compiler';
 import { roverAsm, roverAsmHighlight } from './roverAsmLanguage';
 
@@ -26,52 +26,20 @@ const execLineField = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 });
 
-/** Bytes per source line from the last compile (docs/SPEC.md §5.7). */
-const setLineBytes = StateEffect.define<Record<number, number>>();
-const lineBytesField = StateField.define<Record<number, number>>({
-  create: () => ({}),
-  update(v, tr) {
-    for (const e of tr.effects) if (e.is(setLineBytes)) v = e.value;
-    return v;
-  },
-});
-
-class BytesMarker extends GutterMarker {
-  constructor(readonly n: number) {
-    super();
-  }
-  override eq(o: BytesMarker): boolean {
-    return o.n === this.n;
-  }
-  override toDOM(): Node {
-    return document.createTextNode(`${this.n}`);
-  }
-}
-
-/** Gutter with each instruction's machine-code size; blank for comments, labels, directives. */
-const bytesGutter = gutter({
-  class: 'cm-bytes-gutter',
-  lineMarker(view, line) {
-    const n = view.state.field(lineBytesField)[view.state.doc.lineAt(line.from).number];
-    return n ? new BytesMarker(n) : null;
-  },
-  lineMarkerChange: (u) => u.transactions.some((t) => t.effects.some((e) => e.is(setLineBytes))),
-  initialSpacer: () => new BytesMarker(88),
-});
-
 export interface EditorPanelOptions {
   parent: HTMLElement;
   initial: string;
   compile: (src: string) => CompileResult;
   onUpload: () => void;
   onChange: (src: string, result: CompileResult) => void;
-  /** Show the bytes-per-line gutter (in preview until approved for the game). */
-  showBytes?: boolean;
+  /** The cursor moved to another line (1-based): the listing follows it. */
+  onCursor?: (line: number) => void;
 }
 
 export class EditorPanel {
   readonly view: EditorView;
   private execLine = 0;
+  private cursorLine = 1;
 
   constructor(opts: EditorPanelOptions) {
     const lint = linter(
@@ -79,7 +47,6 @@ export class EditorPanel {
         const src = view.state.doc.toString();
         const res = opts.compile(src);
         opts.onChange(src, res);
-        if (opts.showBytes) view.dispatch({ effects: setLineBytes.of(res.lineBytes) });
         return res.errors.map((e): Diagnostic => {
           const line = view.state.doc.line(Math.min(Math.max(1, e.line), view.state.doc.lines));
           return { from: line.from, to: line.to, severity: 'error', message: e.message };
@@ -94,7 +61,6 @@ export class EditorPanel {
         doc: opts.initial,
         extensions: [
           lineNumbers(),
-          ...(opts.showBytes ? [lineBytesField, bytesGutter] : []),
           history(),
           highlightActiveLine(),
           roverAsm,
@@ -102,6 +68,11 @@ export class EditorPanel {
           lint,
           lintGutter(),
           execLineField,
+          EditorView.updateListener.of((u) => {
+            if (!opts.onCursor || (!u.selectionSet && !u.docChanged)) return;
+            const line = u.state.doc.lineAt(u.state.selection.main.head).number;
+            if (line !== this.cursorLine) opts.onCursor((this.cursorLine = line));
+          }),
           keymap.of([
             { key: 'Mod-Enter', run: () => (opts.onUpload(), true) },
             { key: 'Mod-s', run: () => (opts.onUpload(), true) },
@@ -118,7 +89,6 @@ export class EditorPanel {
               '.cm-activeLineGutter': { backgroundColor: '#ffffff10' },
               '&.cm-focused .cm-cursor': { borderLeftColor: '#3affc8' },
               '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': { backgroundColor: '#3affc830 !important' },
-              '.cm-bytes-gutter .cm-gutterElement': { color: '#7d8ca3', fontSize: '11px', padding: '0 6px 0 2px', textAlign: 'right' },
               '.cm-exec-line': { backgroundColor: '#3affc822', boxShadow: 'inset 3px 0 0 #3affc8' },
             },
             { dark: true },
@@ -134,6 +104,19 @@ export class EditorPanel {
 
   setSource(src: string): void {
     this.view.dispatch({ changes: { from: 0, to: this.view.state.doc.length, insert: src } });
+  }
+
+  /** Put the cursor on `line` (1-based), scroll it into view and focus the editor. */
+  goToLine(line: number): void {
+    const doc = this.view.state.doc;
+    const l = doc.line(Math.min(Math.max(1, line), doc.lines));
+    this.view.dispatch({ selection: { anchor: l.from }, effects: EditorView.scrollIntoView(l.from, { y: 'center' }) });
+    this.view.focus();
+  }
+
+  /** Re-measure after the editor was hidden (slot switch). */
+  refresh(): void {
+    this.view.requestMeasure();
   }
 
   /** Highlight the line the CPU will execute next (0 to clear). */

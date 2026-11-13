@@ -19,9 +19,9 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | M7 | Upgrades bought with credits, delivered as supply crates, seismic scanner, save v2 | ✅ done |
 | **M8** | **Visual overhaul (SPEC §7)** | 🚧 in progress: asset preview, indicator lamps, **game renderer switched to v2**, frame-time HUD + geometry baseline, pan leash; performance fine on PC, remaining items (LOD, fat lines, zoom range, atmosphere) deferred to the next visual pass |
 | M8.1 | Radar `SCAN` vs. light-limited operator view; headlight cone; `@HEADING` | ✅ done |
-| Flash bytes | Program size in machine-code bytes instead of lines (SPEC §5.7) | ✅ core done; editor byte gutter awaiting preview approval |
+| Flash bytes | Program size in machine-code bytes instead of lines (SPEC §5.7) | ✅ done; the byte gutter became the M10 listing pane |
 | **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | ✅ slices 1–6 done (link layer, `LOG`, Console tab; recorder, spectra, Gallery tab; dumps, `BRK`, admin-only debugger; `@POST` display; camera + photos; upgrades, camera modes 3–5, fossil anomalies; save v9) |
-| **M10** | **Firmware + program slot (SPEC §3.9)** | 🚧 slice 1 (core: `RUN`/`END`, two contexts, 256 B flash, default firmware + programs, save v10) done; ⏭ slice 2: UI |
+| **M10** | **Firmware + program slot (SPEC §3.9)** | 🚧 slice 1 (core, save v10) done; slice 2 (machine code + byte addresses, save v11, Code tab / Console redesign) in review; listing pane in owner preview review |
 | M11 | User interface review (after M10) | planned |
 | M12 | Multiple rovers (after single-rover tuning) | planned |
 
@@ -44,9 +44,8 @@ value (0–15 packed into the operand byte), label references 2 B; label definit
       **Prospector 120/128 B** (the M7 "almost full" lesson still holds).
 - [x] Tests: operand sizes, error-line estimates, byte limit + error line, every template
       fits Mk-I; upload-cost and Flash-upgrade tests updated.
-- [ ] **Editor byte gutter** (bytes per line next to the line numbers): in the preview
-      (`/preview.html?editor=1`, `&program=Explorer` etc.), awaiting screenshot approval;
-      then set `showBytes: true` in `src/main.ts`.
+- [x] ~~Editor byte gutter~~: superseded by the machine-code listing pane (M10 slice 2,
+      SPEC §5.7.1); the gutter was removed.
 - No save format change (chassis stats are rebuilt from upgrade ids).
 
 ## Done: M8.1 — Radar vs. operator view, directional headlight
@@ -296,22 +295,45 @@ Spec: [SPEC §3.9](SPEC.md). Outline decided with the owner on 2026-11-12, detai
       isolation, reboots and power loss, uploads, dumps, default firmware + programs,
       save round-trip mid-slice, v9 migration. Reference tab notes for `RUN` / `END`.
 
-### Slice 2 — UI
-- [ ] New rovers ship `DEFAULT_FIRMWARE` (no program); Factory idle retired.
-- [ ] Code tab: Program (default) / Firmware (advanced) switch, *Upload program*,
-      flash counter `firmware + program / 256 B`, templates split into programs and
-      firmware, warning when the firmware has no `RUN`.
-- [ ] Console: slot switch for Dump / Dump stacks / Continue, *Run again*, merged tag
-      dictionary, program dump decoding.
-- [ ] Reference tab: `RUN`, `END`, `@PROG_*`.
-- [ ] **Machine code + listing** (owner request 2026-11-13, SPEC §5.7.1): encoder with
-      fixed opcode / port numbers (decoder round-trip test over every shipped program),
-      *Compile* button and a read-only listing pane in the Code tab (address | hex |
-      source, kept in sync while typing, click a row to jump to its line), per-slot totals
-      `firmware + program = n / 256 B`; IPs become byte addresses in the VM, dumps, call
-      stack and debugger (save v11 converts old IPs); each slot addressed from 0x000.
-      Listing pane goes through the preview first (`preview.html?editor=1`); it replaces
-      the pending byte gutter, which can show the hex per line instead.
+### Slice 2 — UI + machine code (in review)
+Owner (2026-11-13, during the slice): "do not be afraid of major menu/console changes";
+the Code tab and Console were redesigned rather than extended.
+
+- [x] New rovers ship `DEFAULT_FIRMWARE` (no program; the Program slot shows *First
+      steps* as an unsent draft); Factory idle retired (kept for tests only).
+- [x] Code tab (`src/ui/CodeWorkspace.ts`): Program (default) / Firmware (advanced)
+      switch with one editor each (own undo), *Upload program* / *Upload firmware &
+      reboot*, *Compile*, flash bar `firmware + program = n / 256 B`, state (`✓ on the
+      rover` / `● not uploaded` / errors), templates split into programs and firmware
+      (`FIRMWARE_TEMPLATES`: Default firmware + the all-in-one examples), warnings when the
+      firmware (draft, or on the rover while editing the program) has no `RUN`. Side panel
+      resizable (drag its left edge; browser preference).
+- [x] Console: Uplink box (slot switch for Dump / Dump stacks / Continue, *Run again*) and
+      Downlink box (filters All / Log / Dumps / System, raw hex), help folded away; merged
+      tag dictionary (`T_BAT|T_X`, lines per slot); program dumps decoded with `prog:`
+      addresses; FW / PROG badges.
+- [x] Reference tab: `RUN`, `END`, `@PROG_*` render; intro on the two slots; opcode and
+      port number columns and the operand byte layout.
+- [x] **Machine code** (SPEC §5.7.1): `src/core/vm/isa.ts` (opcode table, operand modes,
+      encoder, decoder), `PORT_CODES`; compiler emits `program.code`; labels, `lineToIp`,
+      IPs and return addresses are byte addresses in the VM, dumps, call stack and
+      debugger; save v11 converts v10 IPs. Tests `tests/machine-code.test.ts` (decoder
+      round-trip over every shipped program, encoding examples, VM, migration, listing).
+- [x] Listing pane (`src/ui/listing.ts` + Code tab): address | hex | source, in sync while
+      typing, click a row → line, cursor and debugger line highlighted, per-slot range and
+      totals. Shown in `preview.html?editor=1` (with the Console, on a live engine); in the
+      game only with `?listing=1` until the owner approves. Replaces the byte gutter.
+- [x] Admin debugger follows the Code tab's slot (program context, `@PROG_STATE`, addresses).
+- [ ] Owner review: listing screenshots → enable it in the game by default.
+
+**Decisions taken in slice 2 (owner may veto):**
+1. Optional operands are counted in the opcode byte's top 3 bits (`STEP 1 2` = `34 01 02`):
+   without it the decoder cannot tell a short immediate / register byte from the next
+   opcode, and sizes had to stay as before. Costs: at most 31 instructions, `CALL` ≤ 7 args.
+2. Port numbers = the order of `PORTS` at the time of the change (`@BAT` 0 … `@HEADLIGHT` 41).
+3. Flash bar: the edited slot counts its draft, the other slot what is on the rover (that
+   is what the upload checks).
+4. The Console's slot switch is independent of the Code tab's slot and defaults to Program.
 
 ### Later / open
 - Tune `SLICE` and charge thresholds in playtests.
@@ -425,3 +447,4 @@ window with a fixed dish?
 | 2026-11-13 | `ccr-1e08ca42-e1n32b` | M9 slice 6: downlink/camera upgrades (recorder 2/4 KB, amplifier, trace buffer, camera modes 3–5), fossil anomalies (preview reviewed, subtle look), gallery flagging, goal *Anomaly hunter*, save v9. M9 complete. |
 | 2026-11-13 | `ccr-1e08ca42-e1n32b` (2) | Docs: rare local fauna and flora noted as planned future exploration content (Backlog). |
 | 2026-11-13 | `ccr-d9e2f47d-6jnxk7` | M10 detailed plan with the owner (Mk-I 256 B, two sources, writable `@PROG_STATE`, dumps per slot); slice 1 core: `RUN`/`END`, program context and slices, program upload, Run again, per-slot dumps, default firmware 136 B + 4 programs, save v10. |
+| 2026-11-13 | `m10-slice2` | M10 slice 2: machine code (opcode/port tables, encoder/decoder, byte-address IPs, save v11), Code tab redesign (Program/Firmware slots, Upload program, Compile, flash bar, no-`RUN` warning), Console redesign (slot switch, Run again, merged tags, program dumps), Reference machine-code columns, listing pane in preview review; new rovers ship the default firmware. |

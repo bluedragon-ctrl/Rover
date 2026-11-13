@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BALANCE, CHASSIS_MK1 } from '../src/core/balance';
-import { decodeFrame, Downlink, encodeLog, hex, productFrameBytes, ProductType, SYSTEM_TAG } from '../src/core/downlink';
+import { decodeFrame, Downlink, encodeCpuDump, encodeLog, hex, productFrameBytes, ProductType, SYSTEM_TAG } from '../src/core/downlink';
 import { productFrame, spectrum } from '../src/core/imaging';
 import { Status } from '../src/core/types';
 import { T } from '../src/core/WorldRegistry';
@@ -196,14 +196,34 @@ describe('downlink determinism and saves', () => {
 });
 
 describe('console decoding', async () => {
-  const { describeFrame } = await import('../src/ui/ConsolePanel');
+  const { describeFrame, emptyDictionary, slotDictionary } = await import('../src/ui/ConsolePanel');
   it('names tags from CONSTs and lines, decodes boot frames', () => {
-    const dict = compile('CONST T_BAT 5\nLOG T_BAT @BAT', CHASSIS_MK1).logTags;
-    const f = (bytes: number[]) => describeFrame({ unitId: 1, tick: 1, bytes, gap: 0 }, dict);
-    expect(f(encodeLog(5, 812))).toBe('T_BAT = 812 (L2)');
+    const d = { firmware: slotDictionary(compile('CONST T_BAT 5\nLOG T_BAT @BAT', CHASSIS_MK1)), program: emptyDictionary() };
+    const f = (bytes: number[]) => describeFrame({ unitId: 1, tick: 1, bytes, gap: 0 }, d);
+    expect(f(encodeLog(5, 812))).toBe('T_BAT = 812 (fw L2)');
     expect(f(encodeLog(3, -1))).toBe('tag 3 = -1');
     expect(f(encodeLog(3, null))).toBe('tag 3');
     expect(f(encodeLog(15, 2))).toBe('BOOT: watchdog');
+  });
+
+  it('merges both slots: a tag named differently in each shows both names (SPEC §3.9.3)', () => {
+    const d = {
+      firmware: slotDictionary(compile('CONST T_BAT 1\nCONST T_END 14\nLOG T_BAT @BAT\nLOG T_END', CHASSIS_MK1)),
+      program: slotDictionary(compile('CONST T_X 1\nCONST T_END 14\nSLEEP 1\nLOG T_X @X\nLOG T_END 3\nLOG 6', CHASSIS_MK1, {}, { slot: 'program' })),
+    };
+    const f = (bytes: number[]) => describeFrame({ unitId: 1, tick: 1, bytes, gap: 0 }, d);
+    expect(f(encodeLog(1, 5))).toBe('T_BAT|T_X = 5 (fw L3, prog L4)');
+    expect(f(encodeLog(14, null))).toBe('T_END (fw L4, prog L5)');
+    expect(f(encodeLog(6, 2))).toBe('tag 6 = 2 (prog L6)');
+  });
+
+  it('decodes program dumps with prog: addresses and program source lines', () => {
+    const res = compile('MOV r0 42\nPUSH 6\nBRK\nSLEEP 1000', CHASSIS_MK1, {}, { slot: 'program' });
+    const d = { firmware: emptyDictionary(), program: slotDictionary(res) };
+    const bytes = encodeCpuDump({ ip: 7, status: 0, state: 5, regs: [42, 0, 0, 0], dsDepth: 1, csDepth: 0 }, 3);
+    expect(describeFrame({ unitId: 1, tick: 9, bytes, gap: 0, taken: 8 }, d)).toBe(
+      'PROGRAM DUMP (snapshot t8): next prog:0x007 (L4) · PROG_HALTED · @STATUS OK · r0=42 r1=0 r2=0 r3=0 · stacks 1/0',
+    );
   });
 });
 

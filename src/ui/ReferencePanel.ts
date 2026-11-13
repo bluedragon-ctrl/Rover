@@ -1,8 +1,11 @@
-import { PORTS } from '../core/ports';
+import { PORT_CODES, PORTS } from '../core/ports';
+import { OPCODE_NUMBERS } from '../core/vm/isa';
 import { builtinConstants, formatSig, OPCODES } from '../core/vm/Compiler';
 import type { WorldRegistry } from '../core/WorldRegistry';
 import { CHASSIS_MK1, ENCODING as E } from '../core/balance';
 import { TOOLS } from '../core/tools';
+
+const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
 
 const NOTES: Record<string, string> = {
   MOV: 'copy value', PUSH: 'push to data stack', POP: 'pop from data stack',
@@ -19,12 +22,17 @@ const NOTES: Record<string, string> = {
 
 /** Generated language reference: always in sync with the compiler and port table. */
 export function renderReference(el: HTMLElement, registry: WorldRegistry): void {
-  const ops = OPCODES.map((op) => `<tr><td><code>${formatSig(op)}</code></td><td>${NOTES[op] ?? ''}</td></tr>`).join('');
-  const ports = PORTS.map((p) => `<tr><td><code>@${p.name}</code></td><td>${p.read ? 'R' : ''}${p.write ? 'W' : ''}</td><td>${p.description}</td></tr>`).join('');
+  const h2 = (n: number) => n.toString(16).toUpperCase().padStart(2, '0');
+  const ops = OPCODES.map((op) => `<tr><td><code>${formatSig(op)}</code></td><td class="dim"><code>${h2(OPCODE_NUMBERS[op])}</code></td><td>${NOTES[op] ?? ''}</td></tr>`).join('');
+  const ports = PORTS.map((p) => `<tr><td><code>@${p.name}</code></td><td class="dim"><code>${h2(0x40 | PORT_CODES.indexOf(p.name))}</code></td><td>${p.read ? 'R' : ''}${p.write ? 'W' : ''}</td><td>${p.description}</td></tr>`).join('');
   const consts = Object.entries({ ...builtinConstants(), ...registry.constants() })
     .map(([k, v]) => `<code>${k}=${v}</code>`)
     .join(' ');
   el.innerHTML = `
+    <p><b>Two slots.</b> The <b>program</b> is your task (Code tab, Program): the firmware runs it in time slices with
+    <code>RUN</code>; it finishes with <code>END [value]</code>. The <b>firmware</b> keeps the rover alive and decides when the
+    program runs (advanced). Both share the flash; each has its own labels, <code>CONST</code>s, registers and stacks.
+    The firmware reads the program's state in <code>@PROG_STATE</code> and its result in <code>@PROG_RESULT</code>.</p>
     <p>One instruction per line. <code>label:</code> marks a jump target, <code>;</code> starts a comment.
     The program loops back to the top when it runs off the end.
     Compute instructions are fast (several per tick); hardware instructions (<code>SCAN STEP SLEEP ACT USE SNAP</code>) end the tick and take time.</p>
@@ -33,10 +41,15 @@ export function renderReference(el: HTMLElement, registry: WorldRegistry): void 
     Constants cost what their value costs (<code>NORTH</code> 1 B, <code>IRON_ORE</code> 1 B).
     Labels, comments, <code>ALIAS r0 name</code> and <code>CONST NAME 5</code> themselves cost nothing.
     Example: <code>JLE @BAT 20 home</code> = ${E.opcode}+${E.port}+${E.imm8}+${E.label} = ${E.opcode + E.port + E.imm8 + E.label} B.</p>
+    <p><b>Machine code</b> (<b>Compile</b> shows the listing): opcode byte = instruction number (column 2 below), plus 0x20 per
+    optional operand given (<code>STEP 1 2</code> = <code>34 01 02</code>). Operand bytes: <code>00</code>–<code>0F</code> number 0–15,
+    <code>10</code>–<code>17</code> register r0–r7, <code>40</code>–<code>7F</code> port (column 2 of Ports), <code>18</code> / <code>19</code> / <code>1A</code>
+    followed by an 8 / 16 / 32-bit number; a label is its 2-byte address. Each slot starts at address 0x000:
+    <code>JLE @BAT 20 home</code> with <code>home</code> at 0x02A = <code>0E 40 18 14 00 2A</code>.</p>
     <h4>Instructions</h4><table>${ops}</table>
     <h4>Tools (Mk-I hardpoints; TOOL_3 can be fitted with an upgrade)</h4><table>${CHASSIS_MK1.tools
-      .map((t, i) => (t ? `<tr><td><code>ACT TOOL_${i} &lt;${TOOLS[t].arg}&gt;</code></td><td>${TOOLS[t].name}: ${TOOLS[t].description} ${TOOLS[t].ticks} ticks, ${TOOLS[t].energy / 1000}% battery.</td></tr>` : `<tr><td><code>ACT TOOL_${i}</code></td><td>empty hardpoint: ERR_NO_TOOL</td></tr>`))
-      .join('')}<tr><td><code>ACT TOOL_3 &lt;dir&gt;</code></td><td>with the upgrade: ${TOOLS.SEISMIC.name}: ${TOOLS.SEISMIC.description}</td></tr><tr><td><code>SNAP &lt;dir&gt; [mode]</code></td><td>${TOOLS.CAMERA.name}: ${TOOLS.CAMERA.description} ${TOOLS.CAMERA.ticks} ticks, ${TOOLS.CAMERA.energy / 1000}% battery.</td></tr><tr><td><code>USE &lt;slot&gt; [system]</code></td><td>${TOOLS.USE_ITEM.name}: ${TOOLS.USE_ITEM.description} ${TOOLS.USE_ITEM.ticks} ticks, ${TOOLS.USE_ITEM.energy / 1000}% battery.</td></tr></table>
+      .map((t, i) => (t ? `<tr><td><code>ACT TOOL_${i} &lt;${TOOLS[t].arg}&gt;</code></td><td>${TOOLS[t].name}: ${esc(TOOLS[t].description)} ${TOOLS[t].ticks} ticks, ${TOOLS[t].energy / 1000}% battery.</td></tr>` : `<tr><td><code>ACT TOOL_${i}</code></td><td>empty hardpoint: ERR_NO_TOOL</td></tr>`))
+      .join('')}<tr><td><code>ACT TOOL_3 &lt;dir&gt;</code></td><td>with the upgrade: ${TOOLS.SEISMIC.name}: ${esc(TOOLS.SEISMIC.description)}</td></tr><tr><td><code>SNAP &lt;dir&gt; [mode]</code></td><td>${TOOLS.CAMERA.name}: ${esc(TOOLS.CAMERA.description)} ${TOOLS.CAMERA.ticks} ticks, ${TOOLS.CAMERA.energy / 1000}% battery.</td></tr><tr><td><code>USE &lt;slot&gt; [system]</code></td><td>${TOOLS.USE_ITEM.name}: ${esc(TOOLS.USE_ITEM.description)} ${TOOLS.USE_ITEM.ticks} ticks, ${TOOLS.USE_ITEM.energy / 1000}% battery.</td></tr></table>
     <h4>Ports</h4><table>${ports}</table>
     <h4>Constants</h4><p class="consts">${consts}</p>
     <h4>Keys</h4><p><code>Ctrl+Enter</code> upload · <code>Space</code> pause (outside editor) · <code>.</code> step instruction · <code>V</code> camera view · <code>F</code> follow rover · <code>Q</code>/<code>E</code> rotate · <code>B</code> bloom · <code>P</code> frame-time HUD</p>
