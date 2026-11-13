@@ -77,6 +77,8 @@ export interface ProductDesc {
   lit?: boolean;
   /** Photos: landscape view sampled from the world (no subject within reach; subject = 0). */
   horizon?: HorizonView;
+  /** Photos: the subject tile is an anomaly (ground truth: the gallery never shows this). */
+  anomaly?: boolean;
 }
 
 /** Payload size code for a signed 32-bit value: smallest of 1/2/4 bytes that holds it. */
@@ -141,6 +143,8 @@ export interface ReceivedProduct extends ProductDesc {
   arrived: number;
   /** Bytes received so far, out of productFrameBytes(type). */
   received: number;
+  /** Mission control flagged this photo as an anomaly: right ('hit'), already catalogued ('known') or wrong ('miss'). */
+  flag?: 'hit' | 'known' | 'miss';
 }
 
 /** Per-rover transmitter state (saved). */

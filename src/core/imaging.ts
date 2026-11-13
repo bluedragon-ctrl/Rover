@@ -50,7 +50,7 @@ export function productPayload(seed: number, d: ProductDesc): number[] {
     case ProductType.PHOTO_PALETTE:
     case ProductType.PHOTO_HIRES:
     case ProductType.PHOTO_RGB:
-      return photoPayload(seed, { type: d.type, subject: d.subject, sx: d.sx ?? d.x, sy: d.sy ?? d.y, lit: d.lit ?? false, tick: d.tick, seq: d.seq, horizon: d.horizon });
+      return photoPayload(seed, { type: d.type, subject: d.subject, sx: d.sx ?? d.x, sy: d.sy ?? d.y, lit: d.lit ?? false, tick: d.tick, seq: d.seq, horizon: d.horizon, anomaly: d.anomaly });
     default:
       return [];
   }

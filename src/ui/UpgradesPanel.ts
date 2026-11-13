@@ -26,7 +26,7 @@ export class UpgradesPanel {
     for (const up of UPGRADES) {
       const card = document.createElement('div');
       card.className = 'goal';
-      const req = up.requires ? `<span class="dim"> · after ${UPGRADE_BY_ID[up.requires].title}</span>` : '';
+      const req = up.requires ? `<span class="dim"> · after ${up.requires.map((r) => UPGRADE_BY_ID[r].title).join(', ')}</span>` : '';
       card.innerHTML = `<b>${up.title}<span>◆${up.cost}</span></b><p>${up.description}${req}</p><div class="small"></div>`;
       this.el.appendChild(card);
       this.cells.set(up.id, { card, state: card.querySelector('div.small')!, html: '' });
@@ -39,7 +39,7 @@ export class UpgradesPanel {
     const u = this.unit();
     const e = this.engine;
     const c = u.chassis;
-    const head = `◆ <b>${e.credits}</b> credits · ${u.name}: Flash ${c.flashBytes} B · r0–r${c.registers - 1} · ${c.cyclesPerTick} cycles/tick · cargo ${c.cargoSlots} · battery ${c.batteryCapacity / 1000}% · radar ${c.sensorRange} · solar ${c.solarPercent}% · TOOL_3 ${c.tools[3] ?? 'empty'}`;
+    const head = `◆ <b>${e.credits}</b> credits · ${u.name}: Flash ${c.flashBytes} B · r0–r${c.registers - 1} · ${c.cyclesPerTick} cycles/tick · cargo ${c.cargoSlots} · battery ${c.batteryCapacity / 1000}% · radar ${c.sensorRange} · solar ${c.solarPercent}% · TOOL_3 ${c.tools[3] ?? 'empty'} · recorder ${c.recorderBytes} B · link ${c.linkBytesPerTick} B/tick · log FIFO ${c.logFifoBytes} B · camera modes ${c.cameraModes.join(', ')}`;
     if (this.header.innerHTML !== head) this.header.innerHTML = head;
     for (const up of UPGRADES) {
       const cell = this.cells.get(up.id)!;

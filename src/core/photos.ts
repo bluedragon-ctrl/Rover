@@ -177,6 +177,81 @@ const rover: Scene = (u, v, s) => {
   return ground;
 };
 
+// ---------------------------------------------------------------- anomalies (fossils)
+
+/** Angle of (dx, dy) in 1/1024 turns, 0 = +u, integer only (octant + rational atan fit). */
+export function iangle(dx: number, dy: number): number {
+  const ax = Math.abs(dx);
+  const ay = Math.abs(dy);
+  if (ax === 0 && ay === 0) return 0;
+  const t = ax >= ay ? ((ay * ONE) / ax) | 0 : ((ax * ONE) / ay) | 0; // tan of the octant angle, Q10
+  let a = ((t * 128) >> 10) + (((44 * t * (ONE - t)) / (ONE * ONE)) | 0); // atan(t) ≈ π/4·t + 0.273·t(1−t)
+  if (ay > ax) a = 256 - a;
+  if (dx < 0) a = 512 - a;
+  if (dy < 0) a = ONE - a;
+  return a & 1023;
+}
+
+/**
+ * A ribbed spiral shell (ammonite) of radius `R` around (cu, cv): three whorls of an
+ * Archimedean spiral, dark sutures between them, radial ribs, lit from the upper left.
+ * Returns null outside the shell; the outer rim blends into `ground`.
+ */
+function fossil(u: number, v: number, cu: number, cv: number, R: number, turn: number, shell: RGB, ground: RGB): RGB | null {
+  const dx = u - cu;
+  const dy = v - cv;
+  const r = dist(dx, dy);
+  if (r >= R) return null;
+  const pitch = (R / 3) | 0;
+  const theta = (iangle(dx, dy) + turn) & 1023;
+  const s = (((r * ONE) / pitch) | 0) - theta;
+  const f = ((s % ONE) + ONE) % ONE; // position across the whorl: 0 and 1023 = suture
+  const tube = (f * (ONE - f)) >> 10; // 0..256: rounded whorl, brightest in the middle
+  const rib = wave(theta * 22 + (r >> 2)); // radial ribs, slightly swept back
+  let k = 175 + ((tube * 60) >> 8) + (rib > 150 ? -30 : 0);
+  k += (((-dx - dy) * 40) / R) | 0; // relief: light from the upper left
+  if (f < 80 || f > ONE - 80) k = 120; // suture groove
+  const c = scale(shell, k);
+  const rim = R - r < R / 8 ? 256 - (((R - r) * 256 * 8) / R | 0) : 0; // embedded edge
+  return mix(c, ground, rim);
+}
+
+const FOSSIL_SHELL = hex(0xd8a070);
+const FOSSIL_PYRITE = hex(0xe8c040);
+
+/**
+ * Anomaly scenes (docs/SPEC.md §3.8.5): rare cliff walls hold a fossil shell in the strata,
+ * rare samples are a pyritized fossil. Only a photo shows it.
+ */
+const ANOMALY_SCENES: Record<number, Scene> = {
+  [T.CLIFF_WALL]: (u, v, s) => {
+    const rock = cliff(u, v, s);
+    const h = hash3(s, 0, 0, 61);
+    const cu = 330 + (h & 255) + ((h >>> 8) & 127); // keep the shell inside the frame
+    const cv = 330 + ((h >>> 16) & 255) + ((h >>> 24) & 127);
+    const R = 170 + ((h >>> 4) & 31);
+    return fossil(u, v, cu, cv, R, (h >>> 12) & 1023, FOSSIL_SHELL, rock) ?? rock;
+  },
+  [T.SAMPLE]: (u, v, s) => {
+    const shadow = Math.max(0, 256 - ((dist(u - 594, v - 614) * 845) >> 10));
+    const ground = scale(SAND, 166 - ((90 * shadow) >> 8) + ((38 * fbm(s, u, v, 21)) >> 8));
+    const h = hash3(s, 0, 0, 62);
+    const cu = 462 + (h & 127);
+    const cv = 462 + ((h >>> 8) & 127);
+    const R = 220 + ((h >>> 16) & 31);
+    const nugget = sample(u, v, s);
+    return dist(u - cu, v - cv) < R ? (fossil(u, v, cu, cv, R, (h >>> 22) & 1023, FOSSIL_PYRITE, ground) ?? ground) : nugget;
+  },
+};
+
+/** Tile types that can hold an anomaly. */
+export const ANOMALY_SUBJECTS: readonly number[] = [T.CLIFF_WALL, T.SAMPLE];
+
+/** Is the `subject` at tile (x, y) an anomaly? Seeded per tile: 1 in `oneIn`. */
+export function isAnomaly(seed: number, subject: number, x: number, y: number, oneIn: number): boolean {
+  return ANOMALY_SUBJECTS.includes(subject) && hash3(seed, x, y, 0xa40) % oneIn === 0;
+}
+
 const SCENES: Record<number, Scene> = {
   [T.FLAT_SAND]: sand,
   [T.ROUGH_GRAVEL]: gravel,
@@ -305,13 +380,15 @@ export interface PhotoShot {
   seq: number;
   /** Landscape photo (no subject within reach). */
   horizon?: HorizonView;
+  /** The subject tile is an anomaly (fossil). */
+  anomaly?: boolean;
 }
 
 const luma = (c: RGB): number => (77 * c[0] + 151 * c[1] + 28 * c[2]) >> 8;
 
 /** Box-filtered frame with sensor noise (dark: dim + strong noise), then auto-exposed. */
 function capture(seed: number, p: PhotoShot, w: number, h: number): RGB[] {
-  const scene = p.horizon ? horizonScene(p.horizon) : (SCENES[p.subject] ?? sand);
+  const scene = p.horizon ? horizonScene(p.horizon) : ((p.anomaly && ANOMALY_SCENES[p.subject]) || SCENES[p.subject] || sand);
   const s = hash3(seed, p.sx, p.sy, p.subject);
   const N = 2;
   const px: RGB[] = [];

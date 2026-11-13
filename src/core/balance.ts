@@ -43,7 +43,7 @@ export const BALANCE = {
   /** Dump replies that may wait for the downlink at once. */
   dumpQueueMax: 4,
   // Downlink (docs/SPEC.md §3.8.1): byte-based, shared by the log FIFO and the science recorder
-  linkBytesPerTick: 2, // at @SIGNAL_STR 100, proportional to signal
+  linkBytesPerTick: 2, // at @SIGNAL_STR 100, proportional to signal (Mk-I; chassis.linkBytesPerTick)
   linkMinSignal: 20, // nothing is sent below this
   linkEnergyPerTick: 2, // per tick in which at least one byte is sent
 
@@ -55,6 +55,9 @@ export const BALANCE = {
   snapMinSunLight: 20, // @SUN_LIGHT needed for a lit photo (or the headlight aimed at the subject)
   photoCredits: 1, // lit photo
   photoFirstBonus: 5, // first lit photo of a subject type
+  anomalyOneIn: 40, // cliff walls and samples: 1 in N is an anomaly (seeded per tile)
+  anomalyFlagCredits: 20, // correct flag of a new anomaly tile in the gallery
+  anomalyWrongFlag: 5, // wrong flag: credits taken (never below 0)
 
   // Storyteller (docs/SPEC.md §3.5)
   eventEarliestTick: 1500, // grace period for new worlds
@@ -98,6 +101,8 @@ export interface ChassisDef {
   logFifoBytes: number;
   /** Science recorder size in bytes (§3.8.5). */
   recorderBytes: number;
+  /** Downlink bytes per tick at full signal (§3.8.1). */
+  linkBytesPerTick: number;
   /** Camera modes `SNAP dir mode` accepts (= photo product types, §3.8.5). */
   cameraModes: number[];
   sensorRange: number;
@@ -121,6 +126,7 @@ export const CHASSIS_MK1: ChassisDef = {
   cyclesPerTick: 4,
   logFifoBytes: 32,
   recorderBytes: 1024,
+  linkBytesPerTick: 2,
   cameraModes: [1, 2],
   sensorRange: 6,
   cargoSlots: 4,

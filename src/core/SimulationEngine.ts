@@ -27,7 +27,7 @@ import { CpuState, DIR_VEC, Layer, Status } from './types';
 import { Unit } from './Unit';
 import { compile, type CompileResult, type Instr } from './vm/Compiler';
 import type { VmHost } from './vm/RoverVM';
-import { HORIZON_COLUMNS, HORIZON_V, type HorizonView } from './photos';
+import { HORIZON_COLUMNS, HORIZON_V, isAnomaly, type HorizonView } from './photos';
 import { coneOffsets, shapeContains, type SensorShape } from './sensors';
 import { createDefaultRegistry, T, type WorldRegistry } from './WorldRegistry';
 
@@ -86,7 +86,11 @@ export class SimulationEngine {
     /** SNAP photos recorded / lit photos delivered completely. */
     photosTaken: 0,
     photosDelivered: 0,
+    /** Correct anomaly flags on new anomaly tiles. */
+    anomaliesFound: 0,
   };
+  /** Anomaly tiles already credited ("x,y"; saved). */
+  anomalyTiles: string[] = [];
   /** Subject tile types already delivered in a lit photo (first-of-a-kind bonus, saved). */
   photoSubjects: number[] = [];
   /** Science credits: delivered science + goal rewards. Spent on upgrades. */
@@ -487,6 +491,39 @@ export class SimulationEngine {
     return this.sun.light >= BALANCE.snapMinSunLight || (u.headlight === 1 && u.heading === dir);
   }
 
+  /** Is the subject at (x, y) an anomaly? Landscapes (subject 0) never are. */
+  anomalyAt(subject: number, x: number, y: number): boolean {
+    return isAnomaly(this.seed, subject, x, y, BALANCE.anomalyOneIn);
+  }
+
+  /**
+   * Mission control flags a received photo as an anomaly (SPEC §3.8.5). Only complete, lit
+   * photos, once each. Right: +anomalyFlagCredits the first time a tile is flagged (again:
+   * nothing); wrong: −anomalyWrongFlag, never below 0. Returns an error, or null.
+   */
+  flagAnomaly(g: ReceivedProduct): string | null {
+    if (!this.gallery.includes(g)) return 'unknown product';
+    if (!isPhoto(g.type)) return 'only photos can be flagged';
+    if (g.flag) return 'already flagged';
+    if (g.received < productFrameBytes(g.type)) return 'photo not complete';
+    if (!g.lit) return 'dark photo';
+    if (!g.anomaly) {
+      g.flag = 'miss';
+      this.credits -= Math.min(this.credits, BALANCE.anomalyWrongFlag);
+      return null;
+    }
+    const key = `${g.sx},${g.sy}`;
+    if (this.anomalyTiles.includes(key)) {
+      g.flag = 'known';
+      return null;
+    }
+    g.flag = 'hit';
+    this.anomalyTiles.push(key);
+    this.stats.anomaliesFound++;
+    this.credits += BALANCE.anomalyFlagCredits;
+    return null;
+  }
+
   /** Credits for a delivered product; lit photos pay a bonus for the first of a subject type. */
   private deliveryCredits(p: ProductDesc): number {
     if (!isPhoto(p.type)) return p.credits;
@@ -590,7 +627,8 @@ export class SimulationEngine {
     if (!def) return 'unknown upgrade';
     if (u.upgrades.includes(id)) return 'installed';
     if (this.drops.some((d) => d.upgrade === id)) return 'on its way';
-    if (def.requires && !u.upgrades.includes(def.requires)) return `needs ${UPGRADE_BY_ID[def.requires]?.title ?? def.requires}`;
+    const missing = def.requires?.find((r) => !u.upgrades.includes(r));
+    if (missing) return `needs ${UPGRADE_BY_ID[missing]?.title ?? missing}`;
     if (this.credits < def.cost) return `needs ${def.cost} credits`;
     if (!u.powered) return 'rover is offline';
     return null;
@@ -737,7 +775,7 @@ export class SimulationEngine {
 
   /** Transmit this tick's bytes; completed frames and products reach mission control. */
   private updateLink(u: Unit): void {
-    const { sent, sysDone, done, delivered, partial } = u.link.pump(this.signalOf(u), BALANCE.linkMinSignal, BALANCE.linkBytesPerTick);
+    const { sent, sysDone, done, delivered, partial } = u.link.pump(this.signalOf(u), BALANCE.linkMinSignal, u.chassis.linkBytesPerTick);
     if (!sent) return;
     this.drain(u, BALANCE.linkEnergyPerTick);
     for (const f of sysDone) {

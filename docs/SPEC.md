@@ -67,7 +67,7 @@ Each rover owns a copy of its chassis stats; upgrades (§3.7) modify that copy.
 | Hardpoints | `TOOL_0` drill, `TOOL_1` grabber, `TOOL_2` spectrometer, `TOOL_3` empty | **[M5]** |
 | Sensor range | 6 tiles | `SCAN` radar, every direction, day and night. The operator's *view* needs light: 6 by day, 1-tile ring at night plus the headlight cone (§3.1.1). **[M4, M8.1]** |
 | Downlink | 2 B/tick at full signal, log FIFO 32 B, science recorder 1024 B | **[M9]** §3.8 |
-| Camera | mast camera, 32×32 2 bpp | `SNAP dir [mode]`. **[M9, planned]** §3.8.5 |
+| Camera | mast camera, 32×32 2 bpp (modes 1–2) | `SNAP dir [mode]`; modes 3–5 by upgrade. **[M9]** §3.8.5 |
 
 ### 3.1 Energy costs (defaults)
 
@@ -182,7 +182,8 @@ goals (First contact, Night owl, Surveyor, Trailblazer, Prospector, Collector, S
 each with a credit reward. Checked every 10 ticks; deterministic. Since M9, *First
 contact* = mission control receives a first frame the firmware sent (a `LOG` frame or a
 science product; the automatic boot frame does not count) and *Scientist* = 5 science
-products delivered.
+products delivered. M9 adds *Photographer* (3 lit photos) and *Anomaly hunter* (one correct anomaly flag,
+§3.8.5).
 
 ### 3.3.3 Subsystem damage **[M6]**
 
@@ -265,6 +266,9 @@ on pickup and needs no cargo slot. Ports: `@DROPS` (landed crates waiting), `@DR
 `@DROP_Y` (nearest landed crate; the rover's own position if none). Template:
 *Fetch supply crate*.
 
+Built in slice 6 (`src/core/upgrades.ts`, ids in brackets). The chassis carries
+`linkBytesPerTick`, `logFifoBytes`, `recorderBytes` and `cameraModes`.
+
 | Upgrade | Cost | Effect | Requires |
 | :--- | :--- | :--- | :--- |
 | Flash 192 B / Flash 256 B | 40 / 90 | Program memory 192 / 256 bytes | – / Flash 192 B |
@@ -280,14 +284,14 @@ on pickup and needs no cargo slot. Ports: `@DROPS` (landed crates waiting), `@DR
 Flash and register upgrades change compiler limits at once; the running program is
 unaffected (it already fits). Goal *Upgraded*: install a first upgrade.
 
-## 3.8 Downlink, debugging and science products **[M9, in progress]**
+## 3.8 Downlink, debugging and science products **[M9]**
 
 Built so far: the link (§3.8.1) with the log FIFO, log and boot frames (§3.8.2), `LOG`,
 `@LOG_FREE`, `@LOG_LOST`, `@TX_DATA` as `LOG 0` and the Console tab (§3.8.3) (slice 1);
 the science recorder, science frames, spectra, `@REC_FREE` and the Gallery tab
 (§3.8.5) (slice 2); dumps, `BRK`, `HALTED` and the admin-only debugger (§3.8.4) (slice 3);
-`@POST` (§3.8.3) (slice 4); the camera, `SNAP` and photos (§3.8.5) (slice 5). Still planned:
-the upgrades, camera modes 3–5 and anomalies.
+`@POST` (§3.8.3) (slice 4); the camera, `SNAP` and photos (§3.8.5) (slice 5); the upgrades
+(§3.8.6), camera modes 3–5 and anomalies (§3.8.5) (slice 6).
 
 Design principle: **mission control knows only what the rover sent**, plus the program
 it uploaded itself. There is no live view of registers, stacks or ports for the player
@@ -399,8 +403,8 @@ kind 1 = science frame   size = 0; followed by 1 sequence byte, then the product
 ### 3.8.5 Science products and the recorder
 
 Built: the recorder, science frames, spectra (type 0), the Gallery tab, the camera
-(`SNAP`) and photos (all five formats are generated and decoded; Mk-I installs modes 1–2).
-The upgrades for modes 3–5 and anomalies are **[M9, planned]**.
+(`SNAP`) and photos (all five formats; Mk-I installs modes 1–2, upgrades add 3–5), and
+anomalies.
 
 Science lives in the **science recorder** (Mk-I 1024 B) until it has been sent
 completely; it is never lost. A product interrupted by a link drop resumes where it
@@ -452,9 +456,19 @@ range, keeping hue) before quantizing. Reference renders: `preview.html?photos=1
 **Credits on delivery** (tunable, `BALANCE`): spectrum = the item's `science` value
 (sample 3, ore 1, as today); lit photo = 1, +5 the first time a subject type is
 delivered (decided on delivery; the list of subject types already delivered is saved);
-dark photo = 0 (a landscape counts as its own subject type). Goal *Photographer*: deliver 3 lit photos. **Anomalies:** rare tiles (seeded, e.g. 1 in 40 cliff walls
-and samples) show a pattern only a photo reveals; flagging a delivered anomaly photo in
-the gallery pays +20, a wrong flag −5, one flag per photo.
+dark photo = 0 (a landscape counts as its own subject type). Goal *Photographer*: deliver 3 lit photos.
+
+**Anomalies:** 1 in `anomalyOneIn` = 40 cliff walls and samples (seeded per tile from the
+world seed, the same for both kinds) hold a **fossil**: a small ribbed spiral shell set in
+the cliff strata, or a pyritized shell instead of an ordinary sample. Only a photo of the
+tile as its subject (within 2 tiles) shows it; landscapes, spectra and dark photos never do.
+The shell is tinted like its rock: in a 32×32 grey photo it is a pale disc that might be a
+pebble, while hi-res (mode 4) and the colour modes show the spiral clearly (reference renders:
+`preview.html?anomaly=1`). Mission control judges by eye: **Flag anomaly** on a complete,
+lit photo in the gallery, one flag per photo. Right: +`anomalyFlagCredits` 20 the first
+time that tile is flagged (a later photo of the same tile is "already catalogued": nothing);
+wrong: −`anomalyWrongFlag` 5, never below 0 credits. The flag and its outcome are saved with
+the gallery entry; credited tiles are saved. Goal *Anomaly hunter*: one correct flag (30 cr).
 
 **Gallery** (mission-control tab): received photos (crisp pixels, scaled up) and spectra
 (bar charts), each with tick, position, size and hex view. A product appears with its
@@ -466,12 +480,12 @@ gallery keeps the last 100 products (saved). Old saves: science points still wai
 
 | Upgrade | Cost | Effect | Requires |
 | :--- | :--- | :--- | :--- |
-| Recorder 2 KB / 4 KB | 40 / 80 | Science recorder 2048 / 4096 B | – / 2 KB |
-| High-gain amplifier | 60 | Link 3 B/tick at full signal | – |
-| Trace buffer | 30 | Log FIFO 64 B | – |
-| Colour filter wheel | 60 | Camera mode 3 | – |
-| Hi-res sensor | 80 | Camera mode 4 | Recorder 2 KB |
-| Colour sensor | 100 | Camera mode 5 | Colour filter wheel, Recorder 2 KB |
+| Recorder 2 KB / 4 KB (`REC_2K` / `REC_4K`) | 40 / 80 | Science recorder 2048 / 4096 B | – / 2 KB |
+| High-gain amplifier (`LINK_3`) | 60 | Link 3 B/tick at full signal | – |
+| Trace buffer (`TRACE_64`) | 30 | Log FIFO 64 B | – |
+| Colour filter wheel (`CAM_COLOUR`) | 60 | Camera mode 3 | – |
+| Hi-res sensor (`CAM_HIRES`) | 80 | Camera mode 4 | Recorder 2 KB |
+| Colour sensor (`CAM_RGB`) | 100 | Camera mode 5 | Colour filter wheel, Recorder 2 KB |
 
 ## 3.9 Firmware and programs **[M10, planned]**
 
