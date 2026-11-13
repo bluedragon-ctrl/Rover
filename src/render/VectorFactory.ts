@@ -522,7 +522,8 @@ export const RIDGE = { N: 1, E: 2, S: 4, W: 8 } as const;
  * passable / slow / hazard / obstacle / drillable / pickup.
  * - wall: pyramid; `ridge` (RIDGE bits) joins neighbouring walls into a mountain range
  * - rough: 3 flat hatch strokes (scree on a topographic map)
- * - mound / crystal: low obstacle pyramid + resource marker (diamond / hex crystal)
+ * - mound / crystal: deposit sunk into the ground (dark pit) with its marker half buried
+ *   (diamond / hex crystal); nothing floats
  * - vent: hazard rings around a glowing pit
  * Faces of pyramids are shaded by direction so they read in the top-down view too.
  */
@@ -567,6 +568,24 @@ export function drawTileSym(b: LineBatch, f: FillBatch, shape: TileShape, color:
     }
     return peak;
   };
+  /**
+   * Opening of a sunken deposit: near-black fill (darker than any ground, so it reads as a
+   * hole), lit rim in the ore colour, a dim inner rim shifted to the far wall for depth.
+   * Lies a hair above the terrain, hiding what is below ground (buried parts of markers).
+   */
+  const pit = (hex: number) => {
+    const rim: V3[] = [];
+    const wall: V3[] = [];
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
+      const r = 0.36 + (jit(variant, i) - 0.5) * 0.06;
+      rim.push([cx + Math.cos(a) * r, 0.004, cz + Math.sin(a) * r]);
+      wall.push([cx + Math.cos(a) * r * 0.72, 0.005, cz - 0.05 + Math.sin(a) * r * 0.72]);
+    }
+    f.color(hex, 0.03).poly(rim);
+    b.color(hex, 0.75).loop(rim);
+    b.color(hex, 0.3).loop(wall);
+  };
   switch (shape) {
     case 'floor':
       ground(color);
@@ -603,16 +622,16 @@ export function drawTileSym(b: LineBatch, f: FillBatch, shape: TileShape, color:
       pyramid(color, 0.95, 0.12, 0.03, 0.45 + (variant % 5) * 0.08, ridge);
       break;
     case 'mound': {
-      // Low obstacle pyramid + floating ore diamond.
-      const p = pyramid(color, 0.45, 0.1, 0.14, 0.24);
-      f.color(color, 0.45).octa(p[0], p[1] + 0.2, p[2], 0.11, 0.13);
-      b.color(color, 1).octa(p[0], p[1] + 0.2, p[2], 0.11, 0.13);
+      // Deposit sunk into the ground: dark pit, ore diamond half buried in it.
+      pit(color);
+      f.color(color, 0.45).octa(cx, 0, cz, 0.15, 0.17);
+      b.color(color, 1).octa(cx, 0, cz, 0.15, 0.17);
       break;
     }
     case 'crystal': {
-      // Low obstacle pyramid + one upright hexagonal crystal.
-      const p = pyramid(color, 0.45, 0.1, 0.14, 0.2);
-      prism(b, f, color, new THREE.Vector3(p[0], p[1] - 0.06, p[2]), new THREE.Vector3(0, 1, 0), 0.075, 0.3);
+      // Deposit sunk into the ground: dark pit, a hexagonal crystal breaking the surface.
+      pit(color);
+      prism(b, f, color, new THREE.Vector3(cx, -0.15, cz), new THREE.Vector3(0, 1, 0), 0.08, 0.27);
       break;
     }
     default:

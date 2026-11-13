@@ -159,8 +159,9 @@ tests must stay untouched. Do it in small PRs, checking frame time at each step.
       - Cliff wall → pyramid (height by variant); neighbouring walls join with ridgelines to
         a saddle on the shared edge (`RIDGE` mask), so clusters read as ranges.
       - Rough gravel → 3 flat hatch strokes (was 3 pebble prisms); flat sand → no ripples.
-      - Iron ore → low pyramid + floating diamond; silicon ore → low pyramid + upright hex
-        crystal (same obstacle shape, marker differs by shape, not only colour).
+      - Ore deposits sunk into the ground (owner: nothing floats): a dark pit with a lit rim,
+        the marker half buried in it — iron a diamond, silicon an upright hex crystal (marker
+        differs by shape, not only colour).
       - Acid vent → warning ring, rim and glowing pit. Pickups unchanged.
       - Pyramid faces shaded by direction so they read in the top-down view.
       - Preview patch: 5,981 → 2,627 line segments (−56%), 4,840 → 1,007 triangles (−79%).
