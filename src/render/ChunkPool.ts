@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { CHUNK, CHUNK_AREA, chunkKey, type WorldChunk } from '../core/ChunkedWorld';
 import type { SimulationEngine } from '../core/SimulationEngine';
 import { hash3 } from '../core/rng';
-import { drawFogTile, drawTileVec, FillBatch, LineBatch, Vis, VIS_U16 } from './VectorFactory';
+import { drawFogTile, drawTileVec, FillBatch, LineBatch, RIDGE, Vis, VIS_U16 } from './VectorFactory';
 import type { TileLighting } from './TileLighting';
 
 /** Vertex ranges per tile in a chunk's line and fill geometry (for in-place fog updates). */
@@ -33,8 +33,6 @@ interface Entry {
   layers: Uint16Array[];
   /** Force a full rebuild (reveal-all toggled). */
   rebuild: boolean;
-  /** Built with full detail (near zoom) or the far LOD. */
-  detail: boolean;
 }
 
 /**
@@ -53,8 +51,6 @@ export class ChunkPool {
   private entries = new Map<string, Entry>();
   /** Debug/admin: ignore fog of war. */
   private revealAll = false;
-  /** Level of detail for new builds (false = far zoom: no pebbles, strata, ripples...). */
-  private detail = true;
   /**
    * CPU budget for chunk rebuilds per frame (ms), to avoid hitches when panning fast.
    * At least one chunk is built per frame; a chunk takes ~4 ms (render-budget test).
@@ -98,8 +94,8 @@ export class ChunkPool {
       if (near > maxDist + (e ? CHUNK / 2 : 0)) continue;
       wanted.add(key);
       const loaded = this.engine.world.hasChunk(cx, cy);
-      let stale = !e || !loaded || e.version !== e.chunk.version || e.detail !== this.detail;
-      if (e && stale && loaded && !e.rebuild && e.detail === this.detail && this.engine.world.getChunk(cx, cy) === e.chunk && this.patch(e)) {
+      let stale = !e || !loaded || e.version !== e.chunk.version;
+      if (e && stale && loaded && !e.rebuild && this.engine.world.getChunk(cx, cy) === e.chunk && this.patch(e)) {
         patches++;
         stale = false;
       }
@@ -125,7 +121,7 @@ export class ChunkPool {
           // floating origin (the group moves, the geometry does not).
           group.add(f, l);
           this.root.add(group);
-          e = { group, lines: l, fills: f, chunk, version: 0, ranges, fog: new Uint8Array(CHUNK_AREA), layers: [], rebuild: false, detail: this.detail };
+          e = { group, lines: l, fills: f, chunk, version: 0, ranges, fog: new Uint8Array(CHUNK_AREA), layers: [], rebuild: false };
           this.entries.set(key, e);
         }
         this.snapshot(e);
@@ -168,7 +164,6 @@ export class ChunkPool {
     const c = e.chunk;
     e.version = c.version;
     e.rebuild = false;
-    e.detail = this.detail;
     e.fog.set(c.fog);
     e.layers = [0, 1, 2].map((l) => c.layers[l].slice());
   }
@@ -219,14 +214,6 @@ export class ChunkPool {
     this.fillTriangles += (sign * e.fills.geometry.getAttribute('position').count) / 3;
   }
 
-  /**
-   * Switch the level of detail. Chunks are rebuilt lazily within the per-frame budget,
-   * nearest first, so a zoom across the threshold never hitches.
-   */
-  setDetail(detail: boolean): void {
-    this.detail = detail;
-  }
-
   setRevealAll(v: boolean): void {
     if (v === this.revealAll) return;
     this.revealAll = v;
@@ -238,6 +225,25 @@ export class ChunkPool {
 
   get size(): number {
     return this.entries.size;
+  }
+
+  /**
+   * RIDGE bits of the 4-neighbours holding the same tile (walls join into ranges). Across a
+   * chunk edge the neighbour chunk is read if loaded, else the generator is asked: walls
+   * never change after generation, so this needs no rebuild when the neighbour loads.
+   */
+  private ridgeMask(c: WorldChunk, lx: number, ly: number, layer: number, id: number): number {
+    const world = this.engine.world;
+    const same = (dx: number, dy: number): boolean => {
+      const x = lx + dx, y = ly + dy;
+      if (x >= 0 && x < CHUNK && y >= 0 && y < CHUNK) return c.layers[layer][y * CHUNK + x] === id;
+      const gx = c.cx * CHUNK + x, gy = c.cy * CHUNK + y;
+      const ncx = Math.floor(gx / CHUNK), ncy = Math.floor(gy / CHUNK);
+      if (world.hasChunk(ncx, ncy)) return world.getChunk(ncx, ncy).layers[layer][(gy - ncy * CHUNK) * CHUNK + (gx - ncx * CHUNK)] === id;
+      const t = world.generator.tileAt(gx, gy);
+      return [t.terrain, t.obstacle, t.item][layer] === id;
+    };
+    return (same(0, 1) ? RIDGE.N : 0) | (same(1, 0) ? RIDGE.E : 0) | (same(0, -1) ? RIDGE.S : 0) | (same(-1, 0) ? RIDGE.W : 0);
   }
 
   /** Line + fill geometry for one chunk (public for the geometry budget test). */
@@ -265,7 +271,9 @@ export class ChunkPool {
           const id = c.layers[layer][i];
           if (!id) continue;
           const def = reg.get(id);
-          if (def) drawTileVec(b, f, def.shape, def.color, lx, ly, variant, this.detail);
+          if (!def) continue;
+          const ridge = def.shape === 'wall' ? this.ridgeMask(c, lx, ly, layer, id) : 0;
+          drawTileVec(b, f, def.shape, def.color, lx, ly, variant, ridge);
         }
         b.hide(false);
         f.hide(false);

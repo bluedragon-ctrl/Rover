@@ -16,7 +16,7 @@ import { Dust } from '../render/Dust';
 import { compile } from '../core/vm/Compiler';
 import { PROSPECTOR, TEMPLATES } from '../core/programs';
 import { EditorPanel } from '../ui/EditorPanel';
-import { buildRoverRig, drawFogTile, drawTileSym, drawTileVec, FillBatch, indicatorHex, LineBatch, LIGHT_HEX, RIDGE } from '../render/VectorFactory';
+import { buildRoverRig, drawFogTile, drawTileVec, FillBatch, indicatorHex, LineBatch, LIGHT_HEX, RIDGE } from '../render/VectorFactory';
 import { mountPhotoLab } from './photos';
 import { mountAnomalyLab } from './anomalies';
 
@@ -71,8 +71,6 @@ const specimens: [string, number, number][] = [
 put(0, 0, 'terrain', T.FLAT_SAND);
 put(-1, 0, 'terrain', T.ROUGH_GRAVEL);
 
-// Tile style: 'v2' (what the game draws) or 'symbolic' (orbital-scan legend proposal).
-let style: 'v2' | 'symbolic' = new URLSearchParams(location.search).get('style') === 'symbolic' ? 'symbolic' : 'v2';
 let geoStats = '';
 /** RIDGE bits of the neighbours sharing the obstacle at (x, y). */
 function ridgeMask(x: number, y: number, id: number): number {
@@ -94,11 +92,10 @@ function buildPatch(): THREE.Group {
       for (const id of [c.terrain, c.obstacle, c.item]) {
         if (!id) continue;
         const d = reg.get(id)!;
-        if (style === 'symbolic') drawTileSym(b, f, d.shape, d.color, x, y, variant, d.shape === 'wall' ? ridgeMask(x, y, id) : 0);
-        else drawTileVec(b, f, d.shape, d.color, x, y, variant);
+        drawTileVec(b, f, d.shape, d.color, x, y, variant, d.shape === 'wall' ? ridgeMask(x, y, id) : 0);
       }
     }
-  geoStats = `${style} · ${b.count / 2} segs · ${f.count / 3} tris`;
+  geoStats = `${b.count / 2} segs · ${f.count / 3} tris`;
   const g = new THREE.Group();
   const lines = new THREE.LineSegments(b.build(), lighting.lineMaterial);
   const fills = new THREE.Mesh(f.build(), lighting.fillMaterial);
@@ -106,14 +103,8 @@ function buildPatch(): THREE.Group {
   g.add(fills, lines);
   return g;
 }
-let patch = buildPatch();
+const patch = buildPatch();
 worldRoot.add(patch);
-function rebuildPatch(): void {
-  worldRoot.remove(patch);
-  for (const o of patch.children) (o as THREE.Mesh).geometry.dispose();
-  patch = buildPatch();
-  worldRoot.add(patch);
-}
 
 // ------------------------------------------------------------------ dust
 const dust = new Dust();
@@ -182,10 +173,6 @@ button('SCAN', 'Scan pulse + radar wave', () => false, () => {
   fx.scan(Math.round(state.x), Math.round(state.y), [0, 1, 2, 3][state.facing], 4, dx === 1 && dy === 0 ? 0xff5a4a : 0x3affc8, performance.now());
 });
 button('@TX_DATA', 'Uplink', () => false, () => fx.uplink(Math.round(state.x), Math.round(state.y), true, 40, performance.now(), true));
-button('STYLE', 'Tiles', () => style.toUpperCase(), () => {
-  style = style === 'v2' ? 'symbolic' : 'v2';
-  rebuildPatch();
-});
 button('POST', 'Bloom', () => state.bloom, () => (post.enabled = state.bloom = !state.bloom));
 button('POST', 'CRT scanlines', () => state.crt, () => view.classList.toggle('crt', (state.crt = !state.crt)));
 button('UI', 'Labels', () => state.labels, () => (state.labels = !state.labels));

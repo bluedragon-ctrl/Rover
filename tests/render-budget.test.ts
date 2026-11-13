@@ -29,17 +29,18 @@ describe('render geometry budget', () => {
   it('stays within the line/fill budget for a 5×5 chunk view', () => {
     const fog = measure(false);
     const all = measure(true);
-    // Baseline (seed 1, M8): 25 chunks, 204k line verts with fog (179k of them hidden
-    // real geometry, the rest survey crosses), 72k fill tris, ~4 ms per chunk build.
+    // Baseline (seed 1, symbolic tiles): 25 chunks, 102k line verts with fog (77k of them
+    // real geometry, the rest survey crosses), 21k fill tris. Detailed v2 tiles were 204k
+    // and 72k.
     expect(fog.chunks).toBe(25);
     const perChunk = fog.lineVerts / fog.chunks;
-    expect(perChunk).toBeLessThan(12000);
-    expect(fog.fillTris / fog.chunks).toBeLessThan(4500);
+    expect(perChunk).toBeLessThan(6000);
+    expect(fog.fillTris / fog.chunks).toBeLessThan(1250);
     // Unmapped tiles carry their real geometry (hidden) plus the survey cross.
     expect(fog.hidden).toBeGreaterThan(0);
     expect(fog.lineVerts).toBeGreaterThan(all.lineVerts);
     expect(all.hidden).toBe(0);
-    expect(fog.lineVerts).toBeLessThan(all.lineVerts * 1.3);
+    expect(fog.lineVerts).toBeLessThan(all.lineVerts * 1.5);
   });
 
   it('spreads chunk rebuilds over frames within the time budget', () => {
@@ -138,22 +139,25 @@ describe('rover rig draw calls', () => {
   });
 });
 
-describe('far zoom LOD', () => {
-  it('drops small detail and rebuilds within the frame budget', () => {
+describe('wall ridges', () => {
+  it('join walls across chunk edges the same whether the neighbour chunk is loaded or not', () => {
     const eng = new SimulationEngine({ seed: 1 });
     const pool = new ChunkPool(eng, new THREE.Group(), new TileLighting());
-    pool.setRevealAll(true);
-    pool.maxBuildsPerFrame = 1000;
-    pool.buildBudgetMs = Infinity;
-    pool.update(CHUNK * 4 + 8, CHUNK * 4 + 8, 2);
-    const near = pool.lineVertices;
-    pool.setDetail(false);
-    pool.update(CHUNK * 4 + 8, CHUNK * 4 + 8, 2);
-    const far = pool.lineVertices;
-    // Seed 1: ~40% fewer line vertices.
-    expect(far).toBeLessThan(near * 0.75);
-    pool.setDetail(true);
-    pool.update(CHUNK * 4 + 8, CHUNK * 4 + 8, 2);
-    expect(pool.lineVertices).toBe(near);
+    // Find a chunk with a wall on its east edge whose east neighbour (next chunk) is a wall.
+    const wall = eng.registry.constants().CLIFF_WALL;
+    let found: [number, number] | null = null;
+    for (let cx = 1; cx < 12 && !found; cx++)
+      for (let y = 0; y < CHUNK && !found; y++) {
+        const x = cx * CHUNK - 1;
+        if (eng.world.generator.tileAt(x, y).obstacle === wall && eng.world.generator.tileAt(x + 1, y).obstacle === wall) found = [cx - 1, 0];
+      }
+    expect(found).not.toBeNull();
+    const [cx, cy] = found!;
+    const chunk = eng.world.getChunk(cx, cy);
+    expect(eng.world.hasChunk(cx + 1, cy)).toBe(false);
+    const cold = pool.buildGeometry(chunk).lines.getAttribute('position').array.slice();
+    eng.world.getChunk(cx + 1, cy);
+    const warm = pool.buildGeometry(chunk).lines.getAttribute('position').array;
+    expect(warm).toEqual(cold);
   });
 });
