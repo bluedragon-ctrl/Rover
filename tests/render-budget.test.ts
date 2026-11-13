@@ -66,3 +66,57 @@ describe('FrameStats', () => {
     expect(percentile([1, 2, 3, 4], 0.5)).toBe(3);
   });
 });
+
+describe('chunk fog updates', () => {
+  /** Visible line segments of a chunk mesh as sorted strings (flag 0 only). */
+  function visibleSegs(geo: THREE.BufferGeometry): string[] {
+    const p = geo.getAttribute('position').array;
+    const c = geo.getAttribute('col').array;
+    const out: string[] = [];
+    for (let v = 0; v < p.length / 3; v += 2) {
+      if (c[v * 4 + 3] !== 0) continue;
+      out.push([...p.slice(v * 3, v * 3 + 6)].map((n) => n.toFixed(3)).join(','));
+    }
+    return out.sort();
+  }
+
+  it('patches newly mapped tiles in place instead of rebuilding, with the same visible result', () => {
+    const eng = new SimulationEngine({ seed: 1 });
+    const pool = new ChunkPool(eng, new THREE.Group(), new TileLighting());
+    pool.update(8, 8, 0); // chunk (0, 0)
+    expect(pool.lastBuilds).toBe(1);
+    const entry = (pool as unknown as { entries: Map<string, { lines: THREE.LineSegments; fills: THREE.Mesh }> }).entries.values().next().value!;
+    // Map a strip of tiles that are still unmapped.
+    const chunk = eng.world.getChunk(0, 0);
+    let mapped = 0;
+    for (let y = 0; y < CHUNK; y++)
+      for (let x = 0; x < CHUNK; x++)
+        if (!eng.world.isMapped(x, y) && mapped < 20) {
+          eng.world.revealTile(x, y);
+          mapped++;
+        }
+    expect(mapped).toBeGreaterThan(0);
+    pool.update(8, 8, 0);
+    expect(pool.lastBuilds).toBe(0);
+    expect(pool.lastPatches).toBe(1);
+    const fresh = pool.buildGeometry(chunk);
+    expect(visibleSegs(entry.lines.geometry)).toEqual(visibleSegs(fresh.lines));
+    const fillVisible = (g: THREE.BufferGeometry) => [...(g.getAttribute('col').array as Uint16Array)].filter((_, i) => i % 4 === 3 && _ === 0).length;
+    expect(fillVisible(entry.fills.geometry)).toBe(fillVisible(fresh.fills));
+    // A real tile change still rebuilds.
+    eng.world.setTile(3, 3, 1, 0);
+    eng.world.setTile(3, 3, 2, 0);
+    eng.world.setTile(3, 3, 0, eng.world.getTile(3, 3, 0) === 1 ? 2 : 1);
+    pool.update(8, 8, 0);
+    expect(pool.lastBuilds).toBe(1);
+  });
+
+  it('rebuilds when reveal-all is toggled', () => {
+    const eng = new SimulationEngine({ seed: 1 });
+    const pool = new ChunkPool(eng, new THREE.Group(), new TileLighting());
+    pool.update(8, 8, 0);
+    pool.setRevealAll(true);
+    pool.update(8, 8, 0);
+    expect(pool.lastBuilds).toBe(1);
+  });
+});

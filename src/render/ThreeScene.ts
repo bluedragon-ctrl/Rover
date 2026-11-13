@@ -38,6 +38,8 @@ export interface PerfSnapshot {
   fillTriangles: number;
   chunkBuilds: number;
   chunkBuildMs: number;
+  /** Chunks updated in place (fog only, no rebuild) last frame. */
+  chunkPatches: number;
   pixelRatio: number;
   width: number;
   height: number;
@@ -341,6 +343,7 @@ export class ThreeScene {
       fillTriangles: this.chunks.fillTriangles,
       chunkBuilds: this.chunks.lastBuilds,
       chunkBuildMs: this.chunks.lastBuildMs,
+      chunkPatches: this.chunks.lastPatches,
       pixelRatio: this.renderer.getPixelRatio(),
       width: this.renderer.domElement.width,
       height: this.renderer.domElement.height,
