@@ -1,46 +1,152 @@
 import * as THREE from 'three';
 import type { TileShape } from '../core/WorldRegistry';
 
+/** Falling supply capsule with parachute, centred at the origin (y up). */
+export function buildCapsuleMesh(): THREE.LineSegments {
+  const b = new LineBatch().color(0xffd23a, 1);
+  b.box(-0.25, 0, -0.25, 0.5, 0.4, 0.5);
+  const canopy: [number, number, number][] = [];
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    canopy.push([Math.cos(a) * 0.9, 1.8, Math.sin(a) * 0.9]);
+  }
+  b.color(0xffffff, 0.9).loop(canopy);
+  for (let i = 0; i < 8; i += 2) b.seg(canopy[i][0], canopy[i][1], canopy[i][2], 0, 0.4, 0);
+  b.seg(-0.9, 1.8, 0, 0, 2.2, 0).seg(0.9, 1.8, 0, 0, 2.2, 0);
+  return new THREE.LineSegments(b.buildBasic(), new THREE.LineBasicMaterial({ vertexColors: true }));
+}
+
+const lines = (b: LineBatch, opts: THREE.LineBasicMaterialParameters = {}) =>
+  new THREE.LineSegments(b.buildBasic(), new THREE.LineBasicMaterial({ vertexColors: true, ...opts }));
+
+export const LIGHT_HEX = [0x333333, 0xff3030, 0x30ff60, 0x3080ff, 0xffb020];
+/** Colour of an indicator lamp (`@IND1..3`); OFF is a dark lens. */
+export const indicatorHex = (v: number): number => (v > 0 ? LIGHT_HEX[v] ?? 0xffffff : 0x1a2230);
+
+// ============================================================================================
+// M8 vector assets (v2): what the game renders. New shapes go through preview.html first.
+// ============================================================================================
+
+type V3 = readonly [number, number, number];
+
+/**
+ * Per-vertex visibility flag of terrain geometry (TileLighting, `col.w`):
+ * VISIBLE always drawn; HIDDEN unmapped terrain, drawn only under a radar wave;
+ * GONE never drawn (a survey cross whose tile has since been mapped).
+ */
+export const Vis = { VISIBLE: 0, HIDDEN: 1, GONE: 2 } as const;
+export type Vis = (typeof Vis)[keyof typeof Vis];
+/** `Vis` stored in a normalised Uint16 (`flag * 0.5`, so the shader reads `col.w * 2`). */
+export const VIS_U16: Record<Vis, number> = { 0: 0, 1: 32768, 2: 65535 };
+
+const U16 = (v: number) => Math.max(0, Math.min(65535, Math.round(v * 65535)));
+
+/**
+ * Growable typed vertex store shared by LineBatch and FillBatch. Compact terrain format
+ * (24 bytes per vertex instead of 36):
+ * - `position` Float32 ×3
+ * - `col` Uint16 ×4 normalised: linear rgb + visibility flag (`Vis`)
+ * - `tile` Int16 ×2: tile centre (x, z) × 2, so half-tile centres stay exact
+ */
+class VertexStore {
+  pos = new Float32Array(3 * 1024);
+  col = new Uint16Array(4 * 1024);
+  tile = new Int16Array(2 * 1024);
+  /** Vertices written so far. */
+  n = 0;
+  r = 65535;
+  g = 65535;
+  b = 65535;
+  h = 0;
+  tx = 0;
+  tz = 0;
+
+  setColor(hex: number, k: number): void {
+    this.r = U16((((hex >> 16) & 255) / 255) * k);
+    this.g = U16((((hex >> 8) & 255) / 255) * k);
+    this.b = U16(((hex & 255) / 255) * k);
+  }
+
+  private grow(): void {
+    const cap = this.pos.length / 3;
+    const p = new Float32Array(cap * 6);
+    p.set(this.pos);
+    this.pos = p;
+    const c = new Uint16Array(cap * 8);
+    c.set(this.col);
+    this.col = c;
+    const t = new Int16Array(cap * 4);
+    t.set(this.tile);
+    this.tile = t;
+  }
+
+  v(x: number, y: number, z: number): void {
+    if (this.n * 3 >= this.pos.length) this.grow();
+    const n = this.n++;
+    const p = n * 3, c = n * 4, t = n * 2;
+    this.pos[p] = x;
+    this.pos[p + 1] = y;
+    this.pos[p + 2] = z;
+    this.col[c] = this.r;
+    this.col[c + 1] = this.g;
+    this.col[c + 2] = this.b;
+    this.col[c + 3] = this.h;
+    this.tile[t] = this.tx;
+    this.tile[t + 1] = this.tz;
+  }
+
+  /** Terrain geometry for TileLighting. */
+  build(): THREE.BufferGeometry {
+    const n = this.n;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(this.pos.slice(0, n * 3), 3));
+    g.setAttribute('col', new THREE.BufferAttribute(this.col.slice(0, n * 4), 4, true));
+    g.setAttribute('tile', new THREE.BufferAttribute(this.tile.slice(0, n * 2), 2));
+    return g;
+  }
+
+  /** Plain geometry (position + Float32 `color`) for stock materials with vertexColors. */
+  buildBasic(): THREE.BufferGeometry {
+    const n = this.n;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(this.pos.slice(0, n * 3), 3));
+    const c = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) for (let k = 0; k < 3; k++) c[i * 3 + k] = this.col[i * 4 + k] / 65535;
+    g.setAttribute('color', new THREE.BufferAttribute(c, 3));
+    return g;
+  }
+}
+
 /** Accumulates colored line segments into flat arrays for one merged BufferGeometry. */
 export class LineBatch {
-  readonly pos: number[] = [];
-  readonly col: number[] = [];
-  /** Per-vertex tile centre (x, z) for TileLighting. */
-  readonly tile: number[] = [];
-  /** Per-vertex 1 = unmapped geometry, shown only while a radar wave passes (TileLighting). */
-  readonly hidden: number[] = [];
-  private h = 0;
-  private r = 1;
-  private g = 1;
-  private b = 1;
-  private tx = 0;
-  private tz = 0;
+  protected s = new VertexStore();
+
+  /** Vertices written so far (per-tile ranges for ChunkPool). */
+  get count(): number {
+    return this.s.n;
+  }
 
   /** Following segments belong to the tile centred at (x, z) (lighting is per tile). */
   at(x: number, z: number): this {
-    this.tx = x;
-    this.tz = z;
+    this.s.tx = Math.round(x * 2);
+    this.s.tz = Math.round(z * 2);
     return this;
   }
 
   color(hex: number, intensity = 1): this {
-    this.r = (((hex >> 16) & 255) / 255) * intensity;
-    this.g = (((hex >> 8) & 255) / 255) * intensity;
-    this.b = ((hex & 255) / 255) * intensity;
+    this.s.setColor(hex, intensity);
     return this;
   }
 
   seg(x1: number, y1: number, z1: number, x2: number, y2: number, z2: number): this {
-    this.pos.push(x1, y1, z1, x2, y2, z2);
-    this.col.push(this.r, this.g, this.b, this.r, this.g, this.b);
-    this.tile.push(this.tx, this.tz, this.tx, this.tz);
-    this.hidden.push(this.h, this.h);
+    this.s.v(x1, y1, z1);
+    this.s.v(x2, y2, z2);
     return this;
   }
 
   /** Following geometry is unmapped terrain: invisible except under a radar wave. */
   hide(on: boolean): this {
-    this.h = on ? 1 : 0;
+    this.s.h = VIS_U16[on ? Vis.HIDDEN : Vis.VISIBLE];
     return this;
   }
 
@@ -65,96 +171,60 @@ export class LineBatch {
 
   /** Wire octahedron centred at (cx, cy, cz). */
   octa(cx: number, cy: number, cz: number, rx: number, ry: number): this {
-    const top: [number, number, number] = [cx, cy + ry, cz];
-    const bot: [number, number, number] = [cx, cy - ry, cz];
     const ring: [number, number, number][] = [[cx + rx, cy, cz], [cx, cy, cz + rx], [cx - rx, cy, cz], [cx, cy, cz - rx]];
     this.loop(ring);
-    for (const p of ring) this.seg(top[0], top[1], top[2], p[0], p[1], p[2]).seg(bot[0], bot[1], bot[2], p[0], p[1], p[2]);
+    for (const p of ring) this.seg(cx, cy + ry, cz, p[0], p[1], p[2]).seg(cx, cy - ry, cz, p[0], p[1], p[2]);
     return this;
   }
 
+  /** Terrain format (TileLighting). */
   build(): THREE.BufferGeometry {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
-    g.setAttribute('color', new THREE.Float32BufferAttribute(this.col, 3));
-    g.setAttribute('tile', new THREE.Float32BufferAttribute(this.tile, 2));
-    g.setAttribute('hidden', new THREE.Float32BufferAttribute(this.hidden, 1));
-    return g;
+    return this.s.build();
+  }
+
+  /** Position + colour, for LineBasicMaterial({ vertexColors: true }). */
+  buildBasic(): THREE.BufferGeometry {
+    return this.s.buildBasic();
   }
 }
-
-/** Falling supply capsule with parachute, centred at the origin (y up). */
-export function buildCapsuleMesh(): THREE.LineSegments {
-  const b = new LineBatch().color(0xffd23a, 1);
-  b.box(-0.25, 0, -0.25, 0.5, 0.4, 0.5);
-  const canopy: [number, number, number][] = [];
-  for (let i = 0; i < 8; i++) {
-    const a = (i / 8) * Math.PI * 2;
-    canopy.push([Math.cos(a) * 0.9, 1.8, Math.sin(a) * 0.9]);
-  }
-  b.color(0xffffff, 0.9).loop(canopy);
-  for (let i = 0; i < 8; i += 2) b.seg(canopy[i][0], canopy[i][1], canopy[i][2], 0, 0.4, 0);
-  b.seg(-0.9, 1.8, 0, 0, 2.2, 0).seg(0.9, 1.8, 0, 0, 2.2, 0);
-  return new THREE.LineSegments(b.build(), new THREE.LineBasicMaterial({ vertexColors: true }));
-}
-
-const lines = (b: LineBatch, opts: THREE.LineBasicMaterialParameters = {}) =>
-  new THREE.LineSegments(b.build(), new THREE.LineBasicMaterial({ vertexColors: true, ...opts }));
-
-export const LIGHT_HEX = [0x333333, 0xff3030, 0x30ff60, 0x3080ff, 0xffb020];
-/** Colour of an indicator lamp (`@IND1..3`); OFF is a dark lens. */
-export const indicatorHex = (v: number): number => (v > 0 ? LIGHT_HEX[v] ?? 0xffffff : 0x1a2230);
-
-// ============================================================================================
-// M8 vector assets (v2): what the game renders. New shapes go through preview.html first.
-// ============================================================================================
-
-type V3 = readonly [number, number, number];
 
 /** Dark opaque fill triangles under the line work (hidden-line look), with per-tile lighting. */
 export class FillBatch {
-  readonly pos: number[] = [];
-  readonly col: number[] = [];
-  readonly tile: number[] = [];
-  readonly hidden: number[] = [];
-  private h = 0;
-  private r = 0;
-  private g = 0;
-  private b = 0;
-  private tx = 0;
-  private tz = 0;
+  private s = new VertexStore();
+
+  constructor() {
+    this.s.r = this.s.g = this.s.b = 0;
+  }
+
+  get count(): number {
+    return this.s.n;
+  }
 
   /** `intensity` is perceptual; squared because the output pass converts linear → sRGB. */
   color(hex: number, intensity = 0.12): this {
-    const k = intensity * intensity * 2.2;
-    this.r = (((hex >> 16) & 255) / 255) * k;
-    this.g = (((hex >> 8) & 255) / 255) * k;
-    this.b = ((hex & 255) / 255) * k;
+    this.s.setColor(hex, intensity * intensity * 2.2);
     return this;
   }
 
   at(x: number, z: number): this {
-    this.tx = x;
-    this.tz = z;
+    this.s.tx = Math.round(x * 2);
+    this.s.tz = Math.round(z * 2);
     return this;
   }
 
   tri(a: V3, b: V3, c: V3): this {
-    this.pos.push(...a, ...b, ...c);
-    for (let i = 0; i < 3; i++) {
-      this.col.push(this.r, this.g, this.b);
-      this.tile.push(this.tx, this.tz);
-      this.hidden.push(this.h);
-    }
+    const s = this.s;
+    s.v(a[0], a[1], a[2]);
+    s.v(b[0], b[1], b[2]);
+    s.v(c[0], c[1], c[2]);
     return this;
   }
 
   /** See LineBatch.hide. */
   hide(on: boolean): this {
-    this.h = on ? 1 : 0;
+    this.s.h = VIS_U16[on ? Vis.HIDDEN : Vis.VISIBLE];
     return this;
   }
-
   quad(a: V3, b: V3, c: V3, d: V3): this {
     return this.tri(a, b, c).tri(a, c, d);
   }
@@ -193,12 +263,7 @@ export class FillBatch {
   }
 
   build(): THREE.BufferGeometry {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
-    g.setAttribute('color', new THREE.Float32BufferAttribute(this.col, 3));
-    g.setAttribute('tile', new THREE.Float32BufferAttribute(this.tile, 2));
-    g.setAttribute('hidden', new THREE.Float32BufferAttribute(this.hidden, 1));
-    return g;
+    return this.s.build();
   }
 }
 

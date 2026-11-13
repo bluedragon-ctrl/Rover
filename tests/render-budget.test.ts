@@ -22,7 +22,7 @@ describe('render geometry budget', () => {
     const ms = performance.now() - t0;
     let hidden = 0;
     for (const e of (pool as unknown as { entries: Map<string, { lines: THREE.LineSegments }> }).entries.values())
-      for (const v of e.lines.geometry.getAttribute('hidden').array as Float32Array) hidden += v;
+      for (let i = 3, a = e.lines.geometry.getAttribute('col').array; i < a.length; i += 4) hidden += a[i] ? 1 : 0;
     return { chunks: pool.size, lineVerts: pool.lineVertices, fillTris: pool.fillTriangles, hidden, ms };
   }
 

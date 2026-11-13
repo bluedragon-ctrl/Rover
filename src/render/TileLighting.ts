@@ -21,7 +21,8 @@ export function radarFront(age: number, range: number): number {
  * Discrete, per-tile lighting for the terrain (not real light simulation).
  *
  * Every terrain vertex carries the centre of the tile it belongs to (`tile` attribute,
- * chunk-local x/z). The vertex shader moves that centre into scene space and decides how
+ * chunk-local x/z, stored ×2 as Int16) and its colour plus a visibility flag (`col`, see
+ * `Vis` in VectorFactory). The vertex shader moves that centre into scene space and decides how
  * lit the whole tile is: daylight, a rover's sensor disc, or its headlight cone. Tiles
  * therefore light up as crisp cells, the same cells the operator sees and maps: the disc and
  * cone here mirror `src/core/sensors.ts` (cone numbers are injected from HEADLIGHT_CONE).
@@ -71,7 +72,6 @@ export class TileLighting {
       vertexShader: VERT,
       fragmentShader: FRAG,
       fog: true,
-      vertexColors: true,
       defines: {
         ...(fill ? { FILL: 1 } : {}),
         CONE_LEN: HEADLIGHT_CONE.length.toFixed(1),
@@ -95,7 +95,7 @@ export class TileLighting {
 const VERT = /* glsl */ `
 #define MAX_LIGHTS ${MAX_LIGHTS}
 attribute vec2 tile;
-attribute float hidden;
+attribute vec4 col;
 uniform int uLightCount;
 uniform vec4 uLights[MAX_LIGHTS];
 uniform vec4 uBeams[MAX_LIGHTS];
@@ -108,8 +108,10 @@ varying float vHidden;
 #include <fog_pars_vertex>
 
 void main() {
-  vColor = color;
-  vec3 tc = (modelMatrix * vec4(tile.x, 0.0, tile.y, 1.0)).xyz;
+  vColor = col.rgb;
+  float vis = col.w * 2.0; // Vis: 0 visible, 1 hidden (radar only), 2 gone
+  vec2 tl = tile * 0.5;
+  vec3 tc = (modelMatrix * vec4(tl.x, 0.0, tl.y, 1.0)).xyz;
   float lit = 0.0;
   float radar = 0.0;
   for (int i = 0; i < MAX_LIGHTS; i++) {
@@ -141,7 +143,7 @@ void main() {
   }
   vLit = max(lit, uDay);
   vRadar = radar;
-  vHidden = hidden;
+  vHidden = vis > 0.5 ? 1.0 : 0.0;
   vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
   gl_Position = projectionMatrix * mvPosition;
   #include <fog_vertex>
