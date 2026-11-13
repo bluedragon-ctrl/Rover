@@ -88,7 +88,7 @@ export class ThreeScene {
   readonly stats = new FrameStats();
 
   constructor(private container: HTMLElement, private engine: SimulationEngine) {
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' }) // MSAA lives in PostFx;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     container.appendChild(this.renderer.domElement);
     // Bloom renders several passes; count draw calls for the whole frame.

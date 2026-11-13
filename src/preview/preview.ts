@@ -24,7 +24,7 @@ const labelsEl = document.getElementById('labels')!;
 const statsEl = document.getElementById('stats')!;
 const controlsEl = document.getElementById('controls')!;
 
-const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: true });
+const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', preserveDrawingBuffer: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 view.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
