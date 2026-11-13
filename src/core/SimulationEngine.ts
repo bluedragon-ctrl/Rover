@@ -6,6 +6,7 @@ import { EventDirector } from './EventDirector';
 import { hash3 } from './rng';
 import {
   BootReason,
+  DumpKind,
   encodeCpuDump,
   encodeLog,
   encodeStackDump,
@@ -23,9 +24,9 @@ import type { SquallDamage } from './events';
 import { TOOLS, type ToolDef } from './tools';
 import { Environment, signalStrength, solarGain, wrapDeg, angleDiff, type SunState } from './Environment';
 import { getPort, writePortClamped, type PortContext } from './ports';
-import { CpuState, DIR_VEC, Layer, Status } from './types';
+import { CpuState, DIR_VEC, Layer, ProgState, Status } from './types';
 import { Unit } from './Unit';
-import { compile, type CompileResult, type Instr } from './vm/Compiler';
+import { compile, type CompileResult, type Instr, type Slot } from './vm/Compiler';
 import type { VmHost } from './vm/RoverVM';
 import { HORIZON_COLUMNS, HORIZON_V, isAnomaly, type HorizonView } from './photos';
 import { coneOffsets, shapeContains, type SensorShape } from './sensors';
@@ -46,8 +47,8 @@ export interface SupplyDrop {
 }
 
 /** Console commands sent over the uplink (SPEC §3.8.4). */
-export type UplinkCommand = 'DUMP' | 'DUMP_STACKS' | 'CONTINUE';
-export const UPLINK_COMMAND_NAMES: Record<UplinkCommand, string> = { DUMP: 'Dump', DUMP_STACKS: 'Dump stacks', CONTINUE: 'Continue' };
+export type UplinkCommand = 'DUMP' | 'DUMP_STACKS' | 'CONTINUE' | 'RUN_AGAIN';
+export const UPLINK_COMMAND_NAMES: Record<UplinkCommand, string> = { DUMP: 'Dump', DUMP_STACKS: 'Dump stacks', CONTINUE: 'Continue', RUN_AGAIN: 'Run again' };
 
 export interface UploadResult extends CompileResult {
   /** Energy charged for the upload (0 if rejected or free). */
@@ -134,6 +135,7 @@ export class SimulationEngine {
       drops: () => this.drops.filter((d) => d.landed),
       nearestDrop: (u) => this.nearestDrop(u),
       transmit: (u, v) => this.transmit(u, v),
+      setProgState: (u, v) => this.setProgState(u, v),
     };
   }
 
@@ -174,8 +176,10 @@ export class SimulationEngine {
     return this.units.find((u) => u.x === x && u.y === y);
   }
 
-  compileFor(unit: Unit, source: string): CompileResult {
-    return compile(source, unit.chassis, this.registry.constants());
+  /** Compile for a slot; the other slot's bytes count against the shared flash (SPEC §3.9.1). */
+  compileFor(unit: Unit, source: string, slot: Slot = 'firmware'): CompileResult {
+    const otherBytes = slot === 'firmware' ? unit.programBytes : unit.firmwareBytes;
+    return compile(source, unit.chassis, this.registry.constants(), { slot, otherBytes });
   }
 
   signalOf(u: Unit): number {
@@ -218,7 +222,14 @@ export class SimulationEngine {
     return Math.ceil((base * 100) / Math.max(BALANCE.uploadSignalFloor, this.signalOf(u)));
   }
 
-  /** Energy for an uplinked console command (Dump, Dump stacks, Continue). */
+  /** Energy to upload a program of `bytes` (no reboot, smaller base: SPEC §3.9.3). */
+  programUploadCost(u: Unit, bytes: number): number {
+    if (this.cheats.freeUpload) return 0;
+    const base = BALANCE.programUploadBase + BALANCE.uploadPerByte * bytes;
+    return Math.ceil((base * 100) / Math.max(BALANCE.uploadSignalFloor, this.signalOf(u)));
+  }
+
+  /** Energy for an uplinked console command (Dump, Dump stacks, Continue, Run again). */
   commandCost(u: Unit): number {
     if (this.cheats.freeUpload) return 0;
     return Math.ceil((BALANCE.dumpEnergy * 100) / Math.max(BALANCE.uploadSignalFloor, this.signalOf(u)));
@@ -229,22 +240,109 @@ export class SimulationEngine {
    * log; Continue ends a BRK halt (a running rover just ignores it). Returns why it was
    * rejected, or null. Mission control learns the CPU state only from the reply.
    */
-  command(u: Unit, cmd: UplinkCommand): string | null {
+  command(u: Unit, cmd: UplinkCommand, slot: Slot = 'firmware'): string | null {
     if (!u.powered) return `rover is ${u.vm.state}: it cannot receive commands`;
-    const isDump = cmd !== 'CONTINUE';
+    const isDump = cmd === 'DUMP' || cmd === 'DUMP_STACKS';
     if (isDump && u.link.sys.length >= BALANCE.dumpQueueMax) return `${BALANCE.dumpQueueMax} dumps are already waiting for the downlink`;
+    if (cmd === 'RUN_AGAIN' && !this.hasProgram(u)) return 'no program in flash';
     const cost = this.commandCost(u);
     if (u.energy <= cost) return `needs ${(cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(u)}`;
     u.energy -= cost;
-    const vm = u.vm;
+    const prog = slot === 'program';
+    const vm = prog ? u.prog : u.vm;
     if (cmd === 'DUMP') {
-      const bytes = encodeCpuDump({ ip: vm.nextIp, status: vm.status, state: vm.state, regs: vm.regs, dsDepth: vm.dataStack.length, csDepth: vm.callStack.length });
-      u.link.sys.push({ bytes, taken: this.tick });
-    } else if (cmd === 'DUMP_STACKS') u.link.sys.push({ bytes: encodeStackDump(vm.dataStack, vm.callStack), taken: this.tick });
-    else vm.resume();
+      const d = { ip: vm.nextIp, status: vm.status, state: prog ? u.progState : vm.state, regs: vm.regs, dsDepth: vm.dataStack.length, csDepth: vm.callStack.length };
+      u.link.sys.push({ bytes: encodeCpuDump(d, prog ? DumpKind.PROG_CPU : DumpKind.CPU), taken: this.tick });
+    } else if (cmd === 'DUMP_STACKS') {
+      u.link.sys.push({ bytes: encodeStackDump(vm.dataStack, vm.callStack, prog ? DumpKind.PROG_STACKS : DumpKind.STACKS), taken: this.tick });
+    } else if (cmd === 'RUN_AGAIN') this.restartProgram(u);
+    else if (!prog) vm.resume();
+    else if (u.progState === ProgState.PROG_HALTED) {
+      u.prog.resume();
+      u.progState = ProgState.PROG_READY;
+    }
     const costMsg = cost ? ` (${(cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(u)})` : '';
-    this.log(u, 'info', `Uplink: ${UPLINK_COMMAND_NAMES[cmd]} sent${costMsg}.`);
+    const slotMsg = isDump || cmd === 'CONTINUE' ? ` (${slot})` : '';
+    this.log(u, 'info', `Uplink: ${UPLINK_COMMAND_NAMES[cmd]}${slotMsg} sent${costMsg}.`);
     return null;
+  }
+
+  // ---------------------------------------------------------------- program slot (M10)
+
+  hasProgram(u: Unit): boolean {
+    return (u.prog.program?.instrs.length ?? 0) > 0;
+  }
+
+  /** End the running RUN slice: the firmware continues with the instruction after RUN next tick. */
+  private endSlice(u: Unit, state: ProgState): void {
+    if (u.slice < 0) return;
+    u.slice = -1;
+    u.progState = state;
+    u.cyclesLeft = 0;
+    u.vm.unblock();
+  }
+
+  /** Fresh program context (restart from the top); aborts a running slice and the program's action. */
+  private restartProgram(u: Unit): void {
+    if (u.slice >= 0) {
+      u.action = null;
+      this.endSlice(u, ProgState.PROG_READY);
+    }
+    u.prog.reboot();
+    u.progResult = 0;
+    u.progState = this.hasProgram(u) ? ProgState.PROG_READY : ProgState.PROG_NONE;
+  }
+
+  /** Firmware write to @PROG_STATE: PROG_NONE acknowledges, PROG_READY restarts (SPEC §3.9.2). */
+  private setProgState(u: Unit, v: number): void {
+    if (!this.hasProgram(u)) return;
+    if (v === ProgState.PROG_NONE) u.progState = ProgState.PROG_NONE;
+    else if (v === ProgState.PROG_READY) this.restartProgram(u);
+  }
+
+  /** Hard reboot of the whole CPU: both contexts reset, the program becomes READY again. */
+  private hardReboot(u: Unit, reason: number): void {
+    u.slice = -1;
+    u.action = null;
+    u.vm.reboot();
+    this.restartProgram(u);
+    this.booted(u, reason);
+  }
+
+  /** Power loss or destruction: the slice is gone with the CPU (the reboot resets the program). */
+  private abortSlice(u: Unit): void {
+    u.slice = -1;
+  }
+
+  /**
+   * Upload the program slot (SPEC §3.9.3): cheap, no reboot, the firmware keeps running.
+   * An empty source erases the program.
+   */
+  uploadProgram(unit: Unit, source: string, opts: { factory?: boolean } = {}): UploadResult {
+    const res: UploadResult = { ...this.compileFor(unit, source, 'program'), cost: 0 };
+    if (!res.program) return res;
+    if (!opts.factory) {
+      if (!unit.powered) {
+        res.rejected = `Rover is ${unit.vm.state}: it cannot receive a program.`;
+        return res;
+      }
+      const cost = this.programUploadCost(unit, res.flashUsed);
+      if (unit.energy <= cost) {
+        res.rejected = `Upload needs ${(cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(unit)}; rover has ${(unit.energy / 1000).toFixed(1)}%.`;
+        return res;
+      }
+      unit.energy -= cost;
+      res.cost = cost;
+    }
+    unit.programSource = source;
+    unit.programBytes = res.flashUsed;
+    unit.prog.program = res.program;
+    this.restartProgram(unit);
+    const costMsg = res.cost ? `, cost ${(res.cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(unit)}` : '';
+    const flash = `${unit.firmwareBytes} + ${res.flashUsed}/${unit.chassis.flashBytes} bytes`;
+    if (this.hasProgram(unit)) this.log(unit, 'info', `Program uploaded (${flash}${costMsg}). It starts with the firmware's next RUN.`);
+    else this.log(unit, 'info', `Program erased (${flash}${costMsg}).`);
+    return res;
   }
 
   /**
@@ -268,12 +366,13 @@ export class SimulationEngine {
       res.cost = cost;
     }
     unit.sourceCode = source;
-    unit.action = null;
-    unit.vm.load(res.program);
+    unit.firmwareBytes = res.flashUsed;
+    unit.vm.program = res.program;
+    this.hardReboot(unit, BootReason.UPLOAD);
     unit.cyclesLeft = 0;
-    this.booted(unit, BootReason.UPLOAD);
     const costMsg = res.cost ? `, cost ${(res.cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(unit)}` : '';
-    this.log(unit, 'info', `Firmware flashed (${res.flashUsed}/${unit.chassis.flashBytes} bytes${costMsg}). Rebooting.`);
+    const prog = unit.programBytes ? ` + program ${unit.programBytes}` : '';
+    this.log(unit, 'info', `Firmware flashed (${res.flashUsed}${prog}/${unit.chassis.flashBytes} bytes${costMsg}). Rebooting.`);
     return res;
   }
 
@@ -303,7 +402,7 @@ export class SimulationEngine {
    */
   stepInstruction(unit: Unit, maxTicks = 10_000): boolean {
     for (let guard = 0; guard < maxTicks; guard++) {
-      if (unit.vm.state === CpuState.RUNNING && unit.cyclesLeft > 0) {
+      if (unit.cpu.state === CpuState.RUNNING && unit.cyclesLeft > 0) {
         this.runCpu(unit, 1);
         return true;
       }
@@ -311,6 +410,7 @@ export class SimulationEngine {
       for (const u of this.units) if (u !== unit) this.runCpu(u, Infinity);
       this.beginTick();
       if (!unit.powered || unit.vm.state === CpuState.FAULT || unit.vm.state === CpuState.HALTED) return false;
+      if (unit.slice >= 0 && (unit.prog.state === CpuState.FAULT || unit.prog.state === CpuState.HALTED)) return false;
     }
     return false;
   }
@@ -331,7 +431,8 @@ export class SimulationEngine {
       if (squall) this.applySquall(u, squall);
       this.updateUnitPhysics(u);
       this.revealAround(u);
-      u.cyclesLeft = u.vm.state === CpuState.RUNNING ? u.chassis.cyclesPerTick : 0;
+      this.updateSlice(u);
+      u.cyclesLeft = u.cpu.state === CpuState.RUNNING ? u.chassis.cyclesPerTick : 0;
     }
     for (const d of this.drops) if (!d.landed && d.landTick === this.tick) this.landDrop(d);
     if (this.tick % 100 === 0) this.world.evictStale(BALANCE.chunkEvictAfterTicks);
@@ -339,15 +440,34 @@ export class SimulationEngine {
     this.events.emit('TICK', { tick: this.tick });
   }
 
+  /**
+   * Slice bookkeeping at the start of a tick: a used-up slice ends once the program is
+   * between instructions (an action started in the slice runs to completion first).
+   */
+  private updateSlice(u: Unit): void {
+    if (u.slice < 0) return;
+    if (u.slice > 0) u.slice--;
+    else if (u.prog.state !== CpuState.BLOCKED) this.endSlice(u, ProgState.PROG_READY);
+  }
+
   private runCpu(u: Unit, maxInstructions: number): void {
     let n = 0;
-    while (u.cyclesLeft > 0 && u.vm.state === CpuState.RUNNING && n < maxInstructions) {
-      const r = u.vm.step(this.hostFor(u), BALANCE.watchdogTicks);
+    while (u.cyclesLeft > 0 && n < maxInstructions) {
+      const cpu = u.cpu;
+      if (cpu.state !== CpuState.RUNNING) break;
+      const r = cpu.step(this.hostFor(u), BALANCE.watchdogTicks);
       n++;
       u.cyclesLeft--;
       if (r === 'endTick') u.cyclesLeft = 0;
+      const after = cpu.state as CpuState; // step() may have changed it
+      if (cpu === u.prog && u.slice >= 0) {
+        if (after === CpuState.FAULT) {
+          this.log(u, 'error', `Program FAULT: ${cpu.faultReason}. Control returns to the firmware.`);
+          this.endSlice(u, ProgState.PROG_FAULT);
+        } else if (after === CpuState.HALTED) this.endSlice(u, ProgState.PROG_HALTED);
+      }
     }
-    if (u.vm.state !== CpuState.RUNNING) u.cyclesLeft = 0;
+    if (u.cpu.state !== CpuState.RUNNING) u.cyclesLeft = 0;
     if (u.vm.state === CpuState.FAULT && u.vm.watchdog === BALANCE.watchdogTicks) {
       this.log(u, 'error', `CPU FAULT: ${u.vm.faultReason}. Watchdog reboot in ${BALANCE.watchdogTicks} ticks.`);
       this.events.emit('UNIT_STATE', { unitId: u.id, state: u.vm.state });
@@ -375,8 +495,7 @@ export class SimulationEngine {
     if (u.vm.state === CpuState.POWER_OFF) {
       if (u.energy * 100 >= B.coldBootPercent * u.chassis.batteryCapacity) {
         u.vm.state = CpuState.RUNNING;
-        u.vm.reboot();
-        this.booted(u, BootReason.COLD_BOOT);
+        this.hardReboot(u, BootReason.COLD_BOOT);
         this.log(u, 'warn', 'Solar cold boot: battery recovered, firmware restarted.');
         this.events.emit('UNIT_STATE', { unitId: u.id, state: u.vm.state });
       }
@@ -540,9 +659,7 @@ export class SimulationEngine {
 
     if (vm.state === CpuState.FAULT) {
       if (--vm.watchdog <= 0) {
-        vm.reboot();
-        u.action = null;
-        this.booted(u, BootReason.WATCHDOG);
+        this.hardReboot(u, BootReason.WATCHDOG);
         this.log(u, 'warn', 'Watchdog reboot.');
         this.events.emit('UNIT_STATE', { unitId: u.id, state: vm.state });
       }
@@ -557,7 +674,7 @@ export class SimulationEngine {
 
     if (act.kind === 'WAIT') {
       u.action = null;
-      vm.unblock();
+      u.cpu.unblock();
       return;
     }
 
@@ -591,11 +708,12 @@ export class SimulationEngine {
   private finishAction(u: Unit, status: Status): void {
     u.action = null;
     this.setStatus(u, status);
-    u.vm.unblock();
+    u.cpu.unblock();
   }
 
+  /** @STATUS of the context that runs now (each slot has its own). */
   private setStatus(u: Unit, status: Status): void {
-    u.vm.status = status;
+    u.cpu.status = status;
     if (status !== Status.OK) this.events.emit('UNIT_STATUS', { unitId: u.id, status });
   }
 
@@ -716,7 +834,7 @@ export class SimulationEngine {
     this.drain(u, tool.energy);
     if (!u.powered) return;
     u.action = { kind: 'TOOL', tool: tool.id, arg, arg2, ticksLeft: tool.ticks };
-    u.vm.block();
+    u.cpu.block();
     const t = tool.target?.(u, arg) ?? null;
     if (tool.arg === 'dir' && !tool.keepsHeading && arg >= 0 && arg <= 3) u.heading = arg;
     this.events.emit('TOOL_USED', { unitId: u.id, tool: tool.id, x: u.x, y: u.y, targetX: t?.[0] ?? null, targetY: t?.[1] ?? null, ticks: tool.ticks });
@@ -728,6 +846,7 @@ export class SimulationEngine {
       u.vm.state = CpuState.POWER_OFF;
       u.action = null;
       u.cyclesLeft = 0;
+      this.abortSlice(u);
       this.log(u, 'error', 'Battery depleted. Rover powered off.');
       this.events.emit('UNIT_STATE', { unitId: u.id, state: u.vm.state });
     }
@@ -740,6 +859,7 @@ export class SimulationEngine {
       u.vm.state = CpuState.DESTROYED;
       u.action = null;
       u.cyclesLeft = 0;
+      this.abortSlice(u);
       this.log(u, 'error', 'Hull breached. Rover destroyed.');
       this.events.emit('UNIT_STATE', { unitId: u.id, state: u.vm.state });
     }
@@ -761,6 +881,11 @@ export class SimulationEngine {
       hardware: (ins, values) => this.hardware(u, ins, values),
       log: (tag, value) => {
         u.link.enqueue(encodeLog(tag, value), u.chassis.logFifoBytes);
+      },
+      end: (value) => {
+        if (u.slice < 0) return;
+        u.progResult = value;
+        this.endSlice(u, ProgState.PROG_DONE);
       },
     };
   }
@@ -825,7 +950,7 @@ export class SimulationEngine {
         this.setStatus(u, Status.OK);
         if (v[0] > 0) {
           u.action = { kind: 'WAIT', ticksLeft: v[0] };
-          u.vm.block();
+          u.cpu.block();
         }
         return;
       }
@@ -858,7 +983,7 @@ export class SimulationEngine {
         this.setStatus(u, Status.OK);
         if (u.powered) {
           u.action = { kind: 'WAIT', ticksLeft: BALANCE.scanTicks };
-          u.vm.block();
+          u.cpu.block();
         }
         return [hit, dist];
       }
@@ -871,7 +996,19 @@ export class SimulationEngine {
         }
         const st = this.beginStepTile(u, dir, tiles);
         this.setStatus(u, st);
-        if (st === Status.OK) u.vm.block();
+        if (st === Status.OK) u.cpu.block();
+        return;
+      }
+      case 'RUN': {
+        // Firmware only (compile rule). Nothing ready to run: ERR_INVALID, the firmware goes on.
+        if (u.slice >= 0 || u.progState !== ProgState.PROG_READY || !this.hasProgram(u)) {
+          this.setStatus(u, Status.ERR_INVALID);
+          return;
+        }
+        this.setStatus(u, Status.OK);
+        u.progState = ProgState.PROG_RUNNING;
+        u.slice = Math.max(1, v[0]);
+        u.vm.block();
         return;
       }
       case 'ACT': {
@@ -912,8 +1049,7 @@ export class SimulationEngine {
       u.energy = u.chassis.batteryCapacity;
       if (u.vm.state === CpuState.POWER_OFF) {
         u.vm.state = CpuState.RUNNING;
-        u.vm.reboot();
-        this.booted(u, BootReason.ADMIN);
+        this.hardReboot(u, BootReason.ADMIN);
         this.log(u, 'warn', 'ADMIN: battery recharged, cold boot.');
       } else this.log(u, 'warn', 'ADMIN: battery recharged.');
     },
@@ -923,8 +1059,7 @@ export class SimulationEngine {
       u.antennaHealth = 100;
       if (u.vm.state === CpuState.DESTROYED) {
         u.vm.state = CpuState.RUNNING;
-        u.vm.reboot();
-        this.booted(u, BootReason.ADMIN);
+        this.hardReboot(u, BootReason.ADMIN);
       }
       this.log(u, 'warn', 'ADMIN: hull repaired.');
     },
@@ -934,7 +1069,7 @@ export class SimulationEngine {
       u.y = y;
       u.action = null;
       u.motion = null;
-      if (u.vm.state === CpuState.BLOCKED) u.vm.unblock();
+      if (u.cpu.state === CpuState.BLOCKED) u.cpu.unblock();
       this.revealAround(u);
       this.log(u, 'warn', `ADMIN: teleported to (${x}, ${y}).`);
       return true;
@@ -949,8 +1084,7 @@ export class SimulationEngine {
       u.solarHealth = 100;
       u.antennaHealth = 100;
       u.vm.state = CpuState.RUNNING;
-      u.vm.reboot();
-      this.booted(u, BootReason.ADMIN);
+      this.hardReboot(u, BootReason.ADMIN);
       this.revealAround(u);
       this.log(u, 'warn', 'ADMIN: respawned at origin.');
     },

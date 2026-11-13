@@ -487,9 +487,10 @@ gallery keeps the last 100 products (saved). Old saves: science points still wai
 | Hi-res sensor (`CAM_HIRES`) | 80 | Camera mode 4 | Recorder 2 KB |
 | Colour sensor (`CAM_RGB`) | 100 | Camera mode 5 | Colour filter wheel, Recorder 2 KB |
 
-## 3.9 Firmware and programs **[M10, planned]**
+## 3.9 Firmware and programs **[M10]**
 
-Design agreed with the owner (2026-11-12, details 2026-11-13). Built in slices (ROADMAP).
+Design agreed with the owner (2026-11-12, details 2026-11-13). Slice 1 built the rules
+below in the core; the editor and Console controls follow in slice 2 **[M10, planned]**.
 
 The rover runs two pieces of code on its one CPU, like a spacecraft's flight software
 running uplinked command sequences, or a small OS starting user programs:
@@ -562,7 +563,8 @@ running uplinked command sequences, or a small OS starting user programs:
 
 A **core** plus **comfort blocks**, each between marker comments with its byte cost, so
 experienced players can delete what they do not need and give the bytes to their program.
-Target: the full default firmware leaves at least half of Mk-I flash (128 B) to programs.
+The full default firmware is 136 B (comfort 43 B of it), leaving 120 B on Mk-I: the
+shipped programs need 20–79 B (First steps 20, Explorer 46, Fetch 72, Prospector 79).
 
 * Core: keep the dish on the orbiter; stow the array on a squall warning; charge below a
   threshold (`CONST LOW_BAT`, `FULL_BAT`) and give the program no slices while charging;
@@ -655,6 +657,8 @@ friction, but the set should stay small enough to learn in one sitting.
 | | `USE slot` | 5 ticks | Consume a cargo item (§3.3.2). |
 | | `SNAP dir [mode]` | blocks 10 | **[M9]** Photograph the subject in `dir` into the science recorder (§3.8.5). |
 | Debug | `LOG tag [src]` | 1 cycle | **[M9]** Queue a log frame for the downlink; compute, no `@STATUS` (§3.8.3). |
+| Slots | `RUN ticks` | hardware | **[M10]** Firmware only: run the program for a time slice (§3.9.2). |
+| | `END [value]` | 1 cycle | **[M10]** Program only: finish with `PROG_DONE` and `@PROG_RESULT` (§3.9.2). |
 | | `BRK` | 1 cycle | **[M9]** Halt the CPU (`HALTED`) until *Continue* or an upload (§3.8.4). |
 
 `@STATUS` is written by every hardware instruction and by arithmetic errors; pure
@@ -668,6 +672,8 @@ compute instructions leave it alone.
 * Tools: `TOOL_0`…`TOOL_3`.
 * Systems: `SYS_HULL=0`, `SYS_SOLAR=1`, `SYS_ANTENNA=2`.
 * Alerts: `ALERT_NONE=0`, `ALERT_ECLIPSE=1`, `ALERT_SQUALL=2`.
+* Program state **[M10]**: `PROG_NONE=0`, `PROG_READY=1`, `PROG_RUNNING=2`, `PROG_DONE=3`,
+  `PROG_FAULT=4`, `PROG_HALTED=5`.
 * Colors: `OFF=0`, `RED=1`, `GREEN=2`, `BLUE=3`, `AMBER=4`.
 * Tiles: `NONE=0` plus every `constName` in `WorldRegistry` (`FLAT_SAND`, `IRON_ORE`, `ROVER`, ...).
 
@@ -678,7 +684,7 @@ compute instructions leave it alone.
 | `@BAT` | R | 0–100 | M1–M3 |
 | `@HULL` | R | 0–100 | M1–M3 |
 | `@X`, `@Y` | R | signed | M1–M3 |
-| `@STATUS` | R | 0–7 | M1–M3 |
+| `@STATUS` | R | 0–8; each slot has its own (M10) | M1–M3 |
 | `@TICK` | R | ticks since world start | M1–M3 |
 | `@GROUND` | R | layer 0 tile ID under the rover | M1–M3 |
 | `@GROUND_HAZARD` | R | 0–2 | M1–M3 |
@@ -705,6 +711,8 @@ compute instructions leave it alone.
 | `@LOG_LOST` | RW | log frames dropped (saturates at 255) | M9 |
 | `@REC_FREE` | R | free bytes in the science recorder | M9 |
 | `@POST` | RW | 0–255, two-digit hex display on the back of the cabin | M9 |
+| `@PROG_STATE` | RW (writes: firmware only) | `PROG_*`; write `PROG_NONE` = acknowledge, `PROG_READY` = restart | M10 |
+| `@PROG_RESULT` | R | value of the program's last `END` | M10 |
 
 Writes are clamped to the port's range; angle ports wrap modulo 360.
 

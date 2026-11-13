@@ -21,7 +21,7 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | M8.1 | Radar `SCAN` vs. light-limited operator view; headlight cone; `@HEADING` | ✅ done |
 | Flash bytes | Program size in machine-code bytes instead of lines (SPEC §5.7) | ✅ core done; editor byte gutter awaiting preview approval |
 | **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | ✅ slices 1–6 done (link layer, `LOG`, Console tab; recorder, spectra, Gallery tab; dumps, `BRK`, admin-only debugger; `@POST` display; camera + photos; upgrades, camera modes 3–5, fossil anomalies; save v9) |
-| **M10** | **Firmware + program slot (SPEC §3.9)** | 🚧 detailed plan below; slice 1 (core) in progress |
+| **M10** | **Firmware + program slot (SPEC §3.9)** | 🚧 slice 1 (core: `RUN`/`END`, two contexts, 256 B flash, default firmware + programs, save v10) done; ⏭ slice 2: UI |
 | M11 | User interface review (after M10) | planned |
 | M12 | Multiple rovers (after single-rover tuning) | planned |
 
@@ -278,22 +278,26 @@ Spec: [SPEC §3.9](SPEC.md). Outline decided with the owner on 2026-11-12, detai
   `PROG_READY` (task restarts as before M10); program upload base 200 instead of 500;
   merged Console tag dictionary.
 
-### Slice 1 — core (this PR)
-- [ ] `balance.ts`: Mk-I 256 B, upgrades 384 / 512 B, `programUploadBase`.
-- [ ] Compiler: `RUN v`, `END [v]`, `slot` option and flash budget (other slot's bytes),
+### Slice 1 — core ✅
+- [x] `balance.ts`: Mk-I 256 B, upgrades 384 / 512 B, `programUploadBase` 200.
+- [x] Compiler: `RUN v`, `END [v]`, `slot` option and flash budget (other slot's bytes),
       slot rules, `PROG_*` constants, ports `@PROG_STATE` (RW) / `@PROG_RESULT` (R).
-- [ ] VM/engine: second context (`unit.prog`), `unit.cpu` = the context that runs now,
-      slices, `END`, program faults and `BRK` without watchdog, hard reboots reset both,
-      `uploadProgram`, `RUN_AGAIN` command, dumps and *Continue* per slot (kinds 3/4).
-- [ ] Default firmware (core + comfort blocks with byte costs) and the three templates as
-      programs (`PROGRAM_TEMPLATES`); old firmware templates kept until slice 2.
-- [ ] Save v10 (program source + context, `@PROG_STATE`, result, slice) + migration
-      (old firmware stays the firmware, no program).
-- [ ] Tests: slices and tick boundaries, `END`, fault/`BRK` isolation, uploads, reboots,
-      dumps, save round-trip with a program mid-slice, every shipped program fits next to
-      the default firmware on Mk-I.
+- [x] VM/engine: second context (`unit.prog`), `unit.cpu` = the context that runs now
+      (actions, `@STATUS`), slices, `END`, program faults and `BRK` without watchdog,
+      `hardReboot` resets both, `uploadProgram`, `RUN_AGAIN` command, dumps and
+      *Continue* per slot (kinds 3/4, `DecodedDump.slot`).
+- [x] `DEFAULT_FIRMWARE` 136 B (core 93 B + 7 comfort blocks 43 B, costs checked by a
+      test) and `PROGRAM_TEMPLATES`: First steps 20 B (new, teaches `END`), Explorer 46,
+      Prospector 79, Fetch 72 (now `END 1` / `END 0`). Old firmware templates and the
+      factory firmware stay in the game until slice 2, so play is unchanged.
+- [x] Save v10 (program source + context, `@PROG_STATE`, result, slice) + migration.
+- [x] Tests `tests/m10.test.ts` (20): slot rules, shared flash, tick boundaries, actions
+      finishing first, separate `@STATUS`, `END`/acknowledge/restart, fault and `BRK`
+      isolation, reboots and power loss, uploads, dumps, default firmware + programs,
+      save round-trip mid-slice, v9 migration. Reference tab notes for `RUN` / `END`.
 
 ### Slice 2 — UI
+- [ ] New rovers ship `DEFAULT_FIRMWARE` (no program); Factory idle retired.
 - [ ] Code tab: Program (default) / Firmware (advanced) switch, *Upload program*,
       flash counter `firmware + program / 256 B`, templates split into programs and
       firmware, warning when the firmware has no `RUN`.
@@ -414,3 +418,4 @@ window with a fixed dish?
 | 2026-11-13 | `ccr-2c7af876-8dzljn` (2) | M9 slice 5: landscape photos when nothing is within reach (ridges from real cliffs and ore, ground, sun, night sky with headlight foreground). |
 | 2026-11-13 | `ccr-1e08ca42-e1n32b` | M9 slice 6: downlink/camera upgrades (recorder 2/4 KB, amplifier, trace buffer, camera modes 3–5), fossil anomalies (preview reviewed, subtle look), gallery flagging, goal *Anomaly hunter*, save v9. M9 complete. |
 | 2026-11-13 | `ccr-1e08ca42-e1n32b` (2) | Docs: rare local fauna and flora noted as planned future exploration content (Backlog). |
+| 2026-11-13 | `ccr-d9e2f47d-6jnxk7` | M10 detailed plan with the owner (Mk-I 256 B, two sources, writable `@PROG_STATE`, dumps per slot); slice 1 core: `RUN`/`END`, program context and slices, program upload, Run again, per-slot dumps, default firmware 136 B + 4 programs, save v10. |
