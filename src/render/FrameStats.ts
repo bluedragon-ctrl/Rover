@@ -21,6 +21,13 @@ export class FrameStats {
     }
   }
 
+  /** Forget all samples (e.g. after a resolution change). */
+  reset(): void {
+    this.intervals = [];
+    this.cpu = [];
+    this.i = 0;
+  }
+
   get samples(): number {
     return this.intervals.length;
   }

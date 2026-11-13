@@ -8,6 +8,7 @@ import { ChunkPool } from './ChunkPool';
 import { FxOverlay } from './FxOverlay';
 import { CameraRig } from './CameraRig';
 import { Dust } from './Dust';
+import { AdaptiveResolution } from './AdaptiveResolution';
 import { PostFx } from './PostFx';
 import { RoverAnimator, type RoverPose } from './RoverRig';
 import { MAX_LIGHTS, radarFront, TileLighting } from './TileLighting';
@@ -91,10 +92,18 @@ export class ThreeScene {
   hover: { x: number; y: number } | null = null;
   /** Frame-time stats (rolling window) for the performance HUD. */
   readonly stats = new FrameStats();
+  /** Samples since the last resolution change (for AdaptiveResolution). */
+  private adaptStats = new FrameStats(90);
+  /** Lowers the pixel ratio on slow GPUs; null when pinned with `?dpr=`. */
+  readonly adaptive: AdaptiveResolution | null;
 
   constructor(private container: HTMLElement, private engine: SimulationEngine) {
     this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' }) // MSAA lives in PostFx;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // `?dpr=1.5` pins the pixel ratio; otherwise start at the display's (max 2) and adapt.
+    const pinned = Number(new URLSearchParams(location.search).get('dpr'));
+    const maxDpr = Math.min(window.devicePixelRatio, 2);
+    this.adaptive = pinned > 0 ? null : new AdaptiveResolution(maxDpr, Math.min(1, maxDpr));
+    this.renderer.setPixelRatio(pinned > 0 ? pinned : maxDpr);
     container.appendChild(this.renderer.domElement);
     // Bloom renders several passes; count draw calls for the whole frame.
     this.renderer.info.autoReset = false;
@@ -334,7 +343,26 @@ export class ThreeScene {
     this.updateCapsules(simTime, now);
     this.fx.update(fx, fy, now);
     this.post.render(this.scene, rig.camera);
-    if (intervalMs > 0) this.stats.push(intervalMs, performance.now() - cpu0);
+    if (intervalMs > 0) {
+      const cpuMs = performance.now() - cpu0;
+      this.stats.push(intervalMs, cpuMs);
+      this.adaptStats.push(intervalMs, cpuMs);
+      this.adaptResolution(now);
+    }
+  }
+
+  private adaptResolution(now: number): void {
+    // Hidden tabs and long stalls (debugger, tab switch) say nothing about the GPU.
+    if (!this.adaptive || document.hidden || this.adaptStats.worstMs > 500) {
+      if (this.adaptStats.worstMs > 500) this.adaptStats.reset();
+      return;
+    }
+    const s = this.adaptStats;
+    const r = this.adaptive.update(now, s.avgMs, s.cpuMs, s.samples);
+    if (r === null) return;
+    this.renderer.setPixelRatio(r);
+    this.resize();
+    s.reset();
   }
 
   /** Numbers for the performance HUD. */
