@@ -304,8 +304,14 @@ Spec: [SPEC §3.9](SPEC.md). Outline decided with the owner on 2026-11-12, detai
 - [ ] Console: slot switch for Dump / Dump stacks / Continue, *Run again*, merged tag
       dictionary, program dump decoding.
 - [ ] Reference tab: `RUN`, `END`, `@PROG_*`.
-- [ ] Editor byte gutter (still awaiting preview approval) would show the comfort blocks'
-      cost; decide with the owner whether it ships with this slice.
+- [ ] **Machine code + listing** (owner request 2026-11-13, SPEC §5.7.1): encoder with
+      fixed opcode / port numbers (decoder round-trip test over every shipped program),
+      *Compile* button and a read-only listing pane in the Code tab (address | hex |
+      source, kept in sync while typing, click a row to jump to its line), per-slot totals
+      `firmware + program = n / 256 B`; IPs become byte addresses in the VM, dumps, call
+      stack and debugger (save v11 converts old IPs); each slot addressed from 0x000.
+      Listing pane goes through the preview first (`preview.html?editor=1`); it replaces
+      the pending byte gutter, which can show the hex per line instead.
 
 ### Later / open
 - Tune `SLICE` and charge thresholds in playtests.

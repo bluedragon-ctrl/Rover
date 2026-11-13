@@ -740,6 +740,28 @@ above 15 or `CONST SPEED 90` is 2. Examples: `RET` = 1, `MOV r0 r1` = 3,
 `JLE @BAT 20 home` = 1 + 1 + 2 + 2 = 6. The compiler reports the size per line and the
 first line that no longer fits.
 
+#### 5.7.1 Machine code and the listing **[M10, planned]**
+
+Decided with the owner (2026-11-13): the compiler emits real bytes, and the player can
+**Compile** (free, on the ground) to see an assembler listing (address, hex bytes,
+source line) and the final byte count of each slot.
+
+* **Opcode byte**: a fixed table (`MOV` 01, `PUSH` 02, … `BRK` 1A, `RUN` 1B, `END` 1C, in
+  §5.4 order); new instructions get new numbers, old ones never change.
+* **Operand byte**: `0000vvvv` short immediate 0–15 · `00010rrr` register r0–r7 ·
+  `01pppppp` port (fixed port numbers, 0–63) · `00011000` / `00011001` / `00011010`
+  followed by an 8 / 16 / 32-bit big-endian immediate. Other values are invalid.
+* **Label reference**: 2 raw bytes, the big-endian byte address of the target (no operand
+  byte; the instruction says where a label goes).
+* Sizes are exactly the table above. Example: `JLE @BAT 20 home` with `home` at 0x2A →
+  `0E 40 18 14 00 2A`.
+* **Addresses are byte addresses everywhere**: listing, dumps (`next 0x2A (L13)`),
+  return addresses on the call stack, the debugger. The VM still executes decoded
+  instructions (same cycle costs).
+* **Each slot starts at 0x000** (own address space): a firmware change never moves the
+  program, so it never has to be re-uploaded. The listing labels addresses `fw:0x2A` /
+  `prog:0x10`; the total shows `firmware 136 + program 46 = 182 / 256 B`.
+
 ## 6. Milestones
 
 Milestone status, the detailed plan for the next step, open decisions and the
