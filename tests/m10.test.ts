@@ -233,12 +233,16 @@ describe('uploads and commands (SPEC §3.9.3)', () => {
     const { e, u } = rover('loop: RUN 5\nJMP loop', 'MOV r0 42\nPUSH 6\nBRK\nSLEEP 1000');
     run(e, 3);
     expect(u.progState).toBe(ProgState.PROG_HALTED);
+    // BRK already queued a register dump of the program by itself.
+    const auto = [...e.received.map((f) => f.bytes), ...u.link.sys.map((f) => f.bytes)].map(decodeDump).filter((d) => d);
+    expect(auto).toEqual([expect.objectContaining({ kind: 1, slot: 'program', ip: 7, state: 'PROG_HALTED' })]);
+    const before = u.link.sys.length;
     expect(e.command(u, 'DUMP', 'program')).toBeNull();
     expect(e.command(u, 'DUMP_STACKS', 'program')).toBeNull();
     expect(e.command(u, 'DUMP', 'firmware')).toBeNull();
-    const [cpu, stacks, fw] = u.link.sys.map((f) => decodeDump(f.bytes));
+    const [cpu, stacks, fw] = u.link.sys.slice(before).map((f) => decodeDump(f.bytes));
     expect(cpu).toMatchObject({ kind: 1, slot: 'program', ip: 7, state: 'PROG_HALTED', regs: [42, 0, 0, 0], dsDepth: 1 }); // byte address after the BRK (4 + 2 + 1)
-    expect(u.link.sys[0].bytes[1]).toBe(3);
+    expect(u.link.sys[before].bytes[1]).toBe(3);
     expect(stacks).toMatchObject({ kind: 2, slot: 'program', dataStack: [6] });
     expect(fw).toMatchObject({ kind: 1, slot: 'firmware' });
   });

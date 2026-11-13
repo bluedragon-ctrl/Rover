@@ -167,7 +167,8 @@ describe('memory dumps (SPEC §3.8.4)', () => {
     run(b, 51);
     expect(serialize(b)).toEqual(serialize(a));
     expect(a.units[0].vm.state).toBe(CpuState.HALTED);
-    expect(a.received.filter((f) => f.taken !== undefined)).toHaveLength(2);
+    // The two requested dumps, plus the one BRK sent by itself.
+    expect(a.received.filter((f) => f.taken !== undefined)).toHaveLength(3);
   });
 
   it('migrates v5 saves to an empty dump queue', () => {

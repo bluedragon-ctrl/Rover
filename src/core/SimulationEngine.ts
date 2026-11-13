@@ -63,6 +63,8 @@ export interface SentRecord {
   bytes?: number;
   /** Battery spent (thousandths of the battery, like `energy`). */
   cost: number;
+  /** Set when the rover could not take it (no power, battery, queue full): nothing was sent. */
+  rejected?: string;
 }
 /** Sent records mission control keeps (saved). */
 export const SENT_KEEP = 100;
@@ -267,19 +269,23 @@ export class SimulationEngine {
    * rejected, or null. Mission control learns the CPU state only from the reply.
    */
   command(u: Unit, cmd: UplinkCommand, slot: Slot = 'firmware'): string | null {
-    if (!u.powered) return `rover is ${u.vm.state}: it cannot receive commands`;
     const isDump = cmd === 'DUMP' || cmd === 'DUMP_STACKS';
-    if (isDump && u.link.sys.length >= BALANCE.dumpQueueMax) return `${BALANCE.dumpQueueMax} dumps are already waiting for the downlink`;
-    if (cmd === 'RUN_AGAIN' && !this.hasProgram(u)) return 'no program in flash';
     const cost = this.commandCost(u);
-    if (u.energy <= cost) return `needs ${(cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(u)}`;
+    const target: Slot = cmd === 'RUN_AGAIN' ? 'program' : slot;
+    let err: string | null = null;
+    if (!u.powered) err = `rover is ${u.vm.state}: it cannot receive commands`;
+    else if (isDump && u.link.sys.length >= BALANCE.dumpQueueMax) err = `${BALANCE.dumpQueueMax} dumps are already waiting for the downlink`;
+    else if (cmd === 'RUN_AGAIN' && !this.hasProgram(u)) err = 'no program in flash';
+    else if (u.energy <= cost) err = `needs ${(cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(u)}`;
+    if (err) {
+      this.recordSent({ unitId: u.id, tick: this.tick, kind: cmd, slot: target, cost: 0, rejected: err });
+      return err;
+    }
     u.energy -= cost;
     const prog = slot === 'program';
     const vm = prog ? u.prog : u.vm;
-    if (cmd === 'DUMP') {
-      const d = { ip: vm.nextIp, status: vm.status, state: prog ? u.progState : vm.state, regs: vm.regs, dsDepth: vm.dataStack.length, csDepth: vm.callStack.length };
-      u.link.sys.push({ bytes: encodeCpuDump(d, prog ? DumpKind.PROG_CPU : DumpKind.CPU), taken: this.tick });
-    } else if (cmd === 'DUMP_STACKS') {
+    if (cmd === 'DUMP') this.queueRegisterDump(u, slot);
+    else if (cmd === 'DUMP_STACKS') {
       u.link.sys.push({ bytes: encodeStackDump(vm.dataStack, vm.callStack, prog ? DumpKind.PROG_STACKS : DumpKind.STACKS), taken: this.tick });
     } else if (cmd === 'RUN_AGAIN') this.restartProgram(u);
     else if (!prog) vm.resume();
@@ -290,8 +296,16 @@ export class SimulationEngine {
     const costMsg = cost ? ` (${(cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(u)})` : '';
     const slotMsg = isDump || cmd === 'CONTINUE' ? ` (${slot})` : '';
     this.log(u, 'info', `Uplink: ${UPLINK_COMMAND_NAMES[cmd]}${slotMsg} sent${costMsg}.`, 'sent');
-    this.recordSent({ unitId: u.id, tick: this.tick, kind: cmd, slot: cmd === 'RUN_AGAIN' ? 'program' : slot, cost });
+    this.recordSent({ unitId: u.id, tick: this.tick, kind: cmd, slot: target, cost });
     return null;
+  }
+
+  /** Queue a register dump of one slot, taken now (uplinked DUMP, or BRK: SPEC §3.8.4). */
+  private queueRegisterDump(u: Unit, slot: Slot): void {
+    const prog = slot === 'program';
+    const vm = prog ? u.prog : u.vm;
+    const d = { ip: vm.nextIp, status: vm.status, state: prog ? u.progState : vm.state, regs: vm.regs, dsDepth: vm.dataStack.length, csDepth: vm.callStack.length };
+    u.link.sys.push({ bytes: encodeCpuDump(d, prog ? DumpKind.PROG_CPU : DumpKind.CPU), taken: this.tick });
   }
 
   private recordSent(r: SentRecord): void {
@@ -354,13 +368,12 @@ export class SimulationEngine {
     const res: UploadResult = { ...this.compileFor(unit, source, 'program'), cost: 0 };
     if (!res.program) return res;
     if (!opts.factory) {
-      if (!unit.powered) {
-        res.rejected = `Rover is ${unit.vm.state}: it cannot receive a program.`;
-        return res;
-      }
       const cost = this.programUploadCost(unit, res.flashUsed);
-      if (unit.energy <= cost) {
+      if (!unit.powered) res.rejected = `Rover is ${unit.vm.state}: it cannot receive a program.`;
+      else if (unit.energy <= cost)
         res.rejected = `Upload needs ${(cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(unit)}; rover has ${(unit.energy / 1000).toFixed(1)}%.`;
+      if (res.rejected) {
+        this.recordSent({ unitId: unit.id, tick: this.tick, kind: 'PROGRAM', slot: 'program', bytes: res.flashUsed, cost: 0, rejected: res.rejected });
         return res;
       }
       unit.energy -= cost;
@@ -387,13 +400,12 @@ export class SimulationEngine {
     const res: UploadResult = { ...this.compileFor(unit, source), cost: 0 };
     if (!res.program) return res;
     if (!opts.factory) {
-      if (!unit.powered) {
-        res.rejected = `Rover is ${unit.vm.state}: it cannot receive firmware.`;
-        return res;
-      }
       const cost = this.uploadCost(unit, res.flashUsed);
-      if (unit.energy <= cost) {
+      if (!unit.powered) res.rejected = `Rover is ${unit.vm.state}: it cannot receive firmware.`;
+      else if (unit.energy <= cost)
         res.rejected = `Upload needs ${(cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(unit)}; rover has ${(unit.energy / 1000).toFixed(1)}%.`;
+      if (res.rejected) {
+        this.recordSent({ unitId: unit.id, tick: this.tick, kind: 'FIRMWARE', slot: 'firmware', bytes: res.flashUsed, cost: 0, rejected: res.rejected });
         return res;
       }
       unit.energy -= cost;
@@ -501,6 +513,9 @@ export class SimulationEngine {
           this.endSlice(u, ProgState.PROG_FAULT);
         } else if (after === CpuState.HALTED) this.endSlice(u, ProgState.PROG_HALTED);
       }
+      // BRK reports itself: the rover sends a register dump of the halted slot unasked
+      // (dropped if the dump queue is full). Only BRK halts a CPU.
+      if (after === CpuState.HALTED && u.link.sys.length < BALANCE.dumpQueueMax) this.queueRegisterDump(u, cpu === u.prog ? 'program' : 'firmware');
     }
     if (u.cpu.state !== CpuState.RUNNING) u.cyclesLeft = 0;
     if (u.vm.state === CpuState.FAULT && u.vm.watchdog === BALANCE.watchdogTicks) {

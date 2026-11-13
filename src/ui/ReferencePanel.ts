@@ -20,7 +20,7 @@ const NOTES: Record<string, string> = {
   SLEEP: 'wait N ticks', SCAN: 'ray: dest1 = tile type, dest2 = distance', STEP: 'drive [tiles] in dir', ACT: 'fire tool in hardpoint (see Tools)', PEEK: 'dest = item ID in cargo slot', USE: 'repair [system] (default SYS_HULL) by consuming the material in cargo slot (see Tools)',
   SNAP: 'photograph the subject in dir into the science recorder (see Tools). Mk-I modes 1 (grey) and 2 (dithered), 258 B each; needs daylight or the headlight aimed at dir',
   LOG: 'queue a log frame for the downlink (Console tab). tag: number or CONST 0–14 (15 = system). 1 cycle, no @STATUS; dropped if the FIFO is full (@LOG_LOST)',
-  BRK: 'halt the CPU (HALTED) until the Console sends Continue or you upload; the world keeps running, no watchdog. 1 cycle. In a program: halts only the program (PROG_HALTED)',
+  BRK: 'breakpoint: halt the CPU (HALTED) until mission control sends Resume (Continue) or you upload; the world keeps running, no watchdog. The rover sends a register dump by itself (Comms: "sent by BRK"). 1 cycle. In a program: halts only the program (PROG_HALTED)',
   RUN: 'firmware only: run the program for N ticks (a STEP or SLEEP in progress finishes first), then continue here. @STATUS ERR_INVALID if @PROG_STATE is not PROG_READY',
   END: 'program only: finish with @PROG_STATE = PROG_DONE and @PROG_RESULT = value (default 0); control returns to the firmware',
 };
@@ -233,7 +233,8 @@ function radioHtml(): string {
     <table class="radio-kv">
       <tr><td>▲ up</td><td>Code uploads (Code tab), <b>Dump registers</b>, <b>Dump stacks</b>, <b>Resume after BRK</b>, <b>Restart</b>.
         Each costs battery (less at a good signal) and needs signal ${BALANCE.linkMinSignal} or more.</td></tr>
-      <tr><td>▼ down</td><td>${ch.linkBytesPerTick} B per tick at full signal, nothing below ${BALANCE.linkMinSignal}. Order: dumps first,
+      <tr><td>▼ down</td><td>${ch.linkBytesPerTick} B per tick at full signal, nothing below ${BALANCE.linkMinSignal}. Order: dumps first
+        (the ones you asked for, and the register dump a <code>BRK</code> sends by itself),
         then <code>LOG</code> messages (a ${ch.logFifoBytes} B queue: when it is full new ones are <b>lost</b>, <code>@LOG_LOST</code>),
         then science (photos, spectra: Gallery).</td></tr>
       <tr><td>never</td><td>The rover never sends its code back: mission control keeps a copy of what it uploaded (<b>Revert</b> uses it).</td></tr>
@@ -258,8 +259,10 @@ function radioHtml(): string {
     <h4>System message: reboot</h4>${ex(encodeLog(15, 2))}
     <table class="radio-kv">${Object.entries(BOOT_REASON_NAMES).map(([v, n]) => `<tr><td>boot reason ${v}</td><td>${n}</td></tr>`).join('')}</table>
     <h4>Register dump (▲ Dump registers)</h4>
-    <p class="small dim">The CPU state of one slot at the moment the request arrived. A firmware dump (kind 1) has the same
-    layout; its state is the CPU's: RUNNING, BLOCKED, HALTED or FAULT.</p>
+    <p class="small dim">The CPU state of one slot at the moment the request arrived, or when a <code>BRK</code> stopped it
+    (then the rover sends it unasked; <i>next</i> is the instruction after the <code>BRK</code>). A firmware dump (kind 1) has
+    the same layout; its state is the CPU's: RUNNING, BLOCKED, HALTED or FAULT. While a program is not running
+    (<code>PROG_NONE</code>, <code>PROG_DONE</code>) its <i>next</i> means nothing.</p>
     ${ex(regs)}
     <h4>Stack dump (▲ Dump stacks)</h4>
     <p class="small dim">The values <code>PUSH</code>ed and not yet <code>POP</code>ped, and where each unfinished <code>CALL</code>

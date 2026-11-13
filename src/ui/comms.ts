@@ -143,7 +143,7 @@ export interface Snapshot {
  */
 export function replyTo(r: SentRecord, received: readonly ReceivedFrame[]): Snapshot | null {
   const want = snapKindOf(r.kind);
-  if (!want) return null;
+  if (!want || r.rejected) return null;
   for (const f of received) {
     if (f.unitId !== r.unitId || f.taken !== r.tick) continue;
     const dump = decodeDump(f.bytes);
@@ -167,7 +167,7 @@ export function latestSnapshot(received: readonly ReceivedFrame[], unitId: numbe
 export function pendingRequests(sent: readonly SentRecord[], received: readonly ReceivedFrame[], unitId: number, slot: Slot, kind: SnapKind): SentRecord[] {
   const out: SentRecord[] = [];
   for (const r of sent) {
-    if (r.unitId !== unitId || r.slot !== slot || snapKindOf(r.kind) !== kind) continue;
+    if (r.unitId !== unitId || r.slot !== slot || snapKindOf(r.kind) !== kind || r.rejected) continue;
     if (!replyTo(r, received)) out.push(r);
   }
   return out;
@@ -180,8 +180,8 @@ export function pendingRequests(sent: readonly SentRecord[], received: readonly 
 export function snapshotOutdated(s: Snapshot, sent: readonly SentRecord[], unitId: number): boolean {
   const upload: SentKind = s.dump.slot === 'program' ? 'PROGRAM' : 'FIRMWARE';
   const kind = dumpSnapKind(s.dump);
-  const req = sent.findIndex((r) => r.unitId === unitId && r.tick === s.taken && r.slot === s.dump.slot && snapKindOf(r.kind) === kind);
-  return sent.some((r, i) => r.unitId === unitId && r.kind === upload && (r.tick > s.taken || (r.tick === s.taken && i > req)));
+  const req = sent.findIndex((r) => r.unitId === unitId && !r.rejected && r.tick === s.taken && r.slot === s.dump.slot && snapKindOf(r.kind) === kind);
+  return sent.some((r, i) => r.unitId === unitId && !r.rejected && r.kind === upload && (r.tick > s.taken || (r.tick === s.taken && i > req)));
 }
 
 // ---------------------------------------------------------------- wording
@@ -217,6 +217,61 @@ export interface FrameField {
   name: string;
   value: string;
   note: string;
+  /** A source line this value points at (Comms: click to show it in the Code tab). */
+  goto?: { slot: Slot; line: number };
+}
+
+/** What each dumped state means, for the comment next to it (item: value-specific comments). */
+export const STATE_NOTES: Record<string, string> = {
+  PROG_NONE: 'not running: no program started, or it finished and the firmware acknowledged it',
+  PROG_READY: 'waiting for its next time slice (RUN); continues at "next"',
+  PROG_RUNNING: 'running in a time slice right now',
+  PROG_DONE: 'finished with END; the firmware has not acknowledged it yet',
+  PROG_FAULT: 'crashed; the firmware took over',
+  PROG_HALTED: 'stopped by BRK; ▶ Resume after BRK continues at "next"',
+  RUNNING: 'running',
+  BLOCKED: 'waiting: for a hardware instruction (STEP, SLEEP…) to finish, or in RUN while the program has its slice',
+  HALTED: 'stopped by BRK; ▶ Resume after BRK continues at "next"',
+  FAULT: 'crashed; the watchdog reboots it',
+};
+
+/** What each @STATUS value says about the last instruction that set it. */
+export const STATUS_NOTES: Record<number, string> = {
+  [Status.OK]: 'the last hardware instruction worked',
+  [Status.ERR_INVALID]: 'bad argument or nothing usable there (bad direction or slot, DIV by 0…)',
+  [Status.ERR_FULL]: 'no room: cargo, recorder or log queue full',
+  [Status.ERR_LOW_POWER]: 'not enough battery for it',
+  [Status.ERR_BLOCKED]: 'STEP hit an obstacle',
+  [Status.ERR_NO_TOOL]: 'no tool in that hardpoint',
+  [Status.ERR_NO_SIGNAL]: 'the dish does not reach the orbiter',
+  [Status.ERR_HAZARD]: 'STEP moved onto a hazard',
+  [Status.ERR_DEPLOYED]: 'STEP refused: the solar array is open',
+};
+
+/** False for a program that is not running (finished or never started): its "next" means nothing. */
+export const dumpRunning = (state: string): boolean => state !== 'PROG_NONE' && state !== 'PROG_DONE';
+/** Stopped by BRK (only BRK halts a CPU). */
+export const dumpHalted = (state: string): boolean => state === 'HALTED' || state === 'PROG_HALTED';
+
+/** Bytes on the air of a register dump for a chassis with `registers` registers. */
+export const registerDumpBytes = (registers: number): number => 9 + 4 * registers;
+/** Smallest stack dump (both stacks empty); each value adds 4 B, each return 2 B. */
+export const STACK_DUMP_MIN_BYTES = 5;
+
+/**
+ * The request a received dump answers, if mission control asked for it. A register dump
+ * nobody asked for while the slot is halted was sent by BRK.
+ */
+export function requestFor(f: ReceivedFrame, sent: readonly SentRecord[]): SentRecord | undefined {
+  const dump = decodeDump(f.bytes);
+  if (!dump || f.taken === undefined) return undefined;
+  const kind = dumpSnapKind(dump);
+  return sent.find((r) => r.unitId === f.unitId && !r.rejected && r.tick === f.taken && r.slot === dump.slot && snapKindOf(r.kind) === kind);
+}
+
+export function sentByBrk(f: ReceivedFrame, sent: readonly SentRecord[]): boolean {
+  const dump = decodeDump(f.bytes);
+  return !!dump && dump.kind === 1 && dumpHalted(dump.state) && !requestFor(f, sent);
 }
 
 const SIZE_OF_CODE = [0, 1, 2, 4];
@@ -256,9 +311,18 @@ export function frameFields(b: readonly number[], d: Dictionaries): FrameField[]
     out.push({ bytes: take(2, 1), name: 'length', value: `${b[2]} bytes follow`, note: '' });
     if (dump.kind === 1) {
       const prog = slot === 'program';
-      out.push({ bytes: take(3, 2), name: 'next', value: addrValue(dump.ip, slot, d), note: 'address of the instruction it runs next' });
-      out.push({ bytes: take(5, 1), name: '@STATUS', value: Status[dump.status] ?? String(dump.status), note: 'result of its last hardware instruction' });
-      out.push({ bytes: take(6, 1), name: 'state', value: dump.state, note: prog ? '@PROG_STATE: running in a slice, waiting, done, faulted, halted by BRK' : 'CPU: RUNNING, BLOCKED (waiting for hardware or RUN), HALTED (BRK), FAULT' });
+      const running = dumpRunning(dump.state);
+      const line = d[slot].lineAt(dump.ip);
+      const brkLine = dumpHalted(dump.state) ? d[slot].lineAt(dump.ip - 1) : 0; // BRK is 1 byte
+      out.push({
+        bytes: take(3, 2),
+        name: 'next',
+        value: running ? addrValue(dump.ip, slot, d) : `${formatAddr(dump.ip, slot)} (not running)`,
+        note: !running ? 'means nothing while the program is not running' : brkLine ? `the instruction after the BRK on line ${brkLine}` : 'address of the instruction it runs next',
+        goto: running && line ? { slot, line } : undefined,
+      });
+      out.push({ bytes: take(5, 1), name: '@STATUS', value: Status[dump.status] ?? String(dump.status), note: STATUS_NOTES[dump.status] ?? 'result of its last hardware instruction' });
+      out.push({ bytes: take(6, 1), name: 'state', value: dump.state, note: `${prog ? '@PROG_STATE' : 'CPU'}: ${STATE_NOTES[dump.state] ?? '?'}` });
       dump.regs.forEach((v, i) => {
         const note = i === 0 ? '4 bytes per register, signed, high byte first' : v < 0 ? 'negative: counted down from FF FF FF FF = -1' : '';
         out.push({ bytes: take(7 + i * 4, 4), name: regLabel(i, slot, d), value: String(v), note });
@@ -280,7 +344,8 @@ export function frameFields(b: readonly number[], d: Dictionaries): FrameField[]
     out.push({ bytes: take(at, 1), name: 'call stack', value: `${nc} return${nc === 1 ? '' : 's'} follow`, note: '2-byte addresses, oldest CALL first' });
     at++;
     dump.callStack.forEach((a, i) => {
-      out.push({ bytes: take(at, 2), name: `return ${i}`, value: addrValue(a, slot, d), note: i === nc - 1 ? 'the next RET continues here' : '' });
+      const line = d[slot].lineAt(a);
+      out.push({ bytes: take(at, 2), name: `return ${i}`, value: addrValue(a, slot, d), note: i === nc - 1 ? 'the next RET continues here' : '', goto: line ? { slot, line } : undefined });
       at += 2;
     });
     return out;
@@ -307,7 +372,7 @@ const escHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
  * that header layout; later rows of the list leave it out (the bits differ, the
  * explanation does not).
  */
-export function fieldsHtml(fields: readonly FrameField[], seenHeaders?: Set<string>): string {
+export function fieldsHtml(fields: readonly FrameField[], seenHeaders?: Set<string>, links = false): string {
   const rows = fields
     .map((f) => {
       if (!seenHeaders || f.name !== 'header' || !f.note) return f;
@@ -316,7 +381,12 @@ export function fieldsHtml(fields: readonly FrameField[], seenHeaders?: Set<stri
       seenHeaders.add(key);
       return f;
     })
-    .map((f) => `<tr><td class="fb">${hex(f.bytes)}</td><td class="fn">${escHtml(f.name)}</td><td class="fv"><span class="v">${escHtml(f.value)}</span>${f.note ? ` <span class="fc">; ${escHtml(f.note)}</span>` : ''}</td></tr>`)
+    .map((f) => {
+      const v = links && f.goto
+        ? `<button class="link" data-goto="${f.goto.slot}:${f.goto.line}" title="Show line ${f.goto.line} of the ${f.goto.slot} in the Code tab">${escHtml(f.value)}</button>`
+        : `<span class="v">${escHtml(f.value)}</span>`;
+      return `<tr><td class="fb">${hex(f.bytes)}</td><td class="fn">${escHtml(f.name)}</td><td class="fv">${v}${f.note ? ` <span class="fc">; ${escHtml(f.note)}</span>` : ''}</td></tr>`;
+    })
     .join('');
   return `<table class="frame-fields">${rows}</table>`;
 }

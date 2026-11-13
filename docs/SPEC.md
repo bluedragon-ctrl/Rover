@@ -401,7 +401,13 @@ kind 1 = science frame   size = 0; followed by 1 sequence byte, then the product
   at the next tick; a running CPU ignores it (it is still paid: mission control does not
   know the state without a dump). An upload also ends the halt (hard reboot).
   A halted CPU cannot steer the dish: as the orbiter moves on, the link fades, so aim the
-  dish (or dump) soon after a `BRK`.
+  dish soon before a `BRK`.
+  **`BRK` reports itself [M11]:** when a `BRK` halts the firmware or the program, the rover
+  queues a register dump of that slot unasked (kind 1 or 3, taken that tick; dropped if
+  `dumpQueueMax` dumps already wait). It costs no uplink energy and travels like any dump
+  (ahead of the log). Mission control shows it as *sent by BRK*: a halted register dump with
+  no matching request. Its *next* is the instruction after the `BRK`, so the `BRK` itself is
+  at *next* − 1.
 * **Admin view:** the old live debugger (registers, stacks, ports, current line,
   single-step) is hidden unless *Live debugger* is ticked on the Admin tab; it is labelled
   as showing what mission control cannot know. A browser preference, not saved with the world.
@@ -602,7 +608,16 @@ running uplinked command sequences, or a small OS starting user programs:
   * **Mission events** (the strip under the side panel): world and game only (goals,
     weather, supplies, upgrades, admin, rejected actions, rover alarms). Receipts for what
     was sent are left to Comms (`LOG` event `category`: `world` / `sent` / `rover`).
-  * Mission control's sent record (`engine.sent`, last 100, saved v13): pairs a request
+  * Clarity pass: dumps of a program that is not running (`PROG_NONE`, `PROG_DONE`) say
+    *not running* and mark nothing; comments name the value's meaning (`ERR_BLOCKED ; STEP
+    hit an obstacle`, `PROG_HALTED ; stopped by BRK…`); a halted dump says *stopped at the
+    BRK on line 5; continues at line 6*. Source references are links: `fw L55` on a LOG row,
+    a dump's *next* and return addresses open that line in the Code tab. A waiting request
+    shows an estimate (`≈ 14 ticks at signal 94`; dumps go first, register dump 9 + 4 ×
+    registers B, stack dump ≥ 5 B). The dump box folds (▾) and shows only kinds with a dump
+    or a request. Rejected commands and uploads are listed in Comms (`✗ … not sent: …`).
+  * Mission control's sent record (`engine.sent`, last 100, saved v13; rejected attempts
+    marked `rejected`, cost 0, never paired): pairs a request
     with its dump by rover, slot, kind and the tick the dump was taken (= the tick it was
     sent). Not part of the simulation. The compiler exports `ALIAS` names (`regNames`).
   * Later (needs a rules decision): rover-internal alarms (`CPU FAULT`, program fault,
@@ -709,7 +724,7 @@ friction, but the set should stay small enough to learn in one sitting.
 | Debug | `LOG tag [src]` | 1 cycle | **[M9]** Queue a log frame for the downlink; compute, no `@STATUS` (§3.8.3). |
 | Slots | `RUN ticks` | hardware | **[M10]** Firmware only: run the program for a time slice (§3.9.2). |
 | | `END [value]` | 1 cycle | **[M10]** Program only: finish with `PROG_DONE` and `@PROG_RESULT` (§3.9.2). |
-| | `BRK` | 1 cycle | **[M9]** Halt the CPU (`HALTED`) until *Continue* or an upload (§3.8.4). |
+| | `BRK` | 1 cycle | **[M9]** Halt the CPU (`HALTED`) until *Continue* or an upload; the rover sends a register dump by itself **[M11]** (§3.8.4). |
 
 `@STATUS` is written by every hardware instruction and by arithmetic errors; pure
 compute instructions leave it alone.

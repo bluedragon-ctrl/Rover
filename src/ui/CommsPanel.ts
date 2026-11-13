@@ -2,7 +2,8 @@ import { BALANCE } from '../core/balance';
 import { BOOT_REASON_NAMES, decodeDump, decodeFrame, hex, PRODUCT_NAMES, productFrameBytes, SYSTEM_TAG, type ReceivedFrame, type ReceivedProduct } from '../core/downlink';
 import type { SimulationEngine } from '../core/SimulationEngine';
 import type { Unit } from '../core/Unit';
-import { costText, DictionaryCache, fieldsHtml, frameFields, replyTo, sentText, snapKindOf, tagName, tagSource, type Dictionaries } from './comms';
+import { costText, DictionaryCache, fieldsHtml, frameFields, replyTo, sentByBrk, sentText, snapKindOf, tagName, tagSource, type Dictionaries } from './comms';
+import type { Slot } from '../core/vm/Compiler';
 import { hint } from './hint';
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
@@ -15,7 +16,9 @@ const HELP = (fifo: number, rate: number) => `Everything that went between missi
   <br><b class="down">▼ Received</b> (down), what the rover sends:
   <br>· <b>LOG</b>: your <code>LOG tag value</code> lines. Names like <code>T_BAT</code> come from the <code>CONST</code>s in the
   code you uploaded; <code>fw L55</code> = firmware line 55. Repeats are merged (×12).
-  <br>· <b>DUMP</b>: the registers or stacks you asked for (Code tab, <i>Dump program state</i>), byte by byte.
+  <br>· <b>DUMP</b>: the registers or stacks you asked for (Code tab, <i>Dump program state</i>), or that a <code>BRK</code>
+  sent by itself, byte by byte. Underlined values (<code>fw L55</code>, addresses) open that line in the Code tab.
+  <br>· <b>✗</b>: something you tried to send that the rover could not take (no power, battery, queue full).
   <br>· <b>SYS</b>: the rover itself, e.g. after a reboot.
   <br>· <b>SCI</b>: photos and spectra (shown in the <b>Gallery</b>).
   <br><br><b>Decode bytes</b> explains every byte of LOG and system messages too. All formats: <b>Reference → Radio</b>.
@@ -51,6 +54,8 @@ export class CommsPanel {
   private list: HTMLElement;
   private linkEl: HTMLElement;
   private stick = true;
+  /** Set by the game: show a source line of a slot in the Code tab. */
+  onGoto?: (slot: Slot, line: number) => void;
 
   constructor(el: HTMLElement, private engine: SimulationEngine, private rover: () => Unit) {
     const ch = engine.units[0]?.chassis;
@@ -87,6 +92,12 @@ export class CommsPanel {
       this.decode = (e.target as HTMLInputElement).checked;
       this.lastKey = '';
       this.update();
+    });
+    this.list.addEventListener('click', (ev) => {
+      const g = (ev.target as HTMLElement).closest<HTMLElement>('[data-goto]')?.dataset.goto;
+      if (!g) return;
+      const [slot, line] = g.split(':');
+      this.onGoto?.(slot as Slot, Number(line));
     });
     this.list.addEventListener('scroll', () => {
       if (this.list.clientHeight) this.stick = this.list.scrollTop + this.list.clientHeight >= this.list.scrollHeight - 4;
@@ -136,7 +147,7 @@ export class CommsPanel {
     const e = this.engine;
     const multi = e.units.length > 1;
     const who = (id: number) => (multi ? `<span class="who">${esc(e.getUnit(id)?.name ?? `#${id}`)}</span>` : '');
-    const bytes = (b: readonly number[]) => (this.decode ? `<div class="row-fields">${fieldsHtml(frameFields(b, d), this.headerSeen)}</div>` : '');
+    const bytes = (b: readonly number[]) => (this.decode ? `<div class="row-fields">${fieldsHtml(frameFields(b, d), this.headerSeen, true)}</div>` : '');
     const out: Item[] = [];
     let order = 0;
 
@@ -150,9 +161,11 @@ export class CommsPanel {
         unitId: r.unitId,
         merge: '',
         html: () => {
+          const chip = r.kind === 'PROGRAM' || r.kind === 'FIRMWARE' ? '<span class="chip code">CODE</span>' : '<span class="chip cmd">CMD</span>';
+          if (r.rejected)
+            return `<div class="row sent rejected"><span class="t">t${r.tick}</span><span class="dir up">✗</span>${chip}<span class="txt">${who(r.unitId)}${esc(sentText(r))} <span class="warn">· not sent: ${esc(r.rejected.replace(/\.$/, ''))}</span></span></div>`;
           let state = '';
           if (kind) state = reply ? `<span class="ok">✓ dump arrived t${reply.frame.tick}</span>` : '<span class="dim">… waiting for the dump</span>';
-          const chip = r.kind === 'PROGRAM' || r.kind === 'FIRMWARE' ? '<span class="chip code">CODE</span>' : '<span class="chip cmd">CMD</span>';
           return `<div class="row sent"><span class="t">t${r.tick}</span><span class="dir up">▲</span>${chip}<span class="txt">${who(r.unitId)}${esc(sentText(r))} <span class="dim">· ${costText(r.cost)}</span> ${state}</span></div>`;
         },
       });
@@ -179,12 +192,13 @@ export class CommsPanel {
     const dump = decodeDump(f.bytes);
     if (dump) {
       const what = `${dump.slot === 'program' ? 'Program' : 'Firmware'} ${dump.kind === 1 ? 'registers' : 'stacks'}`;
-      const at = f.taken === undefined ? '' : ` <span class="dim">· dumped on the rover at t${f.taken}</span>`;
+      const brk = sentByBrk(f, this.engine.sent);
+      const at = f.taken === undefined ? '' : brk ? ` <span class="warn">· sent by BRK at t${f.taken}</span>` : ` <span class="dim">· dumped on the rover at t${f.taken}</span>`;
       return {
         ...base,
         cls: 'snap',
         merge: '',
-        html: () => `<div class="row snap"><span class="t">t${f.tick}</span><span class="dir down">▼</span><span class="chip snap ${dump.slot}">DUMP</span><div class="txt">${who(f.unitId)}<span class="card-h">${what}</span>${at}</div><div class="row-fields">${fieldsHtml(frameFields(f.bytes, d), this.headerSeen)}</div></div>`,
+        html: () => `<div class="row snap"><span class="t">t${f.tick}</span><span class="dir down">▼</span><span class="chip snap ${dump.slot}">DUMP</span><div class="txt">${who(f.unitId)}<span class="card-h">${what}</span>${at}</div><div class="row-fields">${fieldsHtml(frameFields(f.bytes, d), this.headerSeen, true)}</div></div>`,
       };
     }
     const fr = decodeFrame(f.bytes);
@@ -196,12 +210,15 @@ export class CommsPanel {
     }
     const { name } = tagName(fr.tag, d);
     const src = tagSource(fr.tag, d);
+    const srcLinks = (['firmware', 'program'] as const)
+      .flatMap((slot) => (d[slot].tags[fr.tag]?.lines ?? []).map((l) => `<button class="link" data-goto="${slot}:${l}">${slot === 'firmware' ? 'fw' : 'prog'} L${l}</button>`))
+      .join(' ');
     const value = fr.value === null ? '' : ` = <b>${fr.value}</b>`;
     return {
       ...base,
       cls: 'log',
       merge: `${f.unitId}:${hex(f.bytes)}`,
-      html: (n, last) => `<div class="row log"><span class="t">${time(n, last)}</span><span class="dir down">▼</span><span class="chip log">LOG</span><span class="txt">${who(f.unitId)}${esc(name)}${value}${rep(n)}<span class="src" title="${esc(src.long)}">${esc(src.short)}</span></span>${bytes(f.bytes)}</div>`,
+      html: (n, last) => `<div class="row log"><span class="t">${time(n, last)}</span><span class="dir down">▼</span><span class="chip log">LOG</span><span class="txt">${who(f.unitId)}${esc(name)}${value}${rep(n)}<span class="src" title="${esc(src.long)} · click to show it in the Code tab">${srcLinks}</span></span>${bytes(f.bytes)}</div>`,
     };
   }
 

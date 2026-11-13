@@ -413,6 +413,13 @@ what the top bar shows, discoverability for beginners. Proposals with screenshot
       - Behind `?comms=1` in the game, always on in `preview.html?editor=1` (`&comms=0` shows
         the current game). **Waiting for owner review**, then: make it the default, delete
         `ConsolePanel.ts` and the flag.
+- [x] Clarity pass (owner picked items 1–7 of the suggestions): not-running dumps, value
+      comments for state / `@STATUS`, source links (Comms → Code tab), waiting estimate,
+      foldable dump box, rejected sends in Comms, and **`BRK` sends a register dump by
+      itself** (SPEC §3.8.4, rules change approved). Tests in `tests/comms.test.ts`.
+- [ ] Open suggestions: a teaching goal ("dump your program's registers"); make Comms the
+      default and delete the old Console; tab bar too wide (merge Goals + Upgrades into a
+      *Mission* tab?).
 - [ ] Phase 2 (rules decision for the owner): mission control knows the rover only from what
       it received: program faults and `BRK` hits as `SYS` frames, `CPU FAULT` / watchdog /
       battery alarms replaced by a ground-side "no contact for N ticks". Harder game; add a
@@ -537,3 +544,4 @@ window with a fixed dish?
 | 2026-11-13 | `claude/modest-bell-w0qqbq` (2) | Reference: Registry sub-tab renamed **Constants** (Tiles part, then Other constants); new **Registers** section in Basics (count per chassis, register-file upgrades, signed 32-bit wrap, all general purpose, `ALIAS`, separate per slot, zeroed on reboot). |
 | 2026-11-13 | `ccr-2a541ea4-pbkrmo` | M11: Console analysis (three streams sorted by link direction, Mission log knows rover internals, request/reply split, two slot switches); Comms reorganisation behind `?comms=1`: Code tab *Look inside* (ask for a copy of registers / stacks, direction flow, copy cards, ◆ listing mark), Comms tab (radio link + one ▲/▼ timeline with request → copy status), Mission events strip; `engine.sent` + `LOG` categories, save v13; `?console=2` proposal removed. |
 | 2026-11-13 | `ccr-2a541ea4-pbkrmo` (2) | M11 review feedback: "dump" wording kept (*Dump program state*, *▲ Dump registers / stacks*, one slot's CPU, not the whole rover); dumps in Comms byte by byte with a comment per field and `ALIAS` register names; *Decode bytes* for LOG / system messages; new **Reference → Radio** sub-tab (header byte, numbers, every frame type as a decoded example). |
+| 2026-11-13 | `ccr-2a541ea4-pbkrmo` (3) | M11 clarity pass: `BRK` sends a register dump by itself (*sent by BRK*, "stopped at the BRK on line 5"); not-running program dumps marked; value comments for state / `@STATUS`; `fw L55` and dump addresses link to the Code tab; waiting estimate; foldable dump box; rejected sends listed in Comms (`engine.sent` `rejected`). |

@@ -36,7 +36,10 @@ export function mountUiLab(el: HTMLElement, q: URLSearchParams): void {
   e.command(u, 'DUMP', 'program');
   e.command(u, 'DUMP_STACKS', 'firmware');
   run(80);
-  // One request still on its way: shows the "waiting" state.
+  // Requests still on their way (waiting state with an estimate), then one the rover
+  // cannot take because its dump queue is full (✗ in Comms).
+  e.command(u, 'DUMP', 'program');
+  for (let i = 0; i < 3; i++) e.command(u, 'DUMP_STACKS', 'firmware');
   e.command(u, 'DUMP', 'program');
 
   const width = Number(q.get('width')) || 520;
@@ -60,7 +63,13 @@ export function mountUiLab(el: HTMLElement, q: URLSearchParams): void {
   };
   const code = new CodeWorkspace({ el: el.querySelector('#lab-code')!, engine: e, rover: () => u, log, listing: true, inspect: comms ? send : undefined });
   if (q.get('slot') === 'firmware') code.setSlot('firmware');
-  const con: { update(): void } = comms ? new CommsPanel(el.querySelector('#lab-console')!, e, () => u) : new ConsolePanel(el.querySelector('#lab-console')!, e, () => u, send);
+  const commsPanel = comms ? new CommsPanel(el.querySelector('#lab-console')!, e, () => u) : null;
+  if (commsPanel)
+    commsPanel.onGoto = (slot, line) => {
+      code.setSlot(slot);
+      code.editorOf(slot).goToLine(line);
+    };
+  const con: { update(): void } = commsPanel ?? new ConsolePanel(el.querySelector('#lab-console')!, e, () => u, send);
   let shown = -1;
   const update = () => {
     e.advanceTick(); // 4 ticks/s, so requests sent from the page come back

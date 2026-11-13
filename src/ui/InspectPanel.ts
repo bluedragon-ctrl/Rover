@@ -1,10 +1,30 @@
 import { BALANCE } from '../core/balance';
-import type { SimulationEngine, UplinkCommand } from '../core/SimulationEngine';
+import type { SentRecord, SimulationEngine, UplinkCommand } from '../core/SimulationEngine';
 import { Status } from '../core/types';
 import type { Unit } from '../core/Unit';
 import type { Slot } from '../core/vm/Compiler';
 import { formatAddr } from '../core/vm/isa';
-import { addrText, costText, regLabel, DictionaryCache, latestSnapshot, pendingRequests, snapshotOutdated, type Dictionaries, type Snapshot, type SnapKind } from './comms';
+import {
+  addrText,
+  costText,
+  DictionaryCache,
+  dumpHalted,
+  dumpRunning,
+  latestSnapshot,
+  pendingRequests,
+  registerDumpBytes,
+  regLabel,
+  replyTo,
+  sentByBrk,
+  snapKindOf,
+  snapshotOutdated,
+  STACK_DUMP_MIN_BYTES,
+  STATE_NOTES,
+  STATUS_NOTES,
+  type Dictionaries,
+  type Snapshot,
+  type SnapKind,
+} from './comms';
 import { hint } from './hint';
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
@@ -17,7 +37,8 @@ const HELP = (slot: Slot) => `You cannot see inside the rover directly: you can 
   <br><br>A dump is only the ${slot}'s CPU, not the whole rover (battery, position… are ports: read them in code and <code>LOG</code> them).
   It is a photo of one moment: the ${slot} keeps running. Dump again to see it move.
   <br><br>The <b>Comms</b> tab shows every byte of a dump with a comment; <b>Reference → Radio</b> explains each field.
-  <br><br><b>▶ Resume after BRK</b>: <code>BRK</code> pauses the ${slot} like a breakpoint; this lets it go on.
+  <br><br><b>BRK</b> in your code is a breakpoint: it stops the ${slot}, and the rover sends a register dump by itself
+  (<i>sent by BRK</i>), so you see where it stopped and its registers. <b>▶ Resume after BRK</b> lets it go on.
   ${slot === 'program' ? '<br><b>↻ Restart</b>: the program starts again from its first line.' : ''}
   <br><br>Every request costs a little battery and needs the dish to reach the orbiter.`;
 
@@ -59,7 +80,7 @@ export class InspectPanel {
     this.dicts = new DictionaryCache(engine);
     el.classList.add('panel-box', 'inspect');
     el.innerHTML = `
-      <header><span><b id="ins-title"></b><span id="ins-help"></span></span>
+      <header><span><button class="fold" id="ins-fold" title="Fold the dumps away (the buttons stay)">▾</button><b id="ins-title"></b><span id="ins-help"></span></span>
         <span class="ins-ctl"><button data-cmd="CONTINUE" class="small" title="BRK pauses the code like a breakpoint: this lets it go on">▶ Resume after BRK</button><button data-cmd="RUN_AGAIN" class="small" id="ins-run-again" title="Start the program again from its first line">↻ Restart</button></span></header>
       <div class="ins-flow" aria-hidden="true">
         <span class="up">▲ you ask</span><i>→</i><span>the rover dumps its state at that moment</span><i>→</i><span class="down">▼ the dump comes down</span>
@@ -77,6 +98,12 @@ export class InspectPanel {
     this.title = el.querySelector('#ins-title')!;
     this.help = el.querySelector('#ins-help')!;
     this.runAgain = el.querySelector('#ins-run-again')!;
+    const fold = el.querySelector<HTMLButtonElement>('#ins-fold')!;
+    fold.addEventListener('click', () => {
+      const folded = el.classList.toggle('folded');
+      fold.textContent = folded ? '▸' : '▾';
+      fold.title = folded ? 'Show the dumps' : 'Fold the dumps away (the buttons stay)';
+    });
     el.querySelectorAll<HTMLButtonElement>('button[data-cmd]').forEach((b) =>
       b.addEventListener('click', () => {
         const cmd = b.dataset.cmd as UplinkCommand;
@@ -116,7 +143,28 @@ export class InspectPanel {
     if (key === this.lastKey && !changed) return;
     this.lastKey = key;
     this.cards.innerHTML = this.card('regs', u, d, sig) + this.card('stacks', u, d, sig);
+    this.cards.hidden = !this.cards.innerHTML;
     this.updateMarks(u);
+  }
+
+  /** Waiting estimate: dumps go down first, one after the other, at the link's rate. */
+  private eta(u: Unit, r: SentRecord, sig: number): string {
+    const e = this.engine;
+    const upTo = e.sent.indexOf(r);
+    const ahead = e.sent.filter((x, i) => i <= upTo && x.unitId === u.id && !x.rejected && snapKindOf(x.kind) && !replyTo(x, e.received));
+    if (!ahead.length) return '';
+    let bytes = 0;
+    let more = false;
+    for (const x of ahead) {
+      if (snapKindOf(x.kind) === 'regs') bytes += registerDumpBytes(u.chassis.registers);
+      else {
+        bytes += STACK_DUMP_MIN_BYTES;
+        more = true;
+      }
+    }
+    const perTick = (u.chassis.linkBytesPerTick * sig) / 100;
+    const left = Math.ceil(bytes / perTick) - (e.tick - ahead[0].tick);
+    return left > 0 ? `≈ ${left}${more ? '+' : ''} tick${left === 1 && !more ? '' : 's'} at signal ${sig}` : 'any moment now';
   }
 
   private card(kind: SnapKind, u: Unit, d: Dictionaries, sig: number): string {
@@ -124,37 +172,50 @@ export class InspectPanel {
     const slot = this.slot;
     const snap = latestSnapshot(e.received, u.id, slot, kind);
     const pending = pendingRequests(e.sent, e.received, u.id, slot, kind).filter((r) => !snap || r.tick > snap.taken);
+    if (!snap && !pending.length) return '';
     const name = kind === 'regs' ? 'Registers' : 'Stacks';
     let wait = '';
     if (pending.length) {
       const r = pending[pending.length - 1];
-      const why = sig < BALANCE.linkMinSignal ? `<span class="warn">no downlink: signal ${sig}, needs ${BALANCE.linkMinSignal}</span>` : 'on its way down';
+      const why = sig < BALANCE.linkMinSignal ? `<span class="warn">no downlink: signal ${sig}, needs ${BALANCE.linkMinSignal}</span>` : this.eta(u, r, sig);
       wait = `<div class="ins-wait">▲ asked at t${r.tick}${pending.length > 1 ? ` (+${pending.length - 1} more)` : ''}: the dump is waiting on the rover · ${why}</div>`;
     }
-    if (!snap) {
-      const what = kind === 'regs' ? 'the next instruction, state, <code>@STATUS</code>, <code>r0</code>…' : 'data stack, <code>CALL</code> return addresses';
-      return `<div class="ins-card empty"><div class="snap-h">${name} <span class="dim">· no dump yet (${what})</span></div>${wait}</div>`;
-    }
+    if (!snap) return `<div class="ins-card empty"><div class="snap-h">${name}</div>${wait}</div>`;
     const age = e.tick - snap.taken;
     const outdated = snapshotOutdated(snap, e.sent, u.id);
-    const head = `<div class="snap-h">${name} <span class="dim">· dumped on the rover at t${snap.taken}, ${age} tick${age === 1 ? '' : 's'} ago</span></div>`;
+    const by = sentByBrk(snap.frame, e.sent) ? `<span class="warn">sent by BRK</span> at t${snap.taken}` : `dumped on the rover at t${snap.taken}`;
+    const head = `<div class="snap-h">${name} <span class="dim">· ${by}, ${age} tick${age === 1 ? '' : 's'} ago</span></div>`;
     const old = outdated ? `<div class="warn small">New ${slot} code was uploaded since: addresses point into the old code.</div>` : '';
     return `<div class="ins-card ${outdated ? 'old' : ''}">${head}${old}${this.body(snap, d, outdated)}${wait}</div>`;
+  }
+
+  /** `line 9` as a link while the editor holds the uploaded code, else plain text. */
+  private lineRef(line: number, slot: Slot): string {
+    if (!line) return '';
+    return this.draftIsUploaded(slot)
+      ? `<button class="link" data-goto="${line}" title="Show this line in the editor">line ${line}</button>`
+      : `<span class="dim" title="Your draft differs from the code on the rover">line ${line} of the uploaded code</span>`;
   }
 
   private body(s: Snapshot, d: Dictionaries, outdated: boolean): string {
     const dump = s.dump;
     const slot = dump.slot;
     if (dump.kind === 1) {
-      const line = outdated ? 0 : d[slot].lineAt(dump.ip);
-      const goto = line
-        ? this.draftIsUploaded(slot)
-          ? ` <button class="link" data-goto="${line}" title="Show this line in the editor (marked ◆ in the listing)">line ${line}</button>`
-          : ` <span class="dim" title="Your draft differs from the code on the rover">line ${line} of the uploaded code</span>`
-        : '';
+      const running = dumpRunning(dump.state);
+      let next: string;
+      if (!running) next = `<span class="dim">not running (finished or not started)</span>`;
+      else {
+        const line = outdated ? 0 : d[slot].lineAt(dump.ip);
+        const brkLine = dumpHalted(dump.state) && !outdated ? d[slot].lineAt(dump.ip - 1) : 0;
+        next = brkLine
+          ? `stopped at the BRK on ${this.lineRef(brkLine, slot)}; continues at ${esc(formatAddr(dump.ip, slot))} ${this.lineRef(line, slot)}`
+          : `${esc(formatAddr(dump.ip, slot))} ${this.lineRef(line, slot)}`;
+      }
       const regs = dump.regs.map((v, i) => `<span><i>${esc(regLabel(i, slot, d))}</i>${v}</span>`).join('');
-      return `<div class="kv2"><i>next</i>${esc(formatAddr(dump.ip, slot))}${goto}</div>
+      const notes = [STATE_NOTES[dump.state], dump.status !== Status.OK ? `@STATUS: ${STATUS_NOTES[dump.status] ?? ''}` : ''].filter((x) => x);
+      return `<div class="kv2"><i>next</i>${next}</div>
         <div class="kv2"><i>state</i>${esc(dump.state)} <span class="dim">· @STATUS</span> ${esc(Status[dump.status] ?? String(dump.status))} <span class="dim">· stacks ${dump.dsDepth}/${dump.csDepth}</span></div>
+        ${notes.length ? `<div class="kv2 fc"><i></i>; ${esc(notes.join(' · '))}</div>` : ''}
         <div class="regs">${regs}</div>`;
     }
     const ds = dump.dataStack.length ? dump.dataStack.join(' ') : '<span class="dim">empty</span>';
@@ -168,7 +229,7 @@ export class InspectPanel {
     for (const slot of ['firmware', 'program'] as Slot[]) {
       const s = latestSnapshot(this.engine.received, u.id, slot, 'regs');
       let mark: SnapMark | null = null;
-      if (s && s.dump.kind === 1 && !snapshotOutdated(s, this.engine.sent, u.id) && this.draftIsUploaded(slot)) {
+      if (s && s.dump.kind === 1 && dumpRunning(s.dump.state) && !snapshotOutdated(s, this.engine.sent, u.id) && this.draftIsUploaded(slot)) {
         const line = d[slot].lineAt(s.dump.ip);
         if (line) mark = { line, title: `◆ The ${slot} was about to run this instruction when the rover dumped its registers (t${s.taken}).` };
       }

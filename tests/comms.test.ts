@@ -4,7 +4,7 @@ import { SENT_KEEP, SimulationEngine } from '../src/core/SimulationEngine';
 import type { Unit } from '../src/core/Unit';
 import { DumpKind, encodeCpuDump, encodeLog, encodeStackDump } from '../src/core/downlink';
 import { ProgState } from '../src/core/types';
-import { emptyDictionary, fieldsHtml, frameFields, latestSnapshot, pendingRequests, replyTo, sentText, snapshotOutdated, type Dictionaries } from '../src/ui/comms';
+import { dumpRunning, emptyDictionary, fieldsHtml, frameFields, sentByBrk, latestSnapshot, pendingRequests, replyTo, sentText, snapshotOutdated, type Dictionaries } from '../src/ui/comms';
 
 /** Keep the dish on the orbiter (full signal) before every tick. */
 function run(e: SimulationEngine, ticks: number): void {
@@ -28,7 +28,7 @@ function rover(seed = 3): { e: SimulationEngine; u: Unit; logs: { message: strin
 }
 
 describe('Mission control sent record (M11 Comms)', () => {
-  it('records accepted commands and uploads, not factory installs or rejected commands', () => {
+  it('records commands and uploads (rejected ones marked), not factory installs', () => {
     const { e, u, logs } = rover();
     expect(e.sent).toEqual([]);
     e.uploadProgram(u, PROG);
@@ -48,9 +48,14 @@ describe('Mission control sent record (M11 Comms)', () => {
     // Receipts are tagged so the Mission events strip can leave them to Comms; the factory install is not a receipt.
     expect(logs.filter((l) => l.category === 'sent')).toHaveLength(5);
     expect(logs[0].category).toBe('world');
+    // A rejected command is recorded as rejected (Comms lists it), costs nothing and never waits for a reply.
     u.energy = 0;
-    expect(e.command(u, 'DUMP')).not.toBeNull();
-    expect(e.sent).toHaveLength(5);
+    expect(e.command(u, 'DUMP', 'program')).not.toBeNull();
+    expect(e.sent).toHaveLength(6);
+    expect(e.sent[5]).toMatchObject({ kind: 'DUMP', cost: 0, rejected: expect.stringContaining('battery') });
+    expect(pendingRequests(e.sent, e.received, u.id, 'program', 'regs')).toEqual([e.sent[1]]);
+    expect(e.uploadProgram(u, PROG).rejected).toBeTruthy();
+    expect(e.sent[6]).toMatchObject({ kind: 'PROGRAM', rejected: expect.stringContaining('battery') });
   });
 
   it('erasing the program is recorded with 0 bytes; the record keeps the newest SENT_KEEP', () => {
@@ -199,5 +204,46 @@ describe('Saving the sent record', () => {
     expect(SAVE_VERSION).toBe(13);
     expect(migrate(v12).sent).toEqual([]);
     expect(deserialize(v12).sent).toEqual([]);
+  });
+});
+
+describe('BRK reports itself (SPEC §3.8.4)', () => {
+  it('a BRK in the firmware sends a register dump unasked; Comms labels it sent by BRK', () => {
+    const e = new SimulationEngine({ seed: 4 });
+    const u = e.spawnUnit('t');
+    e.upload(u, 'MOV r0 7\nBRK\nMOV r0 8', { factory: true });
+    run(e, 40);
+    const f = e.received.find((x) => x.taken !== undefined)!;
+    expect(f).toBeDefined();
+    expect(sentByBrk(f, e.sent)).toBe(true);
+    const fields = frameFields(f.bytes, { firmware: { tags: {}, regs: {}, lineAt: (a) => (a === 3 ? 2 : a === 4 ? 3 : 0) }, program: emptyDictionary() });
+    expect(fields.find((x) => x.name === 'state')).toMatchObject({ value: 'HALTED', note: expect.stringContaining('stopped by BRK') });
+    expect(fields.find((x) => x.name === 'next')).toMatchObject({ note: 'the instruction after the BRK on line 2', goto: { slot: 'firmware', line: 3 } });
+    expect(fields.find((x) => x.name === 'r0')!.value).toBe('7');
+    // Asking for a dump of the halted firmware is not "sent by BRK".
+    e.command(u, 'DUMP', 'firmware');
+    run(e, 40);
+    expect(sentByBrk(e.received.filter((x) => x.taken !== undefined).at(-1)!, e.sent)).toBe(false);
+  });
+
+  it('a BRK in the program dumps the program (PROG_HALTED); a finished program has no meaningful next', () => {
+    const { e, u } = rover();
+    e.uploadProgram(u, 'MOV r1 5\nBRK\nEND 1');
+    run(e, 60);
+    const f = e.received.find((x) => x.taken !== undefined)!;
+    expect(sentByBrk(f, e.sent)).toBe(true);
+    const fields = frameFields(f.bytes, { firmware: emptyDictionary(), program: emptyDictionary() });
+    expect(fields.find((x) => x.name === 'state')!.value).toBe('PROG_HALTED');
+    expect(dumpRunning('PROG_HALTED')).toBe(true);
+    expect(dumpRunning('PROG_DONE')).toBe(false);
+    expect(dumpRunning('PROG_NONE')).toBe(false);
+  });
+
+  it('a dump of a program that is not running says so and links nowhere', () => {
+    const b = encodeCpuDump({ ip: 0, status: 4, state: ProgState.PROG_NONE, regs: [0, 0, 0, 0], dsDepth: 0, csDepth: 0 }, DumpKind.PROG_CPU);
+    const f = frameFields(b, { firmware: emptyDictionary(), program: { tags: {}, regs: {}, lineAt: () => 7 } });
+    expect(f.find((x) => x.name === 'next')).toMatchObject({ value: 'prog:0x000 (not running)', goto: undefined });
+    expect(f.find((x) => x.name === '@STATUS')).toMatchObject({ value: 'ERR_BLOCKED', note: 'STEP hit an obstacle' });
+    expect(fieldsHtml(f, undefined, true)).not.toContain('data-goto');
   });
 });

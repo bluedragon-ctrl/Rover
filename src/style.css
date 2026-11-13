@@ -252,3 +252,10 @@ button.link { border: none; background: none; padding: 0; color: var(--info); te
 #reference table.frame-fields { table-layout: auto; }
 #reference table.radio-kv td:first-child { width: 92px; color: var(--dim); }
 #comms-list .row-fields { flex-basis: 100%; padding: 0 0 2px 22px; }
+.inspect .fold { border: none; background: none; color: var(--dim); padding: 0 4px 0 0; font-size: 11px; cursor: pointer; }
+.inspect.folded .ins-flow, .inspect.folded #ins-cards { display: none; }
+#ins-cards[hidden] { display: none; }
+.ins-card .fc { color: #5d7a9a; font-style: italic; }
+#comms-list .row.rejected .txt { color: var(--dim); }
+#comms-list .row.rejected .dir { color: var(--bad); }
+#comms-list .src .link { color: #5d7a9a; }

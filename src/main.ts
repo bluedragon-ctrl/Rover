@@ -67,9 +67,8 @@ function sendCommand(cmd: UplinkCommand, slot: Slot): string | null {
   if (err) log('warn', `Not sent: ${err}.`);
   return err;
 }
-const consolePanel: { update(): void } = commsMode
-  ? new CommsPanel($('#console'), engine, () => rover)
-  : new ConsolePanel($('#console'), engine, () => rover, (cmd, slot) => sendCommand(cmd, slot));
+const commsPanel = commsMode ? new CommsPanel($('#console'), engine, () => rover) : null;
+const consolePanel: { update(): void } = commsPanel ?? new ConsolePanel($('#console'), engine, () => rover, (cmd, slot) => sendCommand(cmd, slot));
 if (commsMode) {
   $('[data-tab="console"]').textContent = 'Comms';
   $('#log').insertAdjacentHTML('beforebegin', `<div id="log-head">Mission events${hint(MISSION_EVENTS_HELP, 'up')}</div>`);
@@ -105,6 +104,13 @@ const code = new CodeWorkspace({
   starterProgram: PROGRAM_FIRST_STEPS,
   inspect: commsMode ? sendCommand : undefined,
 });
+// Comms: a source line (fw L55, a dump's next address) opens it in the Code tab.
+if (commsPanel)
+  commsPanel.onGoto = (slot, line) => {
+    $('[data-tab="code"]').click();
+    code.setSlot(slot);
+    code.editorOf(slot).goToLine(line);
+  };
 
 // ---------------------------------------------------------------- log
 const logEl = $('#log');
