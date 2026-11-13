@@ -68,6 +68,7 @@ Each rover owns a copy of its chassis stats; upgrades (§3.7) modify that copy.
 | Sensor range | 6 tiles | `SCAN` radar, every direction, day and night. The operator's *view* needs light: 6 by day, 1-tile ring at night plus the headlight cone (§3.1.1). **[M4, M8.1]** |
 | Downlink | 2 B/tick at full signal, log FIFO 32 B, science recorder 1024 B | **[M9]** §3.8 |
 | Camera | mast camera, 32×32 2 bpp (modes 1–2) | `SNAP dir [mode]`; modes 3–5 by upgrade. **[M9]** §3.8.5 |
+| Image memory | 256 bytes (the largest installed camera mode) | `SNAP` fills it, `LDB` / `STB` read and write it, `SEND` sends it. **[M12, planned]** §3.8.7 |
 
 ### 3.1 Energy costs (defaults)
 
@@ -370,9 +371,8 @@ kind 1 = science frame   size = 0; followed by 1 sequence byte, then the product
   digits, `00`–`FF`, `b` and `d` lower case) on a bezel at the **back of the cabin**, like a
   PC POST card. Free, no link needed, no `@STATUS`; writes clamp to 0–255; physical
   (survives reboots), dark while powered off. Mission control does not receive it: the
-  operator reads it in the 3D view. The view is centred on the followed rover, so its own
-  display is always in view; with more rovers (M12) another rover's display is readable
-  only while that rover is inside the operator's view (§3.1.1).
+  operator reads it in the 3D view. The view is centred on the rover, so its display is
+  always in view.
 
 ### 3.8.4 Memory dumps and `BRK`
 
@@ -444,6 +444,8 @@ range, keeping hue) before quantizing. Reference renders: `preview.html?photos=1
   brightness (88–112 %), with per-position band variation (±6) and a little sensor noise
   per measurement (±2). The descriptor holds the material, the rover's position and tick.
 * **Camera** (mast, not a hardpoint): `SNAP dir [mode=1]`, blocks 10 ticks,
+  **[M12, planned]** `SNAP` takes the picture into image memory and `SEND` records it
+  (§3.8.7); until then `SNAP` records the photo directly.
   200 energy, writes `@STATUS`: `ERR_FULL` (not enough recorder space),
   `ERR_INVALID` (bad direction or mode not installed), `ERR_LOW_POWER`. Subject: the first
   rover, obstacle or item within 2 tiles in `dir`; with nothing that close, a **landscape**
@@ -499,6 +501,39 @@ gallery keeps the last 100 products (saved). Old saves: science points still wai
 | Colour filter wheel (`CAM_COLOUR`) | 60 | Camera mode 3 | – |
 | Hi-res sensor (`CAM_HIRES`) | 80 | Camera mode 4 | Recorder 2 KB |
 | Colour sensor (`CAM_RGB`) | 100 | Camera mode 5 | Colour filter wheel, Recorder 2 KB |
+
+### 3.8.7 Image memory **[M12, planned]**
+
+Designed with the owner (2026-11-13): take a picture → change it → send it, with every byte
+readable and writable. Player guide with six worked examples: [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md)
+(becomes the Reference → Image sub-tab; the examples become program templates).
+
+* **Image memory:** one flat byte array per rover, as big as the largest photo the
+  installed camera modes take (`chassis.imageBytes`: Mk-I 256 B; 512 B with *Colour
+  filter wheel*, 1024 B with *Hi-res sensor* or *Colour sensor*). Physical: survives
+  reboots, zeroed when the rover is powered off (and at landing). Saved.
+* **`SNAP dir [mode]`** (timing, energy, subject and light rules unchanged, §3.8.5)
+  writes the photo's bytes (layout §3.8.5) into image memory instead of the recorder and
+  remembers the **capture** (the descriptor and the mode). `ERR_FULL` no longer applies.
+* **`LDB dst addr`** / **`STB addr src`** (1 cycle each, compute: no energy, no `@STATUS`):
+  read a byte (0–255) / write `src & 255`. Addresses wrap modulo the memory size.
+* **`SEND [type]`** (hardware, blocks 1 tick, no energy): copies the first
+  `photoBytes(type)` bytes into the recorder as a product of `type` (photo types 1–5;
+  default: the mode of the last `SNAP`, else 1). Writes `@STATUS`: `OK`; `ERR_FULL` if
+  the recorder lacks room; `ERR_INVALID` for a bad type or one larger than image memory.
+  Image memory is unchanged.
+* **Provenance:** bits 2–1 of a science frame's header (unused so far) carry the
+  processing level: `00` *raw* (sent as captured), `01` *edited* (an `STB` since the
+  `SNAP`), `10` *drawn* (no capture behind it). The Gallery labels photos by it, from the
+  received bytes alone.
+* **Credits** come from the capture, never from the bytes: the **first** `SEND` after a
+  `SNAP`, with `type` = the `SNAP`'s mode, carries the capture (lit photo 1, +5 first of a
+  subject type; anomaly flags allowed, checked against the real tile). Every other `SEND`
+  is *drawn*: no credits, cannot be flagged. Goal *Photographer* counts captured photos.
+* **Storage:** raw products stay descriptors in the recorder and gallery (bytes
+  regenerated, as today); edited and drawn products store their bytes. Save v14 adds the
+  memory, the capture and product bytes; older saves start with zeroed memory.
+* Spectra are unchanged (straight to the recorder, §3.8.5).
 
 ## 3.9 Firmware and programs **[M10]**
 
@@ -721,7 +756,10 @@ friction, but the set should stay small enough to learn in one sitting.
 | | `ACT tool [arg]` | tool-defined | Fire the tool in hardpoint `tool` (§3.3.2). |
 | | `PEEK slot -> dst` | 1 cycle | Item ID in cargo `slot` (0 = empty); bad slot → `ERR_INVALID`. |
 | | `USE slot` | 5 ticks | Consume a cargo item (§3.3.2). |
-| | `SNAP dir [mode]` | blocks 10 | **[M9]** Photograph the subject in `dir` into the science recorder (§3.8.5). |
+| | `SNAP dir [mode]` | blocks 10 | **[M9]** Photograph the subject in `dir` into the science recorder (§3.8.5). **[M12, planned]** into image memory (§3.8.7). |
+| | `SEND [type]` | blocks 1 | **[M12, planned]** Copy image memory into the science recorder as a photo product (§3.8.7). |
+| Memory | `LDB dst addr` | 1 cycle | **[M12, planned]** Load the byte at `addr` of image memory (0–255); compute (§3.8.7). |
+| | `STB addr src` | 1 cycle | **[M12, planned]** Store `src & 255` at `addr` of image memory; compute (§3.8.7). |
 | Debug | `LOG tag [src]` | 1 cycle | **[M9]** Queue a log frame for the downlink; compute, no `@STATUS` (§3.8.3). |
 | Slots | `RUN ticks` | hardware | **[M10]** Firmware only: run the program for a time slice (§3.9.2). |
 | | `END [value]` | 1 cycle | **[M10]** Program only: finish with `PROG_DONE` and `@PROG_RESULT` (§3.9.2). |
