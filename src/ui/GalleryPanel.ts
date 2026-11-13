@@ -1,5 +1,6 @@
 import { hex, isPhoto, PRODUCT_NAMES, productFrameBytes, ProductType, type ReceivedProduct } from '../core/downlink';
 import { bandNm, productFrame, SPECTRUM_BANDS } from '../core/imaging';
+import { BALANCE } from '../core/balance';
 import { decodePhoto, PHOTO_FORMATS } from '../core/photos';
 import type { SimulationEngine } from '../core/SimulationEngine';
 
@@ -31,6 +32,13 @@ export function spectrumSvg(payload: number[], received: number): string {
 }
 
 const PHOTO_PX = 128;
+
+const productId = (g: ReceivedProduct): string => `${g.unitId}:${g.tick}:${g.seq}`;
+const FLAG_TEXT = {
+  hit: `<span class="ok">⚑ anomaly confirmed: +${BALANCE.anomalyFlagCredits} cr</span>`,
+  known: '<span class="info">⚑ anomaly confirmed, already catalogued: no credits</span>',
+  miss: `<span class="warn">⚑ no anomaly: −${BALANCE.anomalyWrongFlag} cr</span>`,
+} as const;
 
 /** A (possibly partial) photo as a data URL: crisp pixels scaled up, missing rows hatched. */
 export function photoDataUrl(type: number, payload: number[]): string {
@@ -73,14 +81,28 @@ export class GalleryPanel {
   private list: HTMLElement;
   private status: HTMLElement;
 
+  /** Called after a flag attempt (main.ts logs the outcome). */
+  onFlag?: (g: ReceivedProduct, err: string | null) => void;
+
   constructor(el: HTMLElement, private engine: SimulationEngine) {
     el.innerHTML = `<div class="toolbar small"><span class="dim" id="gallery-status"></span></div>
       <div id="gallery-list"></div>
       <p class="small dim">The spectrometer (<code>ACT TOOL_2 slot</code>) records a 16-band spectrum (18 B) and the mast camera
       (<code>SNAP dir [mode]</code>) a 32×32 photo (258 B) in the science recorder. The downlink sends them after the log FIFO is
       empty; photos fill in row by row, and credits are paid when the last byte arrives (lit photos 1, +5 for the first of a
-      subject type; dark photos nothing).</p>`;
+      subject type; dark photos nothing). Rare cliff walls and samples hide an <b>anomaly</b> that only a photo shows: if you spot
+      one, <i>Flag anomaly</i> on the complete, lit photo (+${BALANCE.anomalyFlagCredits} for a new one, −${BALANCE.anomalyWrongFlag} for a wrong flag;
+      one flag per photo).</p>`;
     this.list = el.querySelector('#gallery-list')!;
+    this.list.addEventListener('click', (ev) => {
+      const id = (ev.target as HTMLElement).closest<HTMLButtonElement>('button[data-flag]')?.dataset.flag;
+      const g = id ? this.engine.gallery.find((p) => productId(p) === id) : undefined;
+      if (!g) return;
+      const err = this.engine.flagAnomaly(g);
+      this.onFlag?.(g, err);
+      this.lastKey = '';
+      this.update();
+    });
     this.status = el.querySelector('#gallery-status')!;
   }
 
@@ -103,6 +125,8 @@ export class GalleryPanel {
       body = `<img class="photo" src="${url}" width="${PHOTO_PX}" height="${PHOTO_PX}" alt="photo">`;
       const subject = g.horizon ? 'landscape' : (this.engine.registry.get(g.subject)?.name ?? `tile ${g.subject}`);
       what = ` · ${subject}${g.lit ? '' : ' · <span class="warn">dark</span>'} · ${PHOTO_FORMATS[g.type]?.label ?? ''}`;
+      if (g.flag) body += `<div class="small">${FLAG_TEXT[g.flag]}</div>`;
+      else if (done && g.lit) body += `<div class="small"><button data-flag="${productId(g)}" title="Mark this photo as showing an anomaly">⚑ Flag anomaly</button></div>`;
     }
     const shown = frame.length > 34 ? `${hex(frame.slice(0, 34))} …` : hex(frame);
     return `<div class="product${done ? '' : ' partial'}">
@@ -121,7 +145,8 @@ export class GalleryPanel {
     this.status.textContent = `recorder ${used}/${cap} B · ${waiting} waiting · ${this.engine.stats.scienceDelivered} delivered`;
     const gl = this.engine.gallery;
     const last = gl.at(-1);
-    const key = `${gl.length}:${last?.seq ?? -1}:${last?.received ?? 0}`;
+    const flags = gl.reduce((n, g) => n + (g.flag ? 1 : 0), 0);
+    const key = `${gl.length}:${last?.seq ?? -1}:${last?.received ?? 0}:${flags}`;
     if (key === this.lastKey) return;
     this.lastKey = key;
     this.list.innerHTML = gl.length

@@ -155,7 +155,7 @@ export const TOOLS: Record<ToolId, ToolDef> = {
       const st = this.check(e, u, dir, mode);
       if (st !== Status.OK) return st;
       const shot = e.cameraSubject(u, dir);
-      e.recordProduct(u, { type: mode, subject: shot.subject, x: u.x, y: u.y, sx: shot.x, sy: shot.y, lit: e.photoLit(u, dir), credits: 0, ...(shot.horizon ? { horizon: shot.horizon } : {}) });
+      e.recordProduct(u, { type: mode, subject: shot.subject, x: u.x, y: u.y, sx: shot.x, sy: shot.y, lit: e.photoLit(u, dir), credits: 0, ...(shot.horizon ? { horizon: shot.horizon } : {}), ...(e.anomalyAt(shot.subject, shot.x, shot.y) ? { anomaly: true } : {}) });
       e.stats.photosTaken++;
       return Status.OK;
     },

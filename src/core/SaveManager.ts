@@ -7,7 +7,7 @@ import { UPGRADE_BY_ID } from './upgrades';
 import { CpuState, type Status } from './types';
 import type { Unit, UnitAction, UnitMotion } from './Unit';
 
-export const SAVE_VERSION = 8;
+export const SAVE_VERSION = 9;
 
 interface UnitSave {
   id: number;
@@ -79,6 +79,8 @@ export interface SaveSnapshot {
   gallery: ReceivedProduct[];
   /** v8: subject types already delivered in a lit photo (first-of-a-kind bonus) */
   photoSubjects: number[];
+  /** v9: anomaly tiles already credited ("x,y") */
+  anomalyTiles: string[];
   units: UnitSave[];
   chunks: ChunkSave[];
 }
@@ -137,6 +139,7 @@ export function serialize(e: SimulationEngine): SaveSnapshot {
     received: e.received.map((f) => ({ ...f, bytes: [...f.bytes] })),
     gallery: e.gallery.map((g) => ({ ...g })),
     photoSubjects: [...e.photoSubjects],
+    anomalyTiles: [...e.anomalyTiles],
     units: e.units.map(saveUnit),
     chunks,
   };
@@ -259,6 +262,12 @@ export function migrate(raw: unknown): SaveSnapshot {
     out.stats.photosDelivered = 0;
     v = 8;
   }
+  if (v === 8) {
+    // v8 -> v9: anomalies (M9 slice 6). Photos taken before carry no anomaly.
+    out.anomalyTiles = [];
+    out.stats.anomaliesFound = 0;
+    v = 9;
+  }
   if (v !== SAVE_VERSION) throw new SaveError(`Unsupported save version ${s.version}.`);
   out.version = v;
   return out;
@@ -281,6 +290,7 @@ export function deserialize(raw: unknown): SimulationEngine {
   e.received = s.received.map((f) => ({ ...f, bytes: [...f.bytes] }));
   e.gallery = s.gallery.map((g) => ({ ...g }));
   e.photoSubjects = [...s.photoSubjects];
+  e.anomalyTiles = [...s.anomalyTiles];
 
   for (const cs of s.chunks) {
     const c = e.world.getChunk(cs.cx, cs.cy);

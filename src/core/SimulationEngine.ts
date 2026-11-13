@@ -27,7 +27,7 @@ import { CpuState, DIR_VEC, Layer, Status } from './types';
 import { Unit } from './Unit';
 import { compile, type CompileResult, type Instr } from './vm/Compiler';
 import type { VmHost } from './vm/RoverVM';
-import { HORIZON_COLUMNS, HORIZON_V, type HorizonView } from './photos';
+import { HORIZON_COLUMNS, HORIZON_V, isAnomaly, type HorizonView } from './photos';
 import { coneOffsets, shapeContains, type SensorShape } from './sensors';
 import { createDefaultRegistry, T, type WorldRegistry } from './WorldRegistry';
 
@@ -86,7 +86,11 @@ export class SimulationEngine {
     /** SNAP photos recorded / lit photos delivered completely. */
     photosTaken: 0,
     photosDelivered: 0,
+    /** Correct anomaly flags on new anomaly tiles. */
+    anomaliesFound: 0,
   };
+  /** Anomaly tiles already credited ("x,y"; saved). */
+  anomalyTiles: string[] = [];
   /** Subject tile types already delivered in a lit photo (first-of-a-kind bonus, saved). */
   photoSubjects: number[] = [];
   /** Science credits: delivered science + goal rewards. Spent on upgrades. */
@@ -485,6 +489,39 @@ export class SimulationEngine {
   /** Enough light for a photo in `dir`: daylight, or the headlight on and facing `dir`. */
   photoLit(u: Unit, dir: number): boolean {
     return this.sun.light >= BALANCE.snapMinSunLight || (u.headlight === 1 && u.heading === dir);
+  }
+
+  /** Is the subject at (x, y) an anomaly? Landscapes (subject 0) never are. */
+  anomalyAt(subject: number, x: number, y: number): boolean {
+    return isAnomaly(this.seed, subject, x, y, BALANCE.anomalyOneIn);
+  }
+
+  /**
+   * Mission control flags a received photo as an anomaly (SPEC §3.8.5). Only complete, lit
+   * photos, once each. Right: +anomalyFlagCredits the first time a tile is flagged (again:
+   * nothing); wrong: −anomalyWrongFlag, never below 0. Returns an error, or null.
+   */
+  flagAnomaly(g: ReceivedProduct): string | null {
+    if (!this.gallery.includes(g)) return 'unknown product';
+    if (!isPhoto(g.type)) return 'only photos can be flagged';
+    if (g.flag) return 'already flagged';
+    if (g.received < productFrameBytes(g.type)) return 'photo not complete';
+    if (!g.lit) return 'dark photo';
+    if (!g.anomaly) {
+      g.flag = 'miss';
+      this.credits -= Math.min(this.credits, BALANCE.anomalyWrongFlag);
+      return null;
+    }
+    const key = `${g.sx},${g.sy}`;
+    if (this.anomalyTiles.includes(key)) {
+      g.flag = 'known';
+      return null;
+    }
+    g.flag = 'hit';
+    this.anomalyTiles.push(key);
+    this.stats.anomaliesFound++;
+    this.credits += BALANCE.anomalyFlagCredits;
+    return null;
   }
 
   /** Credits for a delivered product; lit photos pay a bonus for the first of a subject type. */

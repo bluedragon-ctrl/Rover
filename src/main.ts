@@ -58,6 +58,12 @@ const consolePanel = new ConsolePanel($('#console'), engine, () => rover, (cmd) 
   if (err) log('warn', `Uplink rejected: ${err}.`);
 });
 const galleryPanel = new GalleryPanel($('#gallery'), engine);
+galleryPanel.onFlag = (g, err) => {
+  if (err) log('warn', `Cannot flag photo #${g.seq}: ${err}.`);
+  else if (g.flag === 'hit') log('info', `Photo #${g.seq}: anomaly confirmed! A fossil in the rock (+${BALANCE.anomalyFlagCredits} credits).`);
+  else if (g.flag === 'known') log('info', `Photo #${g.seq}: anomaly confirmed, but this one is already catalogued.`);
+  else log('warn', `Photo #${g.seq}: the science team finds no anomaly (−${BALANCE.anomalyWrongFlag} credits at most).`);
+};
 const upgradesPanel = new UpgradesPanel($('#upgrades'), engine, () => rover, (err, id) => {
   if (err) log('warn', `Cannot buy ${UPGRADE_BY_ID[id]?.title}: ${err}.`);
 });

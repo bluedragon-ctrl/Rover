@@ -55,6 +55,9 @@ export const BALANCE = {
   snapMinSunLight: 20, // @SUN_LIGHT needed for a lit photo (or the headlight aimed at the subject)
   photoCredits: 1, // lit photo
   photoFirstBonus: 5, // first lit photo of a subject type
+  anomalyOneIn: 40, // cliff walls and samples: 1 in N is an anomaly (seeded per tile)
+  anomalyFlagCredits: 20, // correct flag of a new anomaly tile in the gallery
+  anomalyWrongFlag: 5, // wrong flag: credits taken (never below 0)
 
   // Storyteller (docs/SPEC.md §3.5)
   eventEarliestTick: 1500, // grace period for new worlds

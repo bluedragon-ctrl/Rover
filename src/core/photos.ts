@@ -208,16 +208,16 @@ function fossil(u: number, v: number, cu: number, cv: number, R: number, turn: n
   const f = ((s % ONE) + ONE) % ONE; // position across the whorl: 0 and 1023 = suture
   const tube = (f * (ONE - f)) >> 10; // 0..256: rounded whorl, brightest in the middle
   const rib = wave(theta * 22 + (r >> 2)); // radial ribs, slightly swept back
-  let k = 150 + ((tube * 110) >> 8) + (rib > 150 ? -50 : 0);
+  let k = 175 + ((tube * 60) >> 8) + (rib > 150 ? -30 : 0);
   k += (((-dx - dy) * 40) / R) | 0; // relief: light from the upper left
-  if (f < 80 || f > ONE - 80) k = 60; // suture groove
+  if (f < 80 || f > ONE - 80) k = 120; // suture groove
   const c = scale(shell, k);
   const rim = R - r < R / 8 ? 256 - (((R - r) * 256 * 8) / R | 0) : 0; // embedded edge
   return mix(c, ground, rim);
 }
 
-const FOSSIL_SHELL = hex(0xeadcc0);
-const FOSSIL_PYRITE = hex(0xd8b04a);
+const FOSSIL_SHELL = hex(0xd8a070);
+const FOSSIL_PYRITE = hex(0xe8c040);
 
 /**
  * Anomaly scenes (docs/SPEC.md §3.8.5): rare cliff walls hold a fossil shell in the strata,
@@ -229,7 +229,7 @@ const ANOMALY_SCENES: Record<number, Scene> = {
     const h = hash3(s, 0, 0, 61);
     const cu = 330 + (h & 255) + ((h >>> 8) & 127); // keep the shell inside the frame
     const cv = 330 + ((h >>> 16) & 255) + ((h >>> 24) & 127);
-    const R = 250 + ((h >>> 4) & 63);
+    const R = 170 + ((h >>> 4) & 31);
     return fossil(u, v, cu, cv, R, (h >>> 12) & 1023, FOSSIL_SHELL, rock) ?? rock;
   },
   [T.SAMPLE]: (u, v, s) => {
@@ -238,12 +238,19 @@ const ANOMALY_SCENES: Record<number, Scene> = {
     const h = hash3(s, 0, 0, 62);
     const cu = 462 + (h & 127);
     const cv = 462 + ((h >>> 8) & 127);
-    return fossil(u, v, cu, cv, 250 + ((h >>> 16) & 63), (h >>> 22) & 1023, FOSSIL_PYRITE, ground) ?? ground;
+    const R = 220 + ((h >>> 16) & 31);
+    const nugget = sample(u, v, s);
+    return dist(u - cu, v - cv) < R ? (fossil(u, v, cu, cv, R, (h >>> 22) & 1023, FOSSIL_PYRITE, ground) ?? ground) : nugget;
   },
 };
 
 /** Tile types that can hold an anomaly. */
 export const ANOMALY_SUBJECTS: readonly number[] = [T.CLIFF_WALL, T.SAMPLE];
+
+/** Is the `subject` at tile (x, y) an anomaly? Seeded per tile: 1 in `oneIn`. */
+export function isAnomaly(seed: number, subject: number, x: number, y: number, oneIn: number): boolean {
+  return ANOMALY_SUBJECTS.includes(subject) && hash3(seed, x, y, 0xa40) % oneIn === 0;
+}
 
 const SCENES: Record<number, Scene> = {
   [T.FLAT_SAND]: sand,

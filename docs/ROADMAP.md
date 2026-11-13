@@ -20,7 +20,7 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | **M8** | **Visual overhaul (SPEC §7)** | 🚧 in progress: asset preview, indicator lamps, **game renderer switched to v2**, frame-time HUD + geometry baseline, pan leash; performance fine on PC, remaining items (LOD, fat lines, zoom range, atmosphere) deferred to the next visual pass |
 | M8.1 | Radar `SCAN` vs. light-limited operator view; headlight cone; `@HEADING` | ✅ done |
 | Flash bytes | Program size in machine-code bytes instead of lines (SPEC §5.7) | ✅ core done; editor byte gutter awaiting preview approval |
-| **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | 🚧 slices 1–5 done (link layer, `LOG`, Console tab; recorder, spectra, Gallery tab; dumps, `BRK`, admin-only debugger; `@POST` display; camera + photos; save v8); ⏭ next: slice 6 (upgrades + anomalies) |
+| **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | ✅ slices 1–6 done (link layer, `LOG`, Console tab; recorder, spectra, Gallery tab; dumps, `BRK`, admin-only debugger; `@POST` display; camera + photos; upgrades, camera modes 3–5, fossil anomalies; save v9); ⏭ next: M10 detailed plan |
 | M10 | Firmware + program slot (SPEC §3.9) | planned: design agreed, plan below |
 | M11 | User interface review (after M10) | planned |
 | M12 | Multiple rovers (after single-rover tuning) | planned |
@@ -235,8 +235,21 @@ Slices, one PR each, in order. Every slice: tests green, build, SPEC markers upd
        format, hex shortened. Reference tab, `@REC_FREE` text. Save v8 + migration.
        Tests in `tests/photos.test.ts`. The tool FX uses the generic white tool effect (no
        new 3D visual; a camera flash would go through the preview first).
-6. [ ] **Upgrades + anomalies.** Catalogue additions (SPEC §3.8.6), camera modes 3–5,
-       seeded anomaly tiles, gallery flagging (+20 / −5). Goal *Anomaly hunter*.
+6. [x] **Upgrades + anomalies.** Step 1: six catalogue additions (SPEC §3.8.6: `REC_2K`,
+       `REC_4K`, `LINK_3`, `TRACE_64`, `CAM_COLOUR`, `CAM_HIRES`, `CAM_RGB`), new
+       `chassis.linkBytesPerTick` drives the link, prerequisites became a list (the colour
+       sensor needs two), shop header shows the new stats. Step 2: anomalies decided with
+       the owner: **fossil** shells (cliff strata; pyritized fossil instead of a sample),
+       integer-only spiral in `photos.ts` (`iangle`, Archimedean whorls, sutures, ribs);
+       preview `preview.html?anomaly=1` renders the game generator through all modes; the
+       owner chose the **subtle** look (a pale disc in 32×32 grey, a clear spiral in hi-res
+       and colour, so the camera upgrades matter). 1 in 40 cliff walls / samples, seeded per
+       tile (`isAnomaly`), only as the photo's subject; `ProductDesc.anomaly` is ground truth
+       the gallery never shows. *Flag anomaly* on complete, lit photos (`engine.flagAnomaly`):
+       +20 once per tile ("already catalogued" afterwards pays nothing), wrong −5 never below
+       0, one flag per photo. Goal *Anomaly hunter* (1 correct flag, 30 cr). Save v9
+       (`anomalyTiles`, `stats.anomaliesFound`, gallery `flag`). Tests in
+       `tests/m9-upgrades.test.ts` and `tests/anomalies.test.ts`.
 
 Later (backlog): `@REC_PEEK` so firmware can inspect recorder bytes (on-board triage,
 compression); bit errors at low signal and a checksum lesson; panorama `SNAP` of the
@@ -300,14 +313,14 @@ what the top bar shows, discoverability for beginners. Proposals with screenshot
 M9 (tune in playtests, defaults in SPEC §3.8): link rate 2 B/tick and min signal 20;
 log FIFO 32 B / recorder 1024 B; transmitter 2 energy/tick; `SNAP` 10 ticks / 200
 energy; photo credits (1, +5 first of a subject) and anomaly rate/rewards; upgrade
-prices. Is 128 ticks per Mk-I photo at full signal right against a ~300-tick orbiter
+prices (anomalies: 1 in 40, +20 / −5). Is 128 ticks per Mk-I photo at full signal right against a ~300-tick orbiter
 window with a fixed dish?
 
 
 1. ~~M8 look~~ → wireframe with dark opaque fills (hidden-line look), approved in preview.
 2. Bloom on by default with a toggle (as in the preview) — confirm once measured in-game.
 3. Upgrade prices: fine for now? (A Prospector run earns ~75 credits in 1.5 sols; the
-   whole catalogue costs 745.)
+   whole catalogue costs 1195 since M9 slice 6.)
 4. ~~M8.1 SCAN vs. cone~~ → `SCAN` is radar (ignores light, does not turn); the cone only
    limits what the **player** sees at night. `@HEADING` aims the headlight (5 energy).
 5. Explorer firmware toggles `@HEADLIGHT` 0→1 every loop at night (mapping can miss the
@@ -353,3 +366,4 @@ window with a fixed dish?
 | 2026-11-12 | `ccr-a25966c0-1wr43t` (7) | M9 slice 4: `@POST` two-digit hex display (preview reviewed, then game), port, save v7; M10/M11 design docs from PR #12 that missed the merge. |
 | 2026-11-13 | `ccr-2c7af876-8dzljn` | M9 slice 5: mast camera `SNAP dir [mode]`, integer-only photo generator (all 5 formats), light and subject rules, partial photos in the gallery, first-of-a-kind credits, goal *Photographer*, save v8. |
 | 2026-11-13 | `ccr-2c7af876-8dzljn` (2) | M9 slice 5: landscape photos when nothing is within reach (ridges from real cliffs and ore, ground, sun, night sky with headlight foreground). |
+| 2026-11-13 | `ccr-1e08ca42-e1n32b` | M9 slice 6: downlink/camera upgrades (recorder 2/4 KB, amplifier, trace buffer, camera modes 3–5), fossil anomalies (preview reviewed, subtle look), gallery flagging, goal *Anomaly hunter*, save v9. M9 complete. |
