@@ -236,8 +236,10 @@ export class ThreeScene {
     rig.update(dt);
     const fx = rig.focusX, fy = rig.focusY;
 
-    const radius = Math.min(6, Math.ceil(Math.min(rig.viewRadius, rig.dist * 3.2 + 10) / 16) + 1);
-    this.chunks.update(fx, fy, radius);
+    const fogNear = rig.dist * 1.3;
+    const fogFar = rig.dist * 3.2 + 10;
+    const radius = Math.min(6, Math.ceil(Math.min(rig.viewRadius, fogFar) / 16) + 1);
+    this.chunks.update(fx, fy, radius, fogFar);
 
     const light = this.engine.sun.light / 100;
     const day = THREE.MathUtils.smoothstep(light, 0, 0.35);
@@ -310,8 +312,8 @@ export class ThreeScene {
     this.scene.background = bg;
     const fog = this.scene.fog as THREE.Fog;
     fog.color.copy(bg);
-    fog.near = rig.dist * 1.3;
-    fog.far = rig.dist * 3.2 + 10;
+    fog.near = fogNear;
+    fog.far = fogFar;
     L.fogColor.value.copy(bg);
     L.fogNear.value = fog.near;
     L.fogFar.value = fog.far;

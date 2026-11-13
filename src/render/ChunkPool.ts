@@ -70,7 +70,12 @@ export class ChunkPool {
 
   constructor(private engine: SimulationEngine, private root: THREE.Object3D, private lighting: TileLighting) {}
 
-  update(focusX: number, focusY: number, radiusChunks: number): void {
+  /**
+   * Keep the chunks around the focus up to date. `maxDist` (tiles) skips chunks whose
+   * nearest point is farther than that (everything there is fully fogged); chunks already
+   * built are kept a little longer so the boundary does not churn.
+   */
+  update(focusX: number, focusY: number, radiusChunks: number, maxDist = Infinity): void {
     const fcx = Math.floor(focusX / CHUNK);
     const fcy = Math.floor(focusY / CHUNK);
     const wanted = new Set<string>();
@@ -86,8 +91,10 @@ export class ChunkPool {
       const cx = fcx + dx;
       const cy = fcy + dy;
       const key = chunkKey(cx, cy);
-      wanted.add(key);
       let e = this.entries.get(key);
+      const near = chunkDistance(cx, cy, focusX, focusY);
+      if (near > maxDist + (e ? CHUNK / 2 : 0)) continue;
+      wanted.add(key);
       const loaded = this.engine.world.hasChunk(cx, cy);
       let stale = !e || !loaded || e.version !== e.chunk.version;
       if (e && stale && loaded && !e.rebuild && this.engine.world.getChunk(cx, cy) === e.chunk && this.patch(e)) {
@@ -112,7 +119,8 @@ export class ChunkPool {
           const group = new THREE.Group();
           const l = new THREE.LineSegments(lines, this.lighting.lineMaterial);
           const f = new THREE.Mesh(fills, this.lighting.fillMaterial);
-          l.frustumCulled = f.frustumCulled = false;
+          // Bounding spheres come from the chunk-local geometry, so culling works with the
+          // floating origin (the group moves, the geometry does not).
           group.add(f, l);
           this.root.add(group);
           e = { group, lines: l, fills: f, chunk, version: 0, ranges, fog: new Uint8Array(CHUNK_AREA), layers: [], rebuild: false };
@@ -242,6 +250,13 @@ export class ChunkPool {
     ranges.fillStart[CHUNK_AREA] = f.count;
     return { lines: b.build(), fills: f.build(), ranges };
   }
+}
+
+/** Distance (tiles) from a point to the nearest point of chunk (cx, cy). */
+function chunkDistance(cx: number, cy: number, x: number, y: number): number {
+  const dx = Math.max(cx * CHUNK - x, 0, x - (cx + 1) * CHUNK);
+  const dy = Math.max(cy * CHUNK - y, 0, y - (cy + 1) * CHUNK);
+  return Math.hypot(dx, dy);
 }
 
 /** Upload only vertices [v0, v1) of a 4-component attribute. */
