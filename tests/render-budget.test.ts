@@ -133,8 +133,8 @@ describe('rover rig draw calls', () => {
     expect(draws).toBeLessThanOrEqual(42);
     expect(rig.lamps.length).toBe(LAMP.POST + 14);
     // Recolouring a lamp touches only its own vertices.
-    rig.lamps.set(LAMP.BEACON, 0xff0000);
-    expect(rig.lamps.get(LAMP.BEACON)).toBe(0xff0000);
+    rig.lamps.set(LAMP.IND + 2, 0xff0000);
+    expect(rig.lamps.get(LAMP.IND + 2)).toBe(0xff0000);
     expect(rig.lamps.get(LAMP.HEAD)).toBe(0x1e293b);
   });
 });

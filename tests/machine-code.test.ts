@@ -24,9 +24,12 @@ describe('machine code (SPEC §5.7.1)', () => {
   });
 
   it('gives every port a unique fixed number 0–63', () => {
-    expect(new Set(PORT_CODES).size).toBe(PORT_CODES.length);
+    const live = PORT_CODES.filter((n) => n !== '');
+    expect(new Set(live).size).toBe(live.length);
     expect(PORT_CODES.length).toBeLessThanOrEqual(64);
-    expect([...PORT_CODES].sort()).toEqual(PORTS.map((p) => p.name).sort());
+    expect([...live].sort()).toEqual(PORTS.map((p) => p.name).sort());
+    // Retired ports keep their numbers: the old status beacon was 0x21/0x22.
+    expect([PORT_CODES[33], PORT_CODES[34], PORT_CODES[35]]).toEqual(['', '', 'IND1']);
     expect(PORT_CODES[0]).toBe('BAT');
   });
 

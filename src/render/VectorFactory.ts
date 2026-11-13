@@ -21,7 +21,7 @@ const lines = (b: LineBatch, opts: THREE.LineBasicMaterialParameters = {}) =>
   new THREE.LineSegments(b.buildBasic(), new THREE.LineBasicMaterial({ vertexColors: true, ...opts }));
 
 export const LIGHT_HEX = [0x333333, 0xff3030, 0x30ff60, 0x3080ff, 0xffb020];
-/** Colour of an indicator lamp (`@IND1..3`); OFF is a dark lens. */
+/** Colour of a status lamp (`@IND1..3`); OFF is a dark lens. */
 export const indicatorHex = (v: number): number => (v > 0 ? LIGHT_HEX[v] ?? 0xffffff : 0x1a2230);
 
 // ============================================================================================
@@ -522,7 +522,7 @@ export const ROVER_AMBER = 0xf59e0b;
 export const ROVER_CYAN = 0x38bdf8;
 
 /** Indices into `RoverRigMesh.lamps`. */
-export const LAMP = { IND: 0, BEACON: 3, HEAD: 4, POST: 5 } as const;
+export const LAMP = { IND: 0, HEAD: 3, POST: 4 } as const;
 
 /** Parts of the v2 rover the animator drives. Faces -Z (north) at rotation 0, 1 tile ≈ 1 unit. */
 export interface RoverRigMesh {
@@ -544,7 +544,7 @@ export interface RoverRigMesh {
   dishMats: THREE.LineBasicMaterial[];
   /**
    * All small coloured parts in one mesh, indexed by `LAMP`: indicator lenses (@IND1..3,
-   * left to right), status LED, headlight bar, then (if built) the 14 @POST segments,
+   * left to right), headlight bar, then (if built) the 14 @POST segments,
    * digit-major (high digit first), a..g.
    */
   lamps: ColorCells;
@@ -673,12 +673,7 @@ export function buildRoverRig(opts: { post?: boolean } = {}): RoverRigMesh {
   lamp.position.set(0, 0.56, -0.74);
   body.add(lamp);
 
-  // Status LED crystal.
-  const led = new THREE.Mesh(new THREE.OctahedronGeometry(0.07, 0), new THREE.MeshBasicMaterial({ color: LIGHT_HEX[2] }));
-  led.position.set(-0.28, 1.08, -0.2);
-  body.add(led);
-
-  // Indicator lamp bar on the cabin roof, in front of the dish: three lenses in housings.
+  // Status lamp bar on the cabin roof, in front of the dish: three lenses in housings.
   const bar = vectorPart(new THREE.BoxGeometry(0.5, 0.04, 0.14), 0x64748b);
   bar.obj.position.set(0.1, 1.01, -0.22);
   body.add(bar.obj);
@@ -691,7 +686,7 @@ export function buildRoverRig(opts: { post?: boolean } = {}): RoverRigMesh {
     body.add(rim);
     lampParts.push(lens);
   }
-  lampParts.push(led, lamp);
+  lampParts.push(lamp);
 
   // @POST display: two seven-segment digits on a bezel at the back of the cabin, tilted up
   // so it reads from the usual orbit camera behind and above the rover.

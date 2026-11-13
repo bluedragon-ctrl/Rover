@@ -118,12 +118,10 @@ export const PORTS: PortDef[] = [
   },
 
   // Lights
-  { name: 'LIGHT_COLOR', description: 'Status beacon color 0–4', min: 0, max: 4, read: (u) => u.lightColor, write: (u, v) => (u.lightColor = v) },
-  { name: 'LIGHT_BLINK', description: 'Beacon blink 0/1', min: 0, max: 1, read: (u) => u.lightBlink, write: (u, v) => (u.lightBlink = v) },
   ...[1, 2, 3].map(
     (n): PortDef => ({
       name: `IND${n}`,
-      description: `Indicator lamp ${n} on the cabin roof: OFF, RED, GREEN, BLUE, AMBER (0–4). Visual only, free, survives reboots`,
+      description: `Status lamp ${n} on the cabin roof: OFF, RED, GREEN, BLUE, AMBER (0–4). Visual only, free, survives reboots. The default firmware uses 1 for the program, 2 for charging, 3 for the uplink`,
       min: 0,
       max: 4,
       read: (u) => u.indicators[n - 1],
@@ -161,14 +159,15 @@ export const PORTS: PortDef[] = [
 
 /**
  * Fixed machine-code port numbers 0–63 (SPEC §5.7.1): the operand byte `01pppppp`.
- * Append only: a port keeps its number forever, also if it moves in PORTS.
+ * Append only: a port keeps its number forever, also if it moves in PORTS. A retired
+ * port leaves an empty slot ('') that is never reused (33, 34: the old status beacon).
  */
 export const PORT_CODES: readonly string[] = [
   'BAT', 'HULL', 'SOLAR_HEALTH', 'ANTENNA_HEALTH', 'X', 'Y', 'STATUS', 'TICK',
   'GROUND', 'GROUND_HAZARD', 'CARGO_FREE', 'SCIENCE_READY', 'REC_FREE', 'ALERT', 'ALERT_ETA', 'SEISMIC_TYPE',
   'SEISMIC_DIST', 'DROPS', 'DROP_X', 'DROP_Y', 'SENSOR_RANGE', 'HEADING', 'SUN_AZIMUTH', 'SUN_ELEV',
   'SUN_LIGHT', 'SOLAR_OPEN', 'SOLAR_ANGLE', 'ORBIT_AZIMUTH', 'ANTENNA_ANGLE', 'SIGNAL_STR', 'TX_DATA', 'LOG_FREE',
-  'LOG_LOST', 'LIGHT_COLOR', 'LIGHT_BLINK', 'IND1', 'IND2', 'IND3', 'POST', 'PROG_STATE', 'PROG_RESULT',
+  'LOG_LOST', '', '', 'IND1', 'IND2', 'IND3', 'POST', 'PROG_STATE', 'PROG_RESULT',
   'HEADLIGHT',
 ];
 

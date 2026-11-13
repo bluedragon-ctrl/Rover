@@ -43,6 +43,39 @@ describe('indicator lamps @IND1..@IND3', () => {
   });
 });
 
+describe('the status beacon is retired (save v12)', () => {
+  it('@LIGHT_COLOR / @LIGHT_BLINK are no longer ports, and their machine-code numbers stay unused', async () => {
+    const { decodeProgram, DecodeError } = await import('../src/core/vm/isa');
+    const eng = new SimulationEngine({ seed: 1 });
+    const u = eng.spawnUnit('t');
+    expect(eng.compileFor(u, 'MOV @LIGHT_COLOR RED').errors.length).toBe(1);
+    expect(eng.compileFor(u, 'MOV @LIGHT_BLINK 1').errors.length).toBe(1);
+    expect(() => decodeProgram([0x01, 0x40 | 33, 0x01])).toThrow(DecodeError);
+    expect(decodeProgram([0x01, 0x40 | 35, 0x01])[0].args[0]).toEqual({ k: 'port', name: 'IND1' });
+  });
+
+  it('v11 saves move beacon code and state onto the status lamps', () => {
+    const src = 'MOV @LIGHT_COLOR BLUE\nMOV @light_blink 1\nloop: JMP loop';
+    const { eng } = setup('MOV @IND1 BLUE\nMOV @IND3 1\nloop: JMP loop');
+    eng.advanceTick();
+    eng.advanceTick();
+    const v11 = serialize(eng) as unknown as Record<string, any>;
+    v11.version = 11;
+    for (const us of v11.units) {
+      us.lights = [LightColor.BLUE, 1, 1];
+      delete us.headlight;
+      us.indicators = [0, LightColor.AMBER, 0];
+      us.sourceCode = src;
+      us.vm.legacyIndex = false;
+    }
+    const l = deserialize(v11).units[0];
+    expect(l.sourceCode).toBe('MOV @IND1 BLUE\nMOV @IND3 1\nloop: JMP loop');
+    expect(l.indicators).toEqual([LightColor.BLUE, LightColor.AMBER, 1]);
+    expect(l.headlight).toBe(1);
+    expect(l.vm.ip).toBe(eng.units[0].vm.ip); // same byte sizes: the saved IP still fits
+  });
+});
+
 describe('@POST display (SPEC §3.8.3)', () => {
   it('is a free 0–255 port that leaves @STATUS alone and survives reboots', async () => {
     const { SimulationEngine } = await import('../src/core/SimulationEngine');

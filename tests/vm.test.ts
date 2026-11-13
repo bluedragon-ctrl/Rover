@@ -80,9 +80,9 @@ describe('RoverVM', () => {
   });
 
   it('writes ports with clamping', () => {
-    const { eng, u } = setup('MOV @LIGHT_COLOR 99\nSLEEP 100');
+    const { eng, u } = setup('MOV @IND1 99\nSLEEP 100');
     eng.advanceTick();
-    expect(u.lightColor).toBe(4);
+    expect(u.indicators[0]).toBe(4);
   });
 
   it('stepInstruction executes one instruction at a time, across blocked ticks', () => {

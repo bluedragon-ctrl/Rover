@@ -54,7 +54,7 @@ describe('Compiler', () => {
     const size = (line: string) => c(`x: ${line}`).flashUsed;
     expect(size('RET')).toBe(1);
     expect(size('MOV r0 r1')).toBe(3);
-    expect(size('MOV @LIGHT_COLOR RED')).toBe(3); // port 1, constant 1 = short immediate
+    expect(size('MOV @IND1 RED')).toBe(3); // port 1, constant 1 = short immediate
     expect(size('MOV r0 15')).toBe(3);
     expect(size('MOV r0 16')).toBe(4);
     expect(size('MOV r0 -1')).toBe(4);

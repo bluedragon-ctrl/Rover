@@ -17,8 +17,7 @@ export interface RoverPose {
   dishHealth: number;
   /** CPU: 'run' | 'idle' | 'fault' | 'off'. */
   cpu: 'run' | 'idle' | 'fault' | 'off';
-  beaconHex: number;
-  /** Indicator lamp colours (hex), left to right. */
+  /** Status lamp colours (hex), left to right. */
   indicators: number[];
   /** @POST value 0–255 shown as two hex digits; null = dark (powered off, or not visible). */
   post?: number | null;
@@ -75,7 +74,6 @@ export class RoverAnimator {
     for (const w of m.wheels) w.rotation.x = this.wheelSpin;
     m.model.position.y = p.moving ? Math.abs(Math.sin(t * 13)) * 0.012 : 0;
 
-    m.lamps.set(LAMP.BEACON, p.beaconHex);
     for (let i = 0; i < 3; i++) if (i < p.indicators.length) m.lamps.set(LAMP.IND + i, p.indicators[i]);
     if (m.hasPost) {
       const v = p.post ?? null;
