@@ -6,7 +6,7 @@ import { SimulationEngine } from '../src/core/SimulationEngine';
 import { CpuState, Status } from '../src/core/types';
 import type { Unit } from '../src/core/Unit';
 import { compile } from '../src/core/vm/Compiler';
-import { describeFrame, emptyDictionary } from '../src/ui/ConsolePanel';
+import { describeFrame, emptyDictionary } from '../src/ui/comms';
 
 const factory = { factory: true };
 

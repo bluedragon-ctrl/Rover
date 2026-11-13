@@ -246,10 +246,11 @@ prerequisites and count neither toward goals nor toward "seen" prerequisites.
 
 ## 3.6 Persistence **[M6]**
 
-`SaveManager.serialize/deserialize` (headless). A save (`version: 7`; v1–v6 files are migrated
+`SaveManager.serialize/deserialize` (headless). A save (`version: 13`; v1–v12 files are migrated
 by `migrate()`) holds the seed, supply drops, installed upgrades, each rover's downlink
 (log FIFO, transmitter budget, `@LOG_LOST`, recorder descriptors and progress, sequence
 number, dump replies waiting), the console's last 200 received frames, the gallery's last 100 products,
+mission control's last 100 sent commands and uploads (v13, the Comms timeline),
 tick, credits, stats, cheats, storyteller state (RNG, schedule, completed goals), full
 unit and VM state (firmware source is recompiled on load), and **only chunks that are
 dirty or explored**: fog as run lengths plus a sparse `[layer, index, id]` diff against
@@ -572,14 +573,32 @@ running uplinked command sequences, or a small OS starting user programs:
 * The Console decodes log tags with both slots' `CONST` names; a tag both slots name
   differently shows both (`T_BAT|T_X`), with lines per slot (`(fw L12, prog L3)`). Dumps
   show their slot: `PROGRAM DUMP (snapshot t254): next prog:0x02A (L13) · PROG_HALTED · …`.
-* **Console redesign [M11, in owner review]** (game `?console=2`, `preview.html?editor=1`):
-  sections *Send to rover* and *Received from rover*, each with a **?** help hint; a
-  *Talk to Program / Firmware* switch; one row per message (time, LOG / PROG / FW / SYS
-  chip, text, `fw L55` source with a tooltip); runs of identical messages merged (`×39`,
-  `t301–1137`); dumps as small cards (next address and line, state, `@STATUS`, registers;
-  stacks); raw bytes only with *Bytes*; follows the newest message unless scrolled up
-  (*↓ Newest*). The game's message strip under the side panel is labelled **Mission log**
-  with its own hint, to tell it apart from what the rover sends.
+* **Comms tab and *Look inside* [M11, in owner review]** (game `?comms=1`,
+  `preview.html?editor=1`; replaces the `?console=2` proposal). Organised by the player's
+  question instead of by link direction:
+  * **Code tab → *Look inside the program / firmware*** (follows the Code tab's slot; the
+    Console's own slot switch is gone): *Ask for a copy of ▲ registers / ▲ stacks* (uplink
+    `DUMP` / `DUMP_STACKS`), *▶ Resume after BRK*, *↻ Restart* (program only). A one-line
+    flow says the direction: *▲ you ask → the rover copies the values at once → ▼ the copy
+    comes down*. The newest copy of each kind is shown as a card ("copied on the rover at
+    t2132, 35 ticks ago"; next address with a link to its line; state, `@STATUS`, stack
+    depths, registers), with a *waiting* line while a request is unanswered (and why: no
+    downlink below signal 20). The listing marks the copied next instruction with ◆ while the
+    editor holds the uploaded code. A copy taken before a later upload of its slot is
+    flagged as pointing into old code. The word *dump* appears only in the help hint.
+  * **Comms tab** (renamed Console): a *Radio link* box (▼ signal meter with the minimum,
+    log queue, science recorder, lost; ▲ request cost) and one timeline of both directions:
+    ▲ sent (`CODE` uploads, `ASK` requests with *✓ copy arrived t…* / *… waiting*), ▼ received
+    (`LOG` with merged repeats, `COPY` cards, `SYS`, `SCI` products → Gallery, `LOST`).
+    Filters All / ▲ Sent / LOG / Copies / System / Science, *Bytes*, ↓ newest. Read-only.
+  * **Mission events** (the strip under the side panel): world and game only (goals,
+    weather, supplies, upgrades, admin, rejected actions, rover alarms). Receipts for what
+    was sent are left to Comms (`LOG` event `category`: `world` / `sent` / `rover`).
+  * Mission control's sent record (`engine.sent`, last 100, saved v13): pairs a request
+    with its copy by rover, slot, kind and the tick the copy was taken (= the tick it was
+    sent). Not part of the simulation.
+  * Later (needs a rules decision): rover-internal alarms (`CPU FAULT`, program fault,
+    watchdog) only via the downlink, so mission control knows only what it received.
 
 ### 3.9.4 Default firmware
 

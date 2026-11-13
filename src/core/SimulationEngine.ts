@@ -50,6 +50,30 @@ export interface SupplyDrop {
 export type UplinkCommand = 'DUMP' | 'DUMP_STACKS' | 'CONTINUE' | 'RUN_AGAIN';
 export const UPLINK_COMMAND_NAMES: Record<UplinkCommand, string> = { DUMP: 'Dump', DUMP_STACKS: 'Dump stacks', CONTINUE: 'Continue', RUN_AGAIN: 'Run again' };
 
+/** Everything mission control can send up: console commands and code uploads. */
+export type SentKind = UplinkCommand | 'PROGRAM' | 'FIRMWARE';
+/** Mission control's record of one accepted uplink transmission (Comms timeline, saved). */
+export interface SentRecord {
+  unitId: number;
+  tick: number;
+  kind: SentKind;
+  /** Slot the command or upload addressed. */
+  slot: Slot;
+  /** Uploads: bytes flashed (0 = program erased). */
+  bytes?: number;
+  /** Battery spent (thousandths of the battery, like `energy`). */
+  cost: number;
+}
+/** Sent records mission control keeps (saved). */
+export const SENT_KEEP = 100;
+
+/**
+ * What a mission-log message is about: the world and the game (`world`), a receipt for
+ * something mission control sent (`sent`: the Comms timeline shows it too), or the rover's
+ * own state (`rover`).
+ */
+export type LogCategory = 'world' | 'sent' | 'rover';
+
 export interface UploadResult extends CompileResult {
   /** Energy charged for the upload (0 if rejected or free). */
   cost: number;
@@ -107,6 +131,8 @@ export class SimulationEngine {
   received: ReceivedFrame[] = [];
   /** Mission control: science products received or being received (newest last, last GALLERY_KEEP). */
   gallery: ReceivedProduct[] = [];
+  /** Mission control: what it sent over the uplink (newest last, last SENT_KEEP). */
+  sent: SentRecord[] = [];
   readonly portCtx: PortContext;
 
   constructor(readonly opts: EngineOptions) {
@@ -263,8 +289,14 @@ export class SimulationEngine {
     }
     const costMsg = cost ? ` (${(cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(u)})` : '';
     const slotMsg = isDump || cmd === 'CONTINUE' ? ` (${slot})` : '';
-    this.log(u, 'info', `Uplink: ${UPLINK_COMMAND_NAMES[cmd]}${slotMsg} sent${costMsg}.`);
+    this.log(u, 'info', `Uplink: ${UPLINK_COMMAND_NAMES[cmd]}${slotMsg} sent${costMsg}.`, 'sent');
+    this.recordSent({ unitId: u.id, tick: this.tick, kind: cmd, slot: cmd === 'RUN_AGAIN' ? 'program' : slot, cost });
     return null;
+  }
+
+  private recordSent(r: SentRecord): void {
+    this.sent.push(r);
+    if (this.sent.length > SENT_KEEP) this.sent.splice(0, this.sent.length - SENT_KEEP);
   }
 
   // ---------------------------------------------------------------- program slot (M10)
@@ -340,8 +372,10 @@ export class SimulationEngine {
     this.restartProgram(unit);
     const costMsg = res.cost ? `, cost ${(res.cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(unit)}` : '';
     const flash = `${unit.firmwareBytes} + ${res.flashUsed}/${unit.chassis.flashBytes} bytes`;
-    if (this.hasProgram(unit)) this.log(unit, 'info', `Program uploaded (${flash}${costMsg}). It starts with the firmware's next RUN.`);
-    else this.log(unit, 'info', `Program erased (${flash}${costMsg}).`);
+    const cat: LogCategory = opts.factory ? 'world' : 'sent';
+    if (this.hasProgram(unit)) this.log(unit, 'info', `Program uploaded (${flash}${costMsg}). It starts with the firmware's next RUN.`, cat);
+    else this.log(unit, 'info', `Program erased (${flash}${costMsg}).`, cat);
+    if (!opts.factory) this.recordSent({ unitId: unit.id, tick: this.tick, kind: 'PROGRAM', slot: 'program', bytes: res.flashUsed, cost: res.cost });
     return res;
   }
 
@@ -372,7 +406,8 @@ export class SimulationEngine {
     unit.cyclesLeft = 0;
     const costMsg = res.cost ? `, cost ${(res.cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(unit)}` : '';
     const prog = unit.programBytes ? ` + program ${unit.programBytes}` : '';
-    this.log(unit, 'info', `Firmware flashed (${res.flashUsed}${prog}/${unit.chassis.flashBytes} bytes${costMsg}). Rebooting.`);
+    this.log(unit, 'info', `Firmware flashed (${res.flashUsed}${prog}/${unit.chassis.flashBytes} bytes${costMsg}). Rebooting.`, opts.factory ? 'world' : 'sent');
+    if (!opts.factory) this.recordSent({ unitId: unit.id, tick: this.tick, kind: 'FIRMWARE', slot: 'firmware', bytes: res.flashUsed, cost: res.cost });
     return res;
   }
 
@@ -462,14 +497,14 @@ export class SimulationEngine {
       const after = cpu.state as CpuState; // step() may have changed it
       if (cpu === u.prog && u.slice >= 0) {
         if (after === CpuState.FAULT) {
-          this.log(u, 'error', `Program FAULT: ${cpu.faultReason}. Control returns to the firmware.`);
+          this.log(u, 'error', `Program FAULT: ${cpu.faultReason}. Control returns to the firmware.`, 'rover');
           this.endSlice(u, ProgState.PROG_FAULT);
         } else if (after === CpuState.HALTED) this.endSlice(u, ProgState.PROG_HALTED);
       }
     }
     if (u.cpu.state !== CpuState.RUNNING) u.cyclesLeft = 0;
     if (u.vm.state === CpuState.FAULT && u.vm.watchdog === BALANCE.watchdogTicks) {
-      this.log(u, 'error', `CPU FAULT: ${u.vm.faultReason}. Watchdog reboot in ${BALANCE.watchdogTicks} ticks.`);
+      this.log(u, 'error', `CPU FAULT: ${u.vm.faultReason}. Watchdog reboot in ${BALANCE.watchdogTicks} ticks.`, 'rover');
       this.events.emit('UNIT_STATE', { unitId: u.id, state: u.vm.state });
     }
   }
@@ -496,7 +531,7 @@ export class SimulationEngine {
       if (u.energy * 100 >= B.coldBootPercent * u.chassis.batteryCapacity) {
         u.vm.state = CpuState.RUNNING;
         this.hardReboot(u, BootReason.COLD_BOOT);
-        this.log(u, 'warn', 'Solar cold boot: battery recovered, firmware restarted.');
+        this.log(u, 'warn', 'Solar cold boot: battery recovered, firmware restarted.', 'rover');
         this.events.emit('UNIT_STATE', { unitId: u.id, state: u.vm.state });
       }
       return;
@@ -660,7 +695,7 @@ export class SimulationEngine {
     if (vm.state === CpuState.FAULT) {
       if (--vm.watchdog <= 0) {
         this.hardReboot(u, BootReason.WATCHDOG);
-        this.log(u, 'warn', 'Watchdog reboot.');
+        this.log(u, 'warn', 'Watchdog reboot.', 'rover');
         this.events.emit('UNIT_STATE', { unitId: u.id, state: vm.state });
       }
       return;
@@ -847,7 +882,7 @@ export class SimulationEngine {
       u.action = null;
       u.cyclesLeft = 0;
       this.abortSlice(u);
-      this.log(u, 'error', 'Battery depleted. Rover powered off.');
+      this.log(u, 'error', 'Battery depleted. Rover powered off.', 'rover');
       this.events.emit('UNIT_STATE', { unitId: u.id, state: u.vm.state });
     }
   }
@@ -860,13 +895,13 @@ export class SimulationEngine {
       u.action = null;
       u.cyclesLeft = 0;
       this.abortSlice(u);
-      this.log(u, 'error', 'Hull breached. Rover destroyed.');
+      this.log(u, 'error', 'Hull breached. Rover destroyed.', 'rover');
       this.events.emit('UNIT_STATE', { unitId: u.id, state: u.vm.state });
     }
   }
 
-  private log(u: Unit, level: 'info' | 'warn' | 'error', message: string): void {
-    this.events.emit('LOG', { unitId: u.id, level, message });
+  private log(u: Unit, level: 'info' | 'warn' | 'error', message: string, category: LogCategory = 'world'): void {
+    this.events.emit('LOG', { unitId: u.id, level, message, category });
   }
 
   // ---------------------------------------------------------------- hardware

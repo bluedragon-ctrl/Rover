@@ -22,7 +22,7 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | Flash bytes | Program size in machine-code bytes instead of lines (SPEC §5.7) | ✅ done; the byte gutter became the M10 listing pane |
 | **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | ✅ slices 1–6 done (link layer, `LOG`, Console tab; recorder, spectra, Gallery tab; dumps, `BRK`, admin-only debugger; `@POST` display; camera + photos; upgrades, camera modes 3–5, fossil anomalies; save v9) |
 | **M10** | **Firmware + program slot (SPEC §3.9)** | 🚧 slice 1 (core, save v10) done; slice 2 (machine code + byte addresses, save v11, Code tab / Console redesign, listing pane) in review |
-| M11 | User interface review (after M10) | planned |
+| M11 | User interface review (after M10) | 🚧 Comms tab + Code tab *Look inside* + Mission events in owner review (`?comms=1`, save v13) |
 | M12 | Multiple rovers (after single-rover tuning) | planned |
 
 ## Done: Flash measured in bytes
@@ -384,12 +384,31 @@ panel has grown tab by tab. Review the whole UI once M10 lands: information
 architecture (what lives where), editor for two code slots, telemetry vs admin views,
 what the top bar shows, discoverability for beginners. Proposals with screenshots first.
 
-- [x] Console redesign proposal (owner: "two consoles, dumps… unclear; needs hints"):
-      labelled *Send to rover* / *Received from rover* / *Mission log*, **?** hints
-      (`src/ui/hint.ts`, reusable for other tabs), readable rows, merged repeats, dump
-      cards, bytes on request, auto-follow fix. Behind `?console=2`; always on in
-      `preview.html?editor=1` (`&console=1` shows the old one). **Waiting for owner review**,
-      then: make it the default and delete the old Console template / rows.
+- [x] ~~Console redesign proposal behind `?console=2`~~: owner (2026-11-13) still found the
+      three streams (Mission log, uplink, downlink) confusing; superseded by the next item
+      and removed.
+- [x] **Comms reorganisation** (owner agreed with the analysis; "the player needs to
+      understand dump: what is copied, in which direction"). Organised by the player's
+      question instead of by link direction (SPEC §3.9.3):
+      - *What is my code doing?* → Code tab **Look inside the program / firmware**
+        (`src/ui/InspectPanel.ts`): *Ask for a copy of ▲ registers / ▲ stacks*, flow line
+        *▲ you ask → the rover copies the values at once → ▼ the copy comes down*, newest
+        copy as a card with its age and a waiting line, ◆ mark in the listing, *Resume after
+        BRK*, *Restart*. Follows the Code tab's slot (decision 4 of slice 2 retired).
+      - *What passed between us and the rover?* → **Comms** tab (`src/ui/CommsPanel.ts`,
+        renamed Console): radio-link box and one ▲ sent / ▼ received timeline with
+        request → copy status, merged LOG repeats, copies, system, science, lost.
+      - *What is happening in the world?* → **Mission events** strip: receipts for sent
+        things left to Comms (`LOG` event `category`).
+      - Core: `engine.sent` (last 100 commands and uploads, saved, **save v13**), `LOG`
+        categories; shared non-DOM helpers in `src/ui/comms.ts`. Tests `tests/comms.test.ts`.
+      - Behind `?comms=1` in the game, always on in `preview.html?editor=1` (`&comms=0` shows
+        the current game). **Waiting for owner review**, then: make it the default, delete
+        `ConsolePanel.ts` and the flag.
+- [ ] Phase 2 (rules decision for the owner): mission control knows the rover only from what
+      it received: program faults and `BRK` hits as `SYS` frames, `CPU FAULT` / watchdog /
+      battery alarms replaced by a ground-side "no contact for N ticks". Harder game; add a
+      teaching event first.
 - [ ] Known: the tab bar is wider than the default side panel (the Admin tab is cut off).
 
 ## Resolved decisions (M7)
@@ -508,3 +527,4 @@ window with a fixed dish?
 | 2026-11-13 | `claude/charming-hawking-a1szwz` (2) | M11 start: Console redesign proposal behind `?console=2` (sections with **?** help hints, Mission log label, merged repeats, dump cards, bytes on request, auto-follow fix). |
 | 2026-11-13 | `claude/modest-bell-w0qqbq` | Reference tab split into sub-tabs (Basics, Instructions, Ports, Tools, Registry) with grouped sections and a row filter; Registry lists tiles by layer (costs, tools, science, repairs) and constants by family. Unlisted opcodes/ports fall into "Other", so they still appear automatically. |
 | 2026-11-13 | `claude/modest-bell-w0qqbq` (2) | Reference: Registry sub-tab renamed **Constants** (Tiles part, then Other constants); new **Registers** section in Basics (count per chassis, register-file upgrades, signed 32-bit wrap, all general purpose, `ALIAS`, separate per slot, zeroed on reboot). |
+| 2026-11-13 | `ccr-2a541ea4-pbkrmo` | M11: Console analysis (three streams sorted by link direction, Mission log knows rover internals, request/reply split, two slot switches); Comms reorganisation behind `?comms=1`: Code tab *Look inside* (ask for a copy of registers / stacks, direction flow, copy cards, ◆ listing mark), Comms tab (radio link + one ▲/▼ timeline with request → copy status), Mission events strip; `engine.sent` + `LOG` categories, save v13; `?console=2` proposal removed. |

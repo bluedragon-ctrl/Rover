@@ -2,7 +2,8 @@ import './style.css';
 import { BALANCE } from './core/balance';
 import { DEFAULT_FIRMWARE, PROGRAM_FIRST_STEPS } from './core/programs';
 import { SimClock } from './core/SimClock';
-import { SimulationEngine } from './core/SimulationEngine';
+import { SimulationEngine, type UplinkCommand } from './core/SimulationEngine';
+import type { Slot } from './core/vm/Compiler';
 import { CpuState, Layer, ProgState } from './core/types';
 import type { Unit } from './core/Unit';
 import { ThreeScene } from './render/ThreeScene';
@@ -13,7 +14,8 @@ import { PerfHud } from './ui/PerfHud';
 import { CompassHud } from './ui/CompassHud';
 import { GoalsPanel } from './ui/GoalsPanel';
 import { ConsolePanel } from './ui/ConsolePanel';
-import { hint, MISSION_LOG_HELP } from './ui/hint';
+import { CommsPanel } from './ui/CommsPanel';
+import { hint, MISSION_EVENTS_HELP } from './ui/hint';
 import { GalleryPanel } from './ui/GalleryPanel';
 import { UpgradesPanel } from './ui/UpgradesPanel';
 import { UPGRADE_BY_ID } from './core/upgrades';
@@ -55,20 +57,23 @@ const debuggerPanel = new DebuggerPanel($('#debugger'), engine);
 if (import.meta.env.DEV) Object.assign(window, { __rover: { engine, scene, rover } });
 const compass = new CompassHud($<HTMLCanvasElement>('#compass'), engine);
 const goalsPanel = new GoalsPanel($('#goals'), engine);
-// ?console=2: redesigned Console (help hints, readable rows) and a labelled Mission log,
-// in owner review (preview.html?editor=1).
-const consoleV2 = params.get('console') === '2';
-const consolePanel = new ConsolePanel(
-  $('#console'),
-  engine,
-  () => rover,
-  (cmd, slot) => {
-    const err = engine.command(rover, cmd, slot);
-    if (err) log('warn', `Uplink rejected: ${err}.`);
-  },
-  { redesign: consoleV2 },
-);
-if (consoleV2) $('#log').insertAdjacentHTML('beforebegin', `<div id="log-head">Mission log${hint(MISSION_LOG_HELP, 'up')}</div>`);
+// ?comms=1 (M11, in owner review with preview.html?editor=1): the Console becomes the Comms
+// tab (one two-way timeline), copies of registers / stacks are requested from the Code tab
+// ("Look inside"), and the strip below the side panel becomes Mission events.
+const commsMode = params.get('comms') === '1';
+/** Send a console command; rejections go to the mission log. */
+function sendCommand(cmd: UplinkCommand, slot: Slot): string | null {
+  const err = engine.command(rover, cmd, slot);
+  if (err) log('warn', `Not sent: ${err}.`);
+  return err;
+}
+const consolePanel: { update(): void } = commsMode
+  ? new CommsPanel($('#console'), engine, () => rover)
+  : new ConsolePanel($('#console'), engine, () => rover, (cmd, slot) => sendCommand(cmd, slot));
+if (commsMode) {
+  $('[data-tab="console"]').textContent = 'Comms';
+  $('#log').insertAdjacentHTML('beforebegin', `<div id="log-head">Mission events${hint(MISSION_EVENTS_HELP, 'up')}</div>`);
+}
 const galleryPanel = new GalleryPanel($('#gallery'), engine);
 galleryPanel.onFlag = (g, err) => {
   if (err) log('warn', `Cannot flag photo #${g.seq}: ${err}.`);
@@ -98,6 +103,7 @@ const code = new CodeWorkspace({
   log: (level, m) => log(level, m),
   listing: params.get('listing') !== '0',
   starterProgram: PROGRAM_FIRST_STEPS,
+  inspect: commsMode ? sendCommand : undefined,
 });
 
 // ---------------------------------------------------------------- log
@@ -110,7 +116,11 @@ function log(level: 'info' | 'warn' | 'error', message: string): void {
   while (logEl.childElementCount > 200) logEl.firstElementChild!.remove();
   logEl.scrollTop = logEl.scrollHeight;
 }
-engine.events.on('LOG', (e) => log(e.level, `${engine.getUnit(e.unitId)?.name}: ${e.message}`));
+engine.events.on('LOG', (e) => {
+  // With the Comms tab, receipts for what was sent are listed there (▲), not here.
+  if (commsMode && e.category === 'sent') return;
+  log(e.level, `${engine.getUnit(e.unitId)?.name}: ${e.message}`);
+});
 log('info', `World seed ${seed}. Open ?seed=${seed} to start a fresh copy of this world.`);
 for (const m of startupMessages) log(m.startsWith('Autosave could') ? 'error' : 'info', m);
 
@@ -351,6 +361,7 @@ function frame(now: number): void {
     upgradesPanel.update();
     creditsEl.textContent = `◆ ${engine.credits} credits`;
     code.updateCost();
+    code.updateInspect();
     hud.textContent = `${rover.name}  (${rover.x}, ${rover.y})  BAT ${rover.batteryPercent}%  HULL ${rover.hull}`;
     if (scene.hover) {
       const { x, y } = scene.hover;
