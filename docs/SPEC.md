@@ -778,9 +778,10 @@ gameplay, saves or tests.
   scan rays, beacon, headlight, acid vents). Selective bloom so the grid stays crisp.
 * **Fat lines:** `Line2` / `LineSegments2` + `LineMaterial` for real pixel widths
   (WebGL lines are 1 px). Width can scale with zoom and importance.
-* **Level of detail:** two or three geometry tiers per chunk keyed on zoom: far = grid +
-  silhouettes, near = pebbles, rock strata, contour lines, detailed rover (spinning
-  wheels, unfolding panels, rotating dish, suspension bounce).
+* **Symbolic ground:** the map is an orbital scan read through a legend, not scenery: low
+  3D symbols (cliffs as pyramids joined into ridgelines, gravel as hatching, ore as
+  deposits sunk into pits, vents as hazard rings). Cheap enough that terrain needs no
+  level of detail; the rover keeps its detailed model.
 * **Wider zoom range:** from a single tile up to a strategic map view; far zoom switches
   to a simplified minimap-style rendering.
 * **Camera:** optional perspective mode, zoom-to-cursor, smooth orbit/rotation, cinematic
@@ -789,5 +790,5 @@ gameplay, saves or tests.
   scanline post-effect toggle, animated hazards and pickups.
 * **Terrain height:** if elevation is added to the simulation, render it as wireframe
   relief.
-* **Performance budget:** LOD + per-frame build limits keep far zoom affordable; measure
+* **Performance budget:** simple symbols + per-frame build limits keep far zoom affordable; measure
   with a frame-time HUD.

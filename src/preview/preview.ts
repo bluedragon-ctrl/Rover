@@ -12,10 +12,11 @@ import { PostFx } from '../render/PostFx';
 import { RoverAnimator, type RoverPose } from '../render/RoverRig';
 import { radarFront, TileLighting } from '../render/TileLighting';
 import { FxOverlay } from '../render/FxOverlay';
+import { Dust } from '../render/Dust';
 import { compile } from '../core/vm/Compiler';
 import { PROSPECTOR, TEMPLATES } from '../core/programs';
 import { EditorPanel } from '../ui/EditorPanel';
-import { buildRoverRig, drawFogTile, drawTileVec, FillBatch, indicatorHex, LineBatch, LIGHT_HEX } from '../render/VectorFactory';
+import { buildRoverRig, drawFogTile, drawTileVec, FillBatch, indicatorHex, LineBatch, LIGHT_HEX, RIDGE } from '../render/VectorFactory';
 import { mountPhotoLab } from './photos';
 import { mountAnomalyLab } from './anomalies';
 
@@ -24,7 +25,7 @@ const labelsEl = document.getElementById('labels')!;
 const statsEl = document.getElementById('stats')!;
 const controlsEl = document.getElementById('controls')!;
 
-const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: true });
+const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', preserveDrawingBuffer: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 view.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
@@ -50,7 +51,9 @@ for (let y = -R; y <= R; y++)
   for (let x = -R; x <= R; x++) cells.set(key(x, y), { terrain: (hash3(3, x, y) & 7) < 2 ? T.ROUGH_GRAVEL : T.FLAT_SAND, obstacle: 0, item: 0 });
 const put = (x: number, y: number, k: keyof Cell, id: number) => (cells.get(key(x, y))![k] = id);
 // Cliff ridge to the north-east, ore at its foot, a vent field to the west, pickups south.
-for (const [x, y] of [[3, 4], [4, 4], [5, 4], [5, 5], [6, 5], [4, 5], [6, 6], [7, 6], [2, 4], [-6, 7], [-5, 7], [-5, 8], [8, -3], [8, -4], [9, -4]]) put(x, y, 'obstacle', T.CLIFF_WALL);
+for (const [x, y] of [[3, 4], [4, 4], [5, 4], [5, 5], [6, 5], [4, 5], [6, 6], [7, 6], [2, 4], [-6, 7], [-5, 7], [-5, 8], [8, -3], [8, -4], [9, -4],
+  // A small massif (3×3 core) to judge how merged ranges read.
+  [-7, -5], [-6, -5], [-5, -5], [-7, -6], [-6, -6], [-5, -6], [-7, -7], [-6, -7], [-5, -7], [-4, -6], [-8, -6], [-6, -8]]) put(x, y, 'obstacle', T.CLIFF_WALL);
 put(3, 2, 'obstacle', T.IRON_ORE);
 put(5, 3, 'obstacle', T.IRON_ORE);
 put(-2, 3, 'obstacle', T.SILICON_ORE);
@@ -63,10 +66,17 @@ put(0, 3, 'item', T.SAMPLE);
 
 const specimens: [string, number, number][] = [
   ['CLIFF_WALL', 5, 5], ['IRON_ORE', 3, 2], ['SILICON_ORE', -2, 3], ['ACID_VENT', -4, 0], ['REPAIR_KIT', 2, -2],
-  ['SAMPLE', -2, -2], ['SUPPLY_CRATE', 0, -4], ['ROUGH_GRAVEL', -1, 0], ['unexplored', 11, 0],
+  ['SAMPLE', -2, -2], ['SUPPLY_CRATE', 0, -4], ['ROUGH_GRAVEL', -1, 0], ['massif', -6, -6], ['unexplored', 11, 0],
 ];
 put(0, 0, 'terrain', T.FLAT_SAND);
 put(-1, 0, 'terrain', T.ROUGH_GRAVEL);
+
+let geoStats = '';
+/** RIDGE bits of the neighbours sharing the obstacle at (x, y). */
+function ridgeMask(x: number, y: number, id: number): number {
+  const same = (dx: number, dy: number) => cells.get(key(x + dx, y + dy))?.obstacle === id;
+  return (same(0, 1) ? RIDGE.N : 0) | (same(1, 0) ? RIDGE.E : 0) | (same(0, -1) ? RIDGE.S : 0) | (same(-1, 0) ? RIDGE.W : 0);
+}
 
 function buildPatch(): THREE.Group {
   const b = new LineBatch();
@@ -82,9 +92,10 @@ function buildPatch(): THREE.Group {
       for (const id of [c.terrain, c.obstacle, c.item]) {
         if (!id) continue;
         const d = reg.get(id)!;
-        drawTileVec(b, f, d.shape, d.color, x, y, variant);
+        drawTileVec(b, f, d.shape, d.color, x, y, variant, d.shape === 'wall' ? ridgeMask(x, y, id) : 0);
       }
     }
+  geoStats = `${b.count / 2} segs · ${f.count / 3} tris`;
   const g = new THREE.Group();
   const lines = new THREE.LineSegments(b.build(), lighting.lineMaterial);
   const fills = new THREE.Mesh(f.build(), lighting.fillMaterial);
@@ -96,14 +107,8 @@ const patch = buildPatch();
 worldRoot.add(patch);
 
 // ------------------------------------------------------------------ dust
-const DUST = 500;
-const dustPos = new Float32Array(DUST * 3).map((_, i) => (i % 3 === 1 ? Math.random() * 3 : (Math.random() - 0.5) * 40));
-const dustGeo = new THREE.BufferGeometry();
-dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
-const dustMat = new THREE.PointsMaterial({ color: 0xd8b48a, size: 0.035, transparent: true, opacity: 0.5, depthWrite: false });
-const dust = new THREE.Points(dustGeo, dustMat);
-dust.frustumCulled = false;
-scene.add(dust);
+const dust = new Dust();
+scene.add(dust.points);
 
 // ------------------------------------------------------------------ rover
 const rover = buildRoverRig({ post: true });
@@ -238,6 +243,7 @@ function resize(): void {
   renderer.setSize(w, h, false);
   post.setSize(w, h);
   rig.resize(w, h);
+  dust.setViewportHeight(renderer.domElement.height);
 }
 new ResizeObserver(resize).observe(view);
 resize();
@@ -350,15 +356,7 @@ function frame(now: number): void {
   rover.model.scale.setScalar(THREE.MathUtils.clamp(rig.dist / 30, 1, 2.5));
 
   // Dust drifts with the wind; brighter by day, caught by the headlight at night.
-  const dp = dustGeo.getAttribute('position') as THREE.BufferAttribute;
-  for (let i = 0; i < DUST; i++) {
-    let x = dp.getX(i) + dt * 0.6, z = dp.getZ(i) + dt * 0.15;
-    if (x > 20) x -= 40;
-    if (z > 20) z -= 40;
-    dp.setXYZ(i, x, dp.getY(i) + Math.sin(t + i) * dt * 0.05, z);
-  }
-  dp.needsUpdate = true;
-  dustMat.opacity = 0.12 + 0.35 * day;
+  dust.update(t, day, fog);
 
   fx.update(fxp, fyp, now);
   post.render(scene, rig.camera);
@@ -379,7 +377,7 @@ function frame(now: number): void {
     fps = frames / fpsT;
     frames = 0;
     fpsT = 0;
-    statsEl.textContent = `${fps.toFixed(0)} fps · ${(1000 / Math.max(1, fps)).toFixed(1)} ms\nzoom ${rig.dist.toFixed(1)} tiles · pitch ${((rig.pitch * 180) / Math.PI).toFixed(0)}°\nsun ${Math.min(100, state.sun)} · sensor ${sensor} tiles`;
+    statsEl.textContent = `${fps.toFixed(0)} fps · ${(1000 / Math.max(1, fps)).toFixed(1)} ms\nzoom ${rig.dist.toFixed(1)} tiles · pitch ${((rig.pitch * 180) / Math.PI).toFixed(0)}°\nsun ${Math.min(100, state.sun)} · sensor ${sensor} tiles\n${geoStats}`;
   }
   requestAnimationFrame(frame);
 }

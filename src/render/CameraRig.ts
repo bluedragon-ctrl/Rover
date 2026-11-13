@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 
+const Y_UP = new THREE.Vector3(0, 1, 0);
+
 /**
  * Perspective orbit camera around a floating origin: the scene is drawn relative to
  * (focusX, focusY) in world tile coordinates, so the camera always orbits (0, 0, 0).
@@ -29,6 +31,8 @@ export class CameraRig {
   /** Eased targets for programmatic changes (view toggles, rotate keys). */
   private targetYaw: number | null = null;
   private targetPitch: number | null = null;
+  /** performance.now() of the last pointer/wheel input (idle detection). */
+  lastInputAt = 0;
   /** Called when the user pans (e.g. to stop following a rover). */
   onUserPan?: () => void;
 
@@ -86,6 +90,11 @@ export class CameraRig {
     this.apply();
   }
 
+  /** True while an eased rotation/pitch change is still running. */
+  get easing(): boolean {
+    return this.targetYaw !== null || this.targetPitch !== null;
+  }
+
   /** Visible half-extent in tiles (rough), for chunk radius / LOD decisions. */
   get viewRadius(): number {
     return this.dist * Math.tan((this.camera.fov * Math.PI) / 360) * Math.max(1, this.camera.aspect) * (1 + Math.sin(this.pitch) * 1.5);
@@ -108,17 +117,23 @@ export class CameraRig {
     const s = Math.sin(this.pitch);
     this.camera.position.set(-Math.sin(this.yaw) * s * this.dist, Math.cos(this.pitch) * this.dist, Math.cos(this.yaw) * s * this.dist);
     // "Up" on screen points north-ish so top-down view keeps the yaw.
-    this.camera.up.set(Math.sin(this.yaw), 0, -Math.cos(this.yaw)).lerp(new THREE.Vector3(0, 1, 0), Math.min(1, s * 4)).normalize();
+    this.camera.up.set(Math.sin(this.yaw), 0, -Math.cos(this.yaw)).lerp(Y_UP, Math.min(1, s * 4)).normalize();
     this.camera.lookAt(0, 0, 0);
-    this.camera.near = Math.max(0.02, this.dist * 0.01);
-    this.camera.far = this.dist * 12;
-    this.camera.updateProjectionMatrix();
+    const near = Math.max(0.02, this.dist * 0.01);
+    const far = this.dist * 12;
+    if (near !== this.camera.near || far !== this.camera.far) {
+      this.camera.near = near;
+      this.camera.far = far;
+      this.camera.updateProjectionMatrix();
+    }
   }
 
   private bind(): void {
     const el = this.el;
     let drag: { x: number; y: number; orbit: boolean } | null = null;
     el.addEventListener('contextmenu', (e) => e.preventDefault());
+    const touch = () => (this.lastInputAt = performance.now());
+    for (const ev of ['pointerdown', 'pointermove', 'wheel'] as const) el.addEventListener(ev, touch, { passive: true });
     el.addEventListener('pointerdown', (e) => {
       if (e.shiftKey) return; // reserved (admin teleport)
       drag = { x: e.clientX, y: e.clientY, orbit: e.button === 2 || e.button === 1 || e.ctrlKey };

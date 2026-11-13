@@ -39,7 +39,7 @@ export function formatPerf(p: PerfSnapshot): string {
   const k = (n: number) => (n >= 10000 ? `${(n / 1000).toFixed(0)}k` : `${Math.round(n)}`);
   return [
     `${p.fps.toFixed(0)} fps  ${p.avgMs.toFixed(1)} ms  p95 ${p.p95Ms.toFixed(1)}  max ${p.worstMs.toFixed(0)}`,
-    `cpu ${p.cpuMs.toFixed(2)} ms  builds ${p.chunkBuilds} (${p.chunkBuildMs.toFixed(1)} ms)`,
+    `cpu ${p.cpuMs.toFixed(2)} ms  builds ${p.chunkBuilds} (${p.chunkBuildMs.toFixed(1)} ms)  patches ${p.chunkPatches}`,
     `draws ${p.drawCalls}  tris ${k(p.triangles)}  lines ${k(p.lines)}`,
     `chunks ${p.chunkMeshes}  line verts ${k(p.lineVertices)}  fill tris ${k(p.fillTriangles)}`,
     `${p.width}×${p.height} @${p.pixelRatio}x  bloom ${p.bloom ? 'on' : 'off'}`,

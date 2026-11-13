@@ -21,13 +21,14 @@ export function radarFront(age: number, range: number): number {
  * Discrete, per-tile lighting for the terrain (not real light simulation).
  *
  * Every terrain vertex carries the centre of the tile it belongs to (`tile` attribute,
- * chunk-local x/z). The vertex shader moves that centre into scene space and decides how
+ * chunk-local x/z, stored ×2 as Int16) and its colour plus a visibility flag (`col`, see
+ * `Vis` in VectorFactory). The vertex shader moves that centre into scene space and decides how
  * lit the whole tile is: daylight, a rover's sensor disc, or its headlight cone. Tiles
  * therefore light up as crisp cells, the same cells the operator sees and maps: the disc and
  * cone here mirror `src/core/sensors.ts` (cone numbers are injected from HEADLIGHT_CONE).
  *
- * Geometry flagged `hidden` (unmapped tiles) is discarded except where a radar wave
- * passes, so a SCAN briefly outlines unexplored terrain without mapping it.
+ * Geometry flagged hidden (unmapped tiles) is culled in the vertex shader except where a
+ * radar wave passes, so a SCAN briefly outlines unexplored terrain without mapping it.
  *
  * At night unlit tiles fade to a cold, desaturated grey ("remembered terrain") instead of
  * black; lit tiles keep their full colour and a slight boost so they bloom.
@@ -71,7 +72,6 @@ export class TileLighting {
       vertexShader: VERT,
       fragmentShader: FRAG,
       fog: true,
-      vertexColors: true,
       defines: {
         ...(fill ? { FILL: 1 } : {}),
         CONE_LEN: HEADLIGHT_CONE.length.toFixed(1),
@@ -95,7 +95,7 @@ export class TileLighting {
 const VERT = /* glsl */ `
 #define MAX_LIGHTS ${MAX_LIGHTS}
 attribute vec2 tile;
-attribute float hidden;
+attribute vec4 col;
 uniform int uLightCount;
 uniform vec4 uLights[MAX_LIGHTS];
 uniform vec4 uBeams[MAX_LIGHTS];
@@ -108,8 +108,10 @@ varying float vHidden;
 #include <fog_pars_vertex>
 
 void main() {
-  vColor = color;
-  vec3 tc = (modelMatrix * vec4(tile.x, 0.0, tile.y, 1.0)).xyz;
+  vColor = col.rgb;
+  float vis = col.w * 2.0; // Vis: 0 visible, 1 hidden (radar only), 2 gone
+  vec2 tl = tile * 0.5;
+  vec3 tc = (modelMatrix * vec4(tl.x, 0.0, tl.y, 1.0)).xyz;
   float lit = 0.0;
   float radar = 0.0;
   for (int i = 0; i < MAX_LIGHTS; i++) {
@@ -139,9 +141,17 @@ void main() {
       }
     }
   }
+  // Unmapped terrain outside a radar wave, or a survey cross whose tile is now mapped: move
+  // the vertex outside the clip volume. The decision depends only on the tile centre, so all
+  // vertices of a tile agree and whole primitives are dropped before rasterisation (no
+  // fragment discard, which would also defeat early depth testing).
+  if (vis > 1.5 || (vis > 0.5 && radar < 0.02)) {
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    return;
+  }
   vLit = max(lit, uDay);
   vRadar = radar;
-  vHidden = hidden;
+  vHidden = vis > 0.5 ? 1.0 : 0.0;
   vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
   gl_Position = projectionMatrix * mvPosition;
   #include <fog_vertex>
@@ -159,8 +169,6 @@ varying float vHidden;
 #include <fog_pars_fragment>
 
 void main() {
-  // Unmapped terrain: only the radar wave shows it, as a red silhouette.
-  if (vHidden > 0.5 && vRadar < 0.02) discard;
   float g = dot(vColor, vec3(0.299, 0.587, 0.114));
 #ifdef FILL
   vec3 dark = uNight * g * 0.8;

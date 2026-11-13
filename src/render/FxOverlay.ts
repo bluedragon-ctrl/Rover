@@ -79,19 +79,22 @@ export class FxOverlay {
   }
 
   update(focusX: number, focusY: number, now: number): void {
-    this.fx = this.fx.filter((f) => {
+    // Compact in place (no new array per frame).
+    let n = 0;
+    for (const f of this.fx) {
       const t = (now - f.born) / f.life;
       if (t >= 1) {
         this.root.remove(f.obj);
         f.obj.geometry.dispose();
         (f.obj.material as THREE.Material).dispose();
-        return false;
+        continue;
       }
       (f.obj.material as THREE.LineBasicMaterial).opacity = 1 - t;
       if (f.obj.userData.grow) f.obj.scale.setScalar(0.3 + t * 1.6);
       if (f.obj.userData.flicker) (f.obj.material as THREE.LineBasicMaterial).opacity = Math.floor(now / 60) % 2 ? 1 : 0.35;
       f.obj.position.set(f.wx - focusX, 0, -(f.wy - focusY));
-      return true;
-    });
+      this.fx[n++] = f;
+    }
+    this.fx.length = n;
   }
 }

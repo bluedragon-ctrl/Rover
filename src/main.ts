@@ -309,7 +309,7 @@ function frame(now: number): void {
   for (let i = 0; i < n; i++) engine.advanceTick();
 
   scene.ticksPerSecond = clock.tickHz * Math.max(1, clock.speed);
-  scene.render(clock.alpha(), now);
+  scene.render(clock.alpha(), now, clock.speed === 0);
 
   uiTimer += dt;
   if (uiTimer > 66) {
