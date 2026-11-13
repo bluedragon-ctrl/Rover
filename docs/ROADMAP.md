@@ -17,7 +17,7 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | M5 | Tools, cargo, spectrometer, science, first goals | ✅ done |
 | M6 | Save/load + autosave, storyteller with prerequisites & teaching events, subsystem damage, material repairs, admin console | ✅ done |
 | M7 | Upgrades bought with credits, delivered as supply crates, seismic scanner, save v2 | ✅ done |
-| **M8** | **Visual overhaul (SPEC §7)** | 🚧 in progress: asset preview, indicator lamps, **game renderer switched to v2**, frame-time HUD + geometry baseline, pan leash; performance fine on PC, remaining items (LOD, fat lines, zoom range, atmosphere) deferred to the next visual pass |
+| **M8** | **Visual overhaul (SPEC §7)** | 🚧 in progress: asset preview, indicator lamps, **game renderer switched to v2**, frame-time HUD + geometry baseline, pan leash, **performance pass** (fog patching, culling, MSAA, merged rover, LOD, adaptive resolution); remaining items (fat lines, zoom range, atmosphere) deferred to the next visual pass |
 | M8.1 | Radar `SCAN` vs. light-limited operator view; headlight cone; `@HEADING` | ✅ done |
 | Flash bytes | Program size in machine-code bytes instead of lines (SPEC §5.7) | ✅ core done; editor byte gutter awaiting preview approval |
 | **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | ✅ slices 1–6 done (link layer, `LOG`, Console tab; recorder, spectra, Gallery tab; dumps, `BRK`, admin-only debugger; `@POST` display; camera + photos; upgrades, camera modes 3–5, fossil anomalies; save v9); ⏭ next: M10 detailed plan |
@@ -131,8 +131,27 @@ tests must stay untouched. Do it in small PRs, checking frame time at each step.
 - [x] **Bloom:** `PostFx` (threshold bloom keeps the grid crisp), B toggles it.
 - [ ] **Fat lines:** `LineSegments2` + `LineMaterial` for rover, ore, crates and FX;
       width scales with zoom. Keep 1 px for the terrain grid (cost).
-- [ ] **LOD by zoom:** far = grid + silhouettes; near = pebbles, rock strata, detailed rover
-      (wheels turning while driving, suspension bounce, panel hinges, dish ribs).
+- [x] **Performance pass** (2026-11-13, owner-approved list; seed 1, headless Chromium):
+      - Chunk builds into typed arrays, compact 24-byte vertices (`col` Uint16×4 = rgb +
+        visibility flag, `tile` Int16×2): build ~8.1 → ~1.2 ms, chunk memory −33%.
+      - **Fog changes no longer rebuild chunks:** newly mapped tiles get their visibility
+        flags patched in place (`ChunkPool.patch`, per-tile vertex ranges). Driving went from
+        ~1.3 rebuilds per step (6–17 ms each) to none; only chunks scrolling into view build.
+      - Hidden terrain culled per vertex (no fragment `discard`); chunks frustum-culled and
+        skipped beyond the fog.
+      - Rover: static parts merged per rigid node (`RigMerge`), lamps/@POST in one
+        recoloured mesh (`ColorCells`): 88 → ~40 draw calls per rover.
+      - Dust and squall animated in shaders; per-frame allocations removed.
+      - Look changes: 4× MSAA under bloom (lines were aliased whenever bloom was on), soft
+        round dust motes, quarter-resolution bloom (slightly softer), adaptive pixel ratio
+        (`AdaptiveResolution`, `?dpr=N` pins it), far-zoom LOD, ~30 fps while paused and idle.
+      - Result, zoom 14 / 60: draw calls 153 → 79 / 252 → 133, lines drawn 139k → 67k /
+        444k → 104k.
+      - Tried and dropped: nearer fog (D) — the visible chunks sit well inside the fog at every
+        zoom, so it saved nothing measurable.
+- [x] **LOD by zoom (terrain):** beyond camera distance 36 (back below 30) chunks drop corner
+      ticks, ripples, pebbles, strata and vent smoke (line verts −47%, fill tris −37%).
+      Rover detail levels still open (wheels, hinges, dish ribs).
 - [ ] **Zoom range** 0.15×–8×, zoom to cursor; far zoom switches to a minimap-like style.
 - [x] **Camera:** perspective orbit camera, smooth follow, rotate with right-drag; the
       compass rotates with it (done in the renderer switch).
@@ -382,3 +401,4 @@ window with a fixed dish?
 | 2026-11-13 | `ccr-2c7af876-8dzljn` (2) | M9 slice 5: landscape photos when nothing is within reach (ridges from real cliffs and ore, ground, sun, night sky with headlight foreground). |
 | 2026-11-13 | `ccr-1e08ca42-e1n32b` | M9 slice 6: downlink/camera upgrades (recorder 2/4 KB, amplifier, trace buffer, camera modes 3–5), fossil anomalies (preview reviewed, subtle look), gallery flagging, goal *Anomaly hunter*, save v9. M9 complete. |
 | 2026-11-13 | `ccr-1e08ca42-e1n32b` (2) | Docs: rare local fauna and flora noted as planned future exploration content (Backlog). |
+| 2026-11-13 | `ccr-2bb4c6cf-qz99l5` | M8 performance pass: compact chunk vertices, in-place fog patching, vertex-shader culling, frustum culling, MSAA under bloom, merged rover rig, shader dust/squall, quarter-res bloom, adaptive pixel ratio, far-zoom LOD, idle throttle. |
