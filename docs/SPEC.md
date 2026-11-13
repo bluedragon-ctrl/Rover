@@ -246,10 +246,11 @@ prerequisites and count neither toward goals nor toward "seen" prerequisites.
 
 ## 3.6 Persistence **[M6]**
 
-`SaveManager.serialize/deserialize` (headless). A save (`version: 7`; v1–v6 files are migrated
+`SaveManager.serialize/deserialize` (headless). A save (`version: 13`; v1–v12 files are migrated
 by `migrate()`) holds the seed, supply drops, installed upgrades, each rover's downlink
 (log FIFO, transmitter budget, `@LOG_LOST`, recorder descriptors and progress, sequence
-number, dump replies waiting), the console's last 200 received frames, the gallery's last 100 products,
+number, dump replies waiting), mission control's last 200 received frames, the gallery's last 100 products,
+mission control's last 100 sent commands and uploads (v13, the Comms timeline),
 tick, credits, stats, cheats, storyteller state (RNG, schedule, completed goals), full
 unit and VM state (firmware source is recompiled on load), and **only chunks that are
 dirty or explored**: fog as run lengths plus a sparse `[layer, index, id]` diff against
@@ -358,13 +359,13 @@ kind 1 = science frame   size = 0; followed by 1 sequence byte, then the product
 * `@TX_DATA` (W) is shorthand for `LOG 0 value`, kept for old programs. It still
   writes `@STATUS` (`OK`, or `ERR_FULL` when the frame was dropped). It no longer carries
   science.
-* **Console** (mission-control tab): every received frame with its tick of arrival,
-  raw hex and the decoded value. Tags are named from the uploaded program, like a
-  `defmt` / spacecraft-EVR dictionary: with `CONST T_BAT 5`, `LOG T_BAT @BAT` shows as
-  `T_BAT = 812 (L17)`. A raw-hex toggle hides the decoding. Lost frames show as a gap
-  ("⚠ 3 frames lost"): the transmitter counts drops and reports the count with the next
-  frame that gets through (link-layer bookkeeping, not part of the frame bytes). The
-  console keeps the last 200 frames (saved).
+* **Comms tab** (mission control; the M9 *Console* until M11, §3.9.3): every received frame
+  with its tick of arrival and the decoded value. Tags are named from the uploaded program,
+  like a `defmt` / spacecraft-EVR dictionary: with `CONST T_BAT 5`, `LOG T_BAT @BAT` shows as
+  `T_BAT = 812 fw L17`. *Decode bytes* explains every byte. Lost frames show as a gap
+  ("LOST 3 LOG messages dropped"): the transmitter counts drops and reports the count with
+  the next frame that gets through (link-layer bookkeeping, not part of the frame bytes).
+  Mission control keeps the last 200 frames (saved).
 * **`@POST` (RW, 0–255) [M9]:** a two-digit hexadecimal display (red seven-segment
   digits, `00`–`FF`, `b` and `d` lower case) on a bezel at the **back of the cabin**, like a
   PC POST card. Free, no link needed, no `@STATUS`; writes clamp to 0–255; physical
@@ -375,7 +376,8 @@ kind 1 = science frame   size = 0; followed by 1 sequence byte, then the product
 
 ### 3.8.4 Memory dumps and `BRK`
 
-* **Uplinked commands** (Console buttons *Dump*, *Dump stacks*, *Continue*): paid like a
+* **Uplinked commands** (Code tab dump box: *Dump registers*, *Dump stacks*, *Resume after
+  BRK* = `CONTINUE`, *Restart* = `RUN_AGAIN`): paid like a
   small upload, `commandCost` = `ceil(dumpEnergy × 100 / max(10, @SIGNAL_STR))` with
   `dumpEnergy` = 150 (1.5 % battery at full signal, 15 % at signal ≤ 10); free with the
   admin *Free uploads* cheat. Rejected (nothing paid) while the rover is powered off,
@@ -389,7 +391,7 @@ kind 1 = science frame   size = 0; followed by 1 sequence byte, then the product
     signal), 38 B with 8 registers. Example: `F8 01 16 00 09 00 02 …`.
   * *Dump stacks* (kind 2): data-stack depth 1 B + 4 B per entry, call-stack depth 1 B
     + 2 B (return IP) per entry.
-  * The Console shows a dump as a **snapshot with the tick it was taken**, never as a live
+  * Mission control shows a dump as a **snapshot with the tick it was taken**, never as a live
     view, with IPs turned into source lines of the uploaded program:
     `FIRMWARE DUMP (snapshot t254): next fw:0x02A (L13) · HALTED · @STATUS OK · r0=20 … · stacks 3/0`
     (byte addresses since M10, §5.7.1).
@@ -400,7 +402,13 @@ kind 1 = science frame   size = 0; followed by 1 sequence byte, then the product
   at the next tick; a running CPU ignores it (it is still paid: mission control does not
   know the state without a dump). An upload also ends the halt (hard reboot).
   A halted CPU cannot steer the dish: as the orbiter moves on, the link fades, so aim the
-  dish (or dump) soon after a `BRK`.
+  dish soon before a `BRK`.
+  **`BRK` reports itself [M11]:** when a `BRK` halts the firmware or the program, the rover
+  queues a register dump of that slot unasked (kind 1 or 3, taken that tick; dropped if
+  `dumpQueueMax` dumps already wait). It costs no uplink energy and travels like any dump
+  (ahead of the log). Mission control shows it as *sent by BRK*: a halted register dump with
+  no matching request. Its *next* is the instruction after the `BRK`, so the `BRK` itself is
+  at *next* − 1.
 * **Admin view:** the old live debugger (registers, stacks, ports, current line,
   single-step) is hidden unless *Live debugger* is ticked on the Admin tab; it is labelled
   as showing what mission control cannot know. A browser preference, not saved with the world.
@@ -564,22 +572,57 @@ running uplinked command sequences, or a small OS starting user programs:
   edited slot counts its draft, the other slot what is on the rover), and a warning when
   the firmware has no `RUN`. New rovers ship the default firmware and no program (the
   Program slot shows *First steps* as an unsent draft).
-* **Console**: Uplink and Downlink panels. A **Firmware / Program** switch selects the slot for *Dump*, *Dump stacks*
-  and *Continue*; downlink filters All / Log / Dumps / System. Program dumps are kinds 3 and 4, laid out like kinds 1 and 2 (§3.8.4)
-  with `@PROG_STATE` in the CPU-state byte. *Run again* (an uplinked command, paid like a
-  dump) restarts the program from the top, like the firmware writing `PROG_READY`;
-  rejected if there is no program.
-* The Console decodes log tags with both slots' `CONST` names; a tag both slots name
-  differently shows both (`T_BAT|T_X`), with lines per slot (`(fw L12, prog L3)`). Dumps
-  show their slot: `PROGRAM DUMP (snapshot t254): next prog:0x02A (L13) · PROG_HALTED · …`.
-* **Console redesign [M11, in owner review]** (game `?console=2`, `preview.html?editor=1`):
-  sections *Send to rover* and *Received from rover*, each with a **?** help hint; a
-  *Talk to Program / Firmware* switch; one row per message (time, LOG / PROG / FW / SYS
-  chip, text, `fw L55` source with a tooltip); runs of identical messages merged (`×39`,
-  `t301–1137`); dumps as small cards (next address and line, state, `@STATUS`, registers;
-  stacks); raw bytes only with *Bytes*; follows the newest message unless scrolled up
-  (*↓ Newest*). The game's message strip under the side panel is labelled **Mission log**
-  with its own hint, to tell it apart from what the rover sends.
+* **Commands per slot**: *Dump registers*, *Dump stacks* and *Resume after BRK* address one
+  slot (the Code tab's). Program dumps are kinds 3 and 4, laid out like kinds 1 and 2
+  (§3.8.4) with `@PROG_STATE` in the CPU-state byte. *Restart* (uplink `RUN_AGAIN`, paid like
+  a dump) restarts the program from the top, like the firmware writing `PROG_READY`;
+  rejected if there is no program. (M10 had these on a Console tab with its own slot
+  switch; M11 moved them to the Code tab.)
+* Mission control decodes log tags with both slots' `CONST` names; a tag both slots name
+  differently shows both (`T_BAT|T_X`), with lines per slot (`fw L12 prog L3`).
+* **Comms tab and *Dump program state* [M11]** (review page `preview.html?editor=1`;
+  replaced the M9/M10 Console). Organised by the player's
+  question instead of by link direction:
+  * **Code tab → *Dump program / firmware state*** (follows the Code tab's slot; the
+    Console's own slot switch is gone): *▲ Dump registers*, *▲ Dump stacks* (uplink `DUMP` /
+    `DUMP_STACKS`), *▶ Resume after BRK*, *↻ Restart* (program only). A flow line says the
+    direction: *▲ you ask → the rover dumps its state at that moment → ▼ the dump comes
+    down*. The help says a dump is one slot's CPU, not the whole rover. The newest dump of
+    each kind is a card ("dumped on the rover at t2132, 35 ticks ago"; next address with a
+    link to its line; state, `@STATUS`, stack depths; registers named by `ALIAS`: `r1 seen`),
+    with a *waiting* line while a request is unanswered (and why: no downlink below signal
+    20). The listing marks the dumped next instruction with ◆ while the editor holds the
+    uploaded code. A dump taken before a later upload of its slot is flagged as pointing into
+    old code.
+  * **Comms tab** (renamed Console): a *Radio link* box (▼ signal meter with the minimum,
+    log queue, science recorder, lost; ▲ request cost) and one timeline of both directions:
+    ▲ sent (`CODE` uploads, `CMD` requests with *✓ dump arrived t…* / *… waiting*), ▼ received
+    (`LOG` with merged repeats, `DUMP`, `SYS`, `SCI` products → Gallery, `LOST`). Dumps are
+    always shown **byte by byte**: each field's bytes, name, value and a `; comment`
+    (`00 00 00 FF  r1 seen  255`, `FF FF FF FF  r2 dist  -1 ; negative…`); *Decode bytes*
+    does the same for LOG and system messages (header bits `0|0001|01|0`, value). Filters
+    All / ▲ Sent / LOG / Dumps / System / Science, ↓ newest. Read-only.
+  * **Reference → Radio**: what goes up and down (and that code never comes back down), the
+    header byte, numbers (byte order, two's complement, LOG value sizes, addresses), and
+    every frame type as a decoded example (LOG, LOG without value, boot message, register
+    dump, stack dump, dump kinds). The examples come from the same decoder as Comms.
+  * **Mission events** (the strip under the side panel): world and game only (goals,
+    weather, supplies, upgrades, admin, rejected actions, rover alarms). Receipts for what
+    was sent are left to Comms (`LOG` event `category`: `world` / `sent` / `rover`).
+  * Clarity pass: dumps of a program that is not running (`PROG_NONE`, `PROG_DONE`) say
+    *not running* and mark nothing; comments name the value's meaning (`ERR_BLOCKED ; STEP
+    hit an obstacle`, `PROG_HALTED ; stopped by BRK…`); a halted dump says *stopped at the
+    BRK on line 5; continues at line 6*. Source references are links: `fw L55` on a LOG row,
+    a dump's *next* and return addresses open that line in the Code tab. A waiting request
+    shows an estimate (`≈ 14 ticks at signal 94`; dumps go first, register dump 9 + 4 ×
+    registers B, stack dump ≥ 5 B). The dump box folds (▾) and shows only kinds with a dump
+    or a request. Rejected commands and uploads are listed in Comms (`✗ … not sent: …`).
+  * Mission control's sent record (`engine.sent`, last 100, saved v13; rejected attempts
+    marked `rejected`, cost 0, never paired): pairs a request
+    with its dump by rover, slot, kind and the tick the dump was taken (= the tick it was
+    sent). Not part of the simulation. The compiler exports `ALIAS` names (`regNames`).
+  * Later (needs a rules decision): rover-internal alarms (`CPU FAULT`, program fault,
+    watchdog) only via the downlink, so mission control knows only what it received.
 
 ### 3.9.4 Default firmware
 
@@ -590,7 +633,7 @@ shipped programs need 20–79 B (First steps 20, Explorer 46, Fetch 72, Prospect
 
 * Core: keep the dish on the orbiter; stow the array on a squall warning; charge below a
   threshold (`CONST LOW_BAT`, `FULL_BAT`) and give the program no slices while charging;
-  give time slices (`CONST SLICE`); log the outcome (Console: `T_DONE = 3` with the result, or `T_FAULT`) and
+  give time slices (`CONST SLICE`); log the outcome (Comms: `T_DONE = 3` with the result, or `T_FAULT`) and
   acknowledge it.
 * Comfort: program-state lamp (`@IND1`), battery/charging lamp (`@IND2`), uplink lamp
   (`@IND3`), automatic
@@ -682,7 +725,7 @@ friction, but the set should stay small enough to learn in one sitting.
 | Debug | `LOG tag [src]` | 1 cycle | **[M9]** Queue a log frame for the downlink; compute, no `@STATUS` (§3.8.3). |
 | Slots | `RUN ticks` | hardware | **[M10]** Firmware only: run the program for a time slice (§3.9.2). |
 | | `END [value]` | 1 cycle | **[M10]** Program only: finish with `PROG_DONE` and `@PROG_RESULT` (§3.9.2). |
-| | `BRK` | 1 cycle | **[M9]** Halt the CPU (`HALTED`) until *Continue* or an upload (§3.8.4). |
+| | `BRK` | 1 cycle | **[M9]** Halt the CPU (`HALTED`) until *Continue* or an upload; the rover sends a register dump by itself **[M11]** (§3.8.4). |
 
 `@STATUS` is written by every hardware instruction and by arithmetic errors; pure
 compute instructions leave it alone.

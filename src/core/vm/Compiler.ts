@@ -36,6 +36,8 @@ export interface CompileResult {
    * (CONST names) and the source lines that log it.
    */
   logTags: Record<number, { names: string[]; lines: number[] }>;
+  /** `ALIAS` names per register number, as written (dump decoding in Comms; display only). */
+  regNames: Record<number, string[]>;
 }
 
 /** Code slot (M10, SPEC §3.9): the firmware runs the program inside `RUN` time slices. */
@@ -110,6 +112,7 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
   const constants: Record<string, number> = { ...builtinConstants() };
   for (const [k, v] of Object.entries(extraConstants)) constants[k.toUpperCase()] = v;
   const aliases: Record<string, number> = {};
+  const regNames: CompileResult['regNames'] = {};
   const labels: Record<string, number> = {};
   const lines = tokenize(source);
 
@@ -137,7 +140,10 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
       else if (+rm[1] >= chassis.registers) err(l.line, `Register r${rm[1]} does not exist (this chassis has r0–r${chassis.registers - 1})`);
       else if (!IDENT.test(name)) err(l.line, `ALIAS: invalid name '${l.tokens[2]}'`);
       else if (nameTaken(name)) err(l.line, `ALIAS: name '${l.tokens[2]}' is already used`);
-      else aliases[name] = +rm[1];
+      else {
+        aliases[name] = +rm[1];
+        (regNames[+rm[1]] ??= []).push(l.tokens[2]);
+      }
       continue;
     }
     if (op === 'CONST') {
@@ -345,6 +351,7 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
     flashUsed,
     lineBytes,
     logTags,
+    regNames,
   };
 }
 

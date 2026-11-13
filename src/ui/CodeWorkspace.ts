@@ -1,9 +1,10 @@
 import { FIRMWARE_TEMPLATES, PROGRAM_TEMPLATES } from '../core/programs';
-import type { SimulationEngine } from '../core/SimulationEngine';
+import type { SimulationEngine, UplinkCommand } from '../core/SimulationEngine';
 import type { Unit } from '../core/Unit';
 import type { CompileResult, Slot } from '../core/vm/Compiler';
 import { formatAddr } from '../core/vm/isa';
 import { EditorPanel } from './EditorPanel';
+import { InspectPanel, type SnapMark } from './InspectPanel';
 import { buildListing, chunk, LISTING_BYTES_PER_ROW } from './listing';
 
 export interface CodeWorkspaceOptions {
@@ -16,6 +17,11 @@ export interface CodeWorkspaceOptions {
   /** Draft shown in the Program slot while the rover has no program. */
   starterProgram?: string;
   onSlotChange?: (slot: Slot) => void;
+  /**
+   * Show the "Dump program state" box (M11): sends an uplink command for a slot and
+   * returns why it was rejected, or null.
+   */
+  inspect?: (cmd: UplinkCommand, slot: Slot) => string | null;
 }
 
 interface SlotUi {
@@ -50,6 +56,8 @@ export class CodeWorkspace {
   private listingEl: HTMLElement | null;
   private cursorLine: Record<Slot, number> = { firmware: 1, program: 1 };
   private execLine: Record<Slot, number> = { firmware: 0, program: 0 };
+  private snapMark: Record<Slot, SnapMark | null> = { firmware: null, program: null };
+  private inspect: InspectPanel | null = null;
 
   constructor(private opts: CodeWorkspaceOptions) {
     const { el } = opts;
@@ -68,7 +76,7 @@ export class CodeWorkspace {
       <p class="cw-hint small dim" id="cw-hint"></p>
       <div class="toolbar">
         <button id="cw-upload" class="primary" title="Ctrl+Enter / Ctrl+S"></button>
-        <button id="cw-revert" title="Load the code that is on the rover">Revert</button>
+        <button id="cw-revert" title="Back to the code you last uploaded (mission control keeps a copy; nothing is sent)">Revert</button>
         <select id="cw-template"></select>
       </div>
       <div class="toolbar small"><span id="cw-state"></span><span class="dim" id="cw-cost"></span></div>
@@ -77,7 +85,8 @@ export class CodeWorkspace {
         <div class="cw-editor" data-ed="program"></div>
         <div class="cw-editor" data-ed="firmware"></div>
       </div>
-      ${opts.listing ? '<div class="cw-listing" id="cw-listing"></div>' : ''}`;
+      ${opts.listing ? '<div class="cw-listing" id="cw-listing"></div>' : ''}
+      ${opts.inspect ? '<section id="cw-inspect"></section>' : ''}`;
     this.listingEl = opts.listing ? this.q('#cw-listing') : null;
 
     const u = opts.rover();
@@ -122,7 +131,27 @@ export class CodeWorkspace {
       const row = (e.target as HTMLElement).closest<HTMLElement>('[data-line]');
       if (row) this.current.editor.goToLine(Number(row.dataset.line));
     });
+    if (opts.inspect) {
+      const ins = new InspectPanel(this.q('#cw-inspect'), opts.engine, opts.rover, opts.inspect, (slot) => this.draftIsUploaded(slot));
+      ins.onGoToLine = (line) => this.current.editor.goToLine(line);
+      ins.onMark = (slot, mark) => {
+        this.snapMark[slot] = mark;
+        if (slot === this.slot) this.highlightRows(false);
+      };
+      this.inspect = ins;
+    }
     this.setSlot('program');
+  }
+
+  /** True while the slot's editor holds exactly the code on the rover. */
+  draftIsUploaded(slot: Slot): boolean {
+    const u = this.opts.rover();
+    return this.slots[slot].editor.source === (slot === 'program' ? u.programSource : u.sourceCode);
+  }
+
+  /** Look-inside box: copies received, requests waiting (called from the UI loop). */
+  updateInspect(): void {
+    this.inspect?.update();
   }
 
   get current(): SlotUi {
@@ -146,6 +175,7 @@ export class CodeWorkspace {
     for (const name of Object.keys(slot === 'program' ? PROGRAM_TEMPLATES : FIRMWARE_TEMPLATES)) sel.add(new Option(name, name));
     sel.title = slot === 'program' ? 'Load a program template into the editor' : 'Load a firmware into the editor (the all-in-one examples do not run a program)';
     this.opts.el.classList.toggle('slot-firmware', slot === 'firmware');
+    this.inspect?.setSlot(slot);
     this.refresh();
     this.opts.onSlotChange?.(slot);
   }
@@ -274,11 +304,16 @@ export class CodeWorkspace {
     if (!el) return;
     const cur = this.cursorLine[this.slot];
     const ex = this.execLine[this.slot];
+    const snap = this.snapMark[this.slot];
     let first: HTMLElement | null = null;
     el.querySelectorAll<HTMLElement>('.lst-row').forEach((r) => {
       const line = Number(r.dataset.line);
       r.classList.toggle('cursor', line === cur);
       r.classList.toggle('exec', line === ex && ex > 0);
+      const isSnap = !!snap && line === snap.line && !r.classList.contains('cont');
+      r.classList.toggle('snap', isSnap);
+      if (isSnap) r.title = snap.title;
+      else if (r.title.startsWith('◆')) r.removeAttribute('title');
       if (line === cur && !first) first = r;
     });
     if (scroll && first) (first as HTMLElement).scrollIntoView({ block: 'nearest' });

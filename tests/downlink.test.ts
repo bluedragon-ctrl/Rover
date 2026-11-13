@@ -196,7 +196,7 @@ describe('downlink determinism and saves', () => {
 });
 
 describe('console decoding', async () => {
-  const { describeFrame, emptyDictionary, slotDictionary } = await import('../src/ui/ConsolePanel');
+  const { describeFrame, emptyDictionary, slotDictionary } = await import('../src/ui/comms');
   it('names tags from CONSTs and lines, decodes boot frames', () => {
     const d = { firmware: slotDictionary(compile('CONST T_BAT 5\nLOG T_BAT @BAT', CHASSIS_MK1)), program: emptyDictionary() };
     const f = (bytes: number[]) => describeFrame({ unitId: 1, tick: 1, bytes, gap: 0 }, d);

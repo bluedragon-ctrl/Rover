@@ -2,13 +2,13 @@ import { CHASSIS_MK1 } from './balance';
 import { CHUNK_AREA, WorldChunk } from './ChunkedWorld';
 import type { DirectorState } from './EventDirector';
 import type { ProductDesc, QueuedFrame, ReceivedFrame, ReceivedProduct, SysFrame } from './downlink';
-import { SimulationEngine, type SupplyDrop } from './SimulationEngine';
+import { SimulationEngine, type SentRecord, type SupplyDrop } from './SimulationEngine';
 import { UPGRADE_BY_ID } from './upgrades';
 import { CpuState, ProgState, type Status } from './types';
 import type { RoverVM } from './vm/RoverVM';
 import type { Unit, UnitAction, UnitMotion } from './Unit';
 
-export const SAVE_VERSION = 12;
+export const SAVE_VERSION = 13;
 
 interface UnitSave {
   id: number;
@@ -118,6 +118,8 @@ export interface SaveSnapshot {
   photoSubjects: number[];
   /** v9: anomaly tiles already credited ("x,y") */
   anomalyTiles: string[];
+  /** v13: what mission control sent over the uplink (Comms timeline) */
+  sent: SentRecord[];
   units: UnitSave[];
   chunks: ChunkSave[];
 }
@@ -177,6 +179,7 @@ export function serialize(e: SimulationEngine): SaveSnapshot {
     gallery: e.gallery.map((g) => ({ ...g })),
     photoSubjects: [...e.photoSubjects],
     anomalyTiles: [...e.anomalyTiles],
+    sent: e.sent.map((r) => ({ ...r })),
     units: e.units.map(saveUnit),
     chunks,
   };
@@ -334,6 +337,11 @@ export function migrate(raw: unknown): SaveSnapshot {
     }
     v = 12;
   }
+  if (v === 12) {
+    // v12 -> v13: mission control's sent record (Comms timeline) starts empty.
+    out.sent = [];
+    v = 13;
+  }
   if (v !== SAVE_VERSION) throw new SaveError(`Unsupported save version ${s.version}.`);
   out.version = v;
   return out;
@@ -357,6 +365,7 @@ export function deserialize(raw: unknown): SimulationEngine {
   e.gallery = s.gallery.map((g) => ({ ...g }));
   e.photoSubjects = [...s.photoSubjects];
   e.anomalyTiles = [...s.anomalyTiles];
+  e.sent = s.sent.map((r) => ({ ...r }));
 
   for (const cs of s.chunks) {
     const c = e.world.getChunk(cs.cx, cs.cy);

@@ -22,7 +22,7 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | Flash bytes | Program size in machine-code bytes instead of lines (SPEC §5.7) | ✅ done; the byte gutter became the M10 listing pane |
 | **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | ✅ slices 1–6 done (link layer, `LOG`, Console tab; recorder, spectra, Gallery tab; dumps, `BRK`, admin-only debugger; `@POST` display; camera + photos; upgrades, camera modes 3–5, fossil anomalies; save v9) |
 | **M10** | **Firmware + program slot (SPEC §3.9)** | 🚧 slice 1 (core, save v10) done; slice 2 (machine code + byte addresses, save v11, Code tab / Console redesign, listing pane) in review |
-| M11 | User interface review (after M10) | planned |
+| M11 | User interface review (after M10) | 🚧 Comms tab, Code tab dump box, Reference → Radio, Mission events: default since 2026-11-13 (save v13); `BRK` reports itself |
 | M12 | Multiple rovers (after single-rover tuning) | planned |
 
 ## Done: Flash measured in bytes
@@ -384,12 +384,44 @@ panel has grown tab by tab. Review the whole UI once M10 lands: information
 architecture (what lives where), editor for two code slots, telemetry vs admin views,
 what the top bar shows, discoverability for beginners. Proposals with screenshots first.
 
-- [x] Console redesign proposal (owner: "two consoles, dumps… unclear; needs hints"):
-      labelled *Send to rover* / *Received from rover* / *Mission log*, **?** hints
-      (`src/ui/hint.ts`, reusable for other tabs), readable rows, merged repeats, dump
-      cards, bytes on request, auto-follow fix. Behind `?console=2`; always on in
-      `preview.html?editor=1` (`&console=1` shows the old one). **Waiting for owner review**,
-      then: make it the default and delete the old Console template / rows.
+- [x] ~~Console redesign proposal behind `?console=2`~~: owner (2026-11-13) still found the
+      three streams (Mission log, uplink, downlink) confusing; superseded by the next item
+      and removed.
+- [x] **Comms reorganisation** (owner agreed with the analysis; "the player needs to
+      understand dump: what is copied, in which direction"). Organised by the player's
+      question instead of by link direction (SPEC §3.9.3):
+      - *What is my code doing?* → Code tab **Dump program / firmware state**
+        (`src/ui/InspectPanel.ts`): *▲ Dump registers / ▲ Dump stacks*, flow line
+        *▲ you ask → the rover dumps its state at that moment → ▼ the dump comes down*,
+        newest dump as a card (registers named by `ALIAS`) with its age and a waiting line,
+        ◆ mark in the listing, *Resume after BRK*, *Restart*. Follows the Code tab's slot
+        (decision 4 of slice 2 retired). Owner: keep the word "dump" (it is the real term),
+        but say it is one slot's CPU state, not the whole rover.
+      - *What passed between us and the rover?* → **Comms** tab (`src/ui/CommsPanel.ts`,
+        renamed Console): radio-link box and one ▲ sent / ▼ received timeline with
+        request → dump status, merged LOG repeats, dumps, system, science, lost. Dumps are
+        shown byte by byte with a `; comment` per field (`00 00 00 FF  r1 seen  255`);
+        *Decode bytes* does the same for LOG / system messages.
+      - *What does each byte mean?* → **Reference → Radio** sub-tab: up/down, header byte,
+        numbers (byte order, two's complement), every frame type as a decoded example from
+        the same decoder (`frameFields` in `src/ui/comms.ts`).
+      - *What is happening in the world?* → **Mission events** strip: receipts for sent
+        things left to Comms (`LOG` event `category`).
+      - Core: `engine.sent` (last 100 commands and uploads, saved, **save v13**), `LOG`
+        categories, compiler `regNames` (`ALIAS` names); shared non-DOM helpers in
+        `src/ui/comms.ts`. Tests `tests/comms.test.ts`.
+      - **Default in the game** (owner, 2026-11-13): the `?comms=1` flag, the Console tab and
+        `ConsolePanel.ts` are gone; review page `preview.html?editor=1`.
+- [x] Clarity pass (owner picked items 1–7 of the suggestions): not-running dumps, value
+      comments for state / `@STATUS`, source links (Comms → Code tab), waiting estimate,
+      foldable dump box, rejected sends in Comms, and **`BRK` sends a register dump by
+      itself** (SPEC §3.8.4, rules change approved). Tests in `tests/comms.test.ts`.
+- [ ] Open suggestions: a teaching goal ("dump your program's registers"); tab bar too wide
+      (merge Goals + Upgrades into a *Mission* tab?).
+- [ ] Phase 2 (rules decision for the owner): mission control knows the rover only from what
+      it received: program faults and `BRK` hits as `SYS` frames, `CPU FAULT` / watchdog /
+      battery alarms replaced by a ground-side "no contact for N ticks". Harder game; add a
+      teaching event first.
 - [ ] Known: the tab bar is wider than the default side panel (the Admin tab is cut off).
 
 ## Resolved decisions (M7)
@@ -508,3 +540,7 @@ window with a fixed dish?
 | 2026-11-13 | `claude/charming-hawking-a1szwz` (2) | M11 start: Console redesign proposal behind `?console=2` (sections with **?** help hints, Mission log label, merged repeats, dump cards, bytes on request, auto-follow fix). |
 | 2026-11-13 | `claude/modest-bell-w0qqbq` | Reference tab split into sub-tabs (Basics, Instructions, Ports, Tools, Registry) with grouped sections and a row filter; Registry lists tiles by layer (costs, tools, science, repairs) and constants by family. Unlisted opcodes/ports fall into "Other", so they still appear automatically. |
 | 2026-11-13 | `claude/modest-bell-w0qqbq` (2) | Reference: Registry sub-tab renamed **Constants** (Tiles part, then Other constants); new **Registers** section in Basics (count per chassis, register-file upgrades, signed 32-bit wrap, all general purpose, `ALIAS`, separate per slot, zeroed on reboot). |
+| 2026-11-13 | `ccr-2a541ea4-pbkrmo` | M11: Console analysis (three streams sorted by link direction, Mission log knows rover internals, request/reply split, two slot switches); Comms reorganisation behind `?comms=1`: Code tab *Look inside* (ask for a copy of registers / stacks, direction flow, copy cards, ◆ listing mark), Comms tab (radio link + one ▲/▼ timeline with request → copy status), Mission events strip; `engine.sent` + `LOG` categories, save v13; `?console=2` proposal removed. |
+| 2026-11-13 | `ccr-2a541ea4-pbkrmo` (2) | M11 review feedback: "dump" wording kept (*Dump program state*, *▲ Dump registers / stacks*, one slot's CPU, not the whole rover); dumps in Comms byte by byte with a comment per field and `ALIAS` register names; *Decode bytes* for LOG / system messages; new **Reference → Radio** sub-tab (header byte, numbers, every frame type as a decoded example). |
+| 2026-11-13 | `ccr-2a541ea4-pbkrmo` (3) | M11 clarity pass: `BRK` sends a register dump by itself (*sent by BRK*, "stopped at the BRK on line 5"); not-running program dumps marked; value comments for state / `@STATUS`; `fw L55` and dump addresses link to the Code tab; waiting estimate; foldable dump box; rejected sends listed in Comms (`engine.sent` `rejected`). |
+| 2026-11-13 | `ccr-2a541ea4-pbkrmo` (4) | Comms is the default: Console tab, `ConsolePanel.ts`, its CSS and the `?comms=1` flag removed; "Console" wording replaced (Reference, shipped firmware comments, admin banner, SPEC). |

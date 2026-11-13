@@ -6,7 +6,7 @@ import { SimulationEngine } from '../src/core/SimulationEngine';
 import { CpuState, Status } from '../src/core/types';
 import type { Unit } from '../src/core/Unit';
 import { compile } from '../src/core/vm/Compiler';
-import { describeFrame, emptyDictionary } from '../src/ui/ConsolePanel';
+import { describeFrame, emptyDictionary } from '../src/ui/comms';
 
 const factory = { factory: true };
 
@@ -143,7 +143,7 @@ describe('memory dumps (SPEC §3.8.4)', () => {
 
   it('the console shows dumps as snapshots with their tick, addresses and source lines', () => {
     const lines: Record<number, number> = { 5: 6, 4: 5 };
-    const d = { firmware: { tags: {}, lineAt: (a: number) => lines[a] ?? 0 }, program: emptyDictionary() };
+    const d = { firmware: { tags: {}, regs: {}, lineAt: (a: number) => lines[a] ?? 0 }, program: emptyDictionary() };
     const cpu = { unitId: 1, tick: 90, gap: 0, taken: 77, bytes: encodeCpuDump({ ip: 5, status: 0, state: 'HALTED', regs: [7, -300, 0, 0], dsDepth: 1, csDepth: 1 }) };
     expect(describeFrame(cpu, d)).toBe('FIRMWARE DUMP (snapshot t77): next fw:0x005 (L6) · HALTED · @STATUS OK · r0=7 r1=-300 r2=0 r3=0 · stacks 1/1');
     const st = { ...cpu, bytes: encodeStackDump([5], [4, 9]) };
@@ -167,7 +167,8 @@ describe('memory dumps (SPEC §3.8.4)', () => {
     run(b, 51);
     expect(serialize(b)).toEqual(serialize(a));
     expect(a.units[0].vm.state).toBe(CpuState.HALTED);
-    expect(a.received.filter((f) => f.taken !== undefined)).toHaveLength(2);
+    // The two requested dumps, plus the one BRK sent by itself.
+    expect(a.received.filter((f) => f.taken !== undefined)).toHaveLength(3);
   });
 
   it('migrates v5 saves to an empty dump queue', () => {

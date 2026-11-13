@@ -7,7 +7,7 @@ export const FACTORY_IDLE = `; FACTORY FIRMWARE: stationary self-management.
 ; Replace it with your own code!
 
 CONST BEAT_TICKS 50         ; ticks between heartbeats
-CONST T_BAT 1               ; log tag: the Console shows "T_BAT = 97"
+CONST T_BAT 1               ; log tag: the Comms tab shows "T_BAT = 97"
 
 loop:   MOV @SOLAR_OPEN 1
         JNE @ALERT ALERT_SQUALL aim
@@ -163,7 +163,7 @@ export const DEFAULT_FIRMWARE = `; DEFAULT FIRMWARE: keeps the rover alive and r
 CONST LOW_BAT 30            ; charge when the battery drops below this
 CONST FULL_BAT 90           ; ...until it reaches this
 CONST SLICE 50              ; ticks per program time slice
-CONST T_BAT 1               ; log tags: the Console shows "T_BAT = 97"
+CONST T_BAT 1               ; log tags: the Comms tab shows "T_BAT = 97"
 CONST T_RESULT 13
 CONST T_END 14              ; T_END = 3: program done, 4: fault
 
@@ -234,7 +234,7 @@ aim:    MOV @SOLAR_ANGLE @SUN_AZIMUTH
 /** Program: the shortest useful one. Drives a square and ends. */
 export const PROGRAM_FIRST_STEPS = `; FIRST STEPS: drive a 3x3 square, then END.
 ; The firmware runs this program in time slices and reports
-; "T_END = 3" (done) with the result on the Console.
+; "T_END = 3" (done) with the result in the Comms tab.
 
 ALIAS r0 dir
 

@@ -18,7 +18,8 @@ export interface SimEvents {
   UNIT_STATUS: { unitId: number; status: Status };
   DOWNLINK_FRAME: ReceivedFrame;
   SCIENCE_DELIVERED: ReceivedProduct;
-  LOG: { unitId: number; level: 'info' | 'warn' | 'error'; message: string };
+  /** Mission-log message; `category` says what it is about (SimulationEngine `LogCategory`). */
+  LOG: { unitId: number; level: 'info' | 'warn' | 'error'; message: string; category?: 'world' | 'sent' | 'rover' };
 }
 
 type Handler<T> = (payload: T) => void;

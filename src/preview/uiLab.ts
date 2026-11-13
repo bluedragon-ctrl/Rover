@@ -1,54 +1,83 @@
 /**
- * M10 slice 2 UI preview (preview.html?editor=1): the redesigned Code tab with the
- * machine-code listing pane (SPEC §5.7.1) and the Console, on a live headless engine,
- * at the game's panel widths. Kept as the review page for later Code tab / Console changes.
- * Options: &slot=firmware, &program=<template name>, &width=<px>, &console=1 (old Console).
+ * Code tab / Comms review page (preview.html?editor=1): the Code tab with the machine-code
+ * listing pane (SPEC §5.7.1) and the M11 "Dump program state" box, the Comms tab and the Mission
+ * events strip, on a live headless engine at the game's panel widths.
+ * Options: &slot=firmware, &program=<template name>, &width=<px>,
+ * Kept as the review page for later Code tab / Comms changes.
  */
 import '../style.css';
 import { DEFAULT_FIRMWARE, PROGRAM_TEMPLATES } from '../core/programs';
-import { SimulationEngine } from '../core/SimulationEngine';
+import { SimulationEngine, type UplinkCommand } from '../core/SimulationEngine';
+import type { Slot } from '../core/vm/Compiler';
 import { CodeWorkspace } from '../ui/CodeWorkspace';
-import { ConsolePanel } from '../ui/ConsolePanel';
+import { CommsPanel } from '../ui/CommsPanel';
+import { hint, MISSION_EVENTS_HELP } from '../ui/hint';
 
 export function mountUiLab(el: HTMLElement, q: URLSearchParams): void {
   const e = new SimulationEngine({ seed: 42 });
   const u = e.spawnUnit('Rover-1', 0, 0);
   e.cheats.freeUpload = true;
+  const events: string[] = [];
+  e.events.on('LOG', (m) => {
+    if (m.category !== 'sent') events.push(`<div class="${m.level}">[t${e.tick}] ${m.message}</div>`);
+  });
+  events.push(`<div class="info">[t0] World seed 42. (Goals, weather and supplies appear here.)</div>`);
   e.upload(u, DEFAULT_FIRMWARE, { factory: true });
-  const program = PROGRAM_TEMPLATES[q.get('program') ?? 'Explorer'] ?? PROGRAM_TEMPLATES.Explorer;
-  e.uploadProgram(u, program, { factory: true });
+  const name = q.get('program') ?? 'Explorer';
+  const program = PROGRAM_TEMPLATES[name] ?? PROGRAM_TEMPLATES.Explorer;
   const run = (n: number) => {
     for (let i = 0; i < n; i++) e.advanceTick();
   };
-  run(260);
+  run(5);
+  e.uploadProgram(u, program);
+  run(255);
   e.command(u, 'DUMP', 'program');
   e.command(u, 'DUMP_STACKS', 'firmware');
   run(80);
+  // Requests still on their way (waiting state with an estimate), then one the rover
+  // cannot take because its dump queue is full (✗ in Comms).
+  e.command(u, 'DUMP', 'program');
+  for (let i = 0; i < 3; i++) e.command(u, 'DUMP_STACKS', 'firmware');
+  e.command(u, 'DUMP', 'program');
 
   const width = Number(q.get('width')) || 520;
   el.hidden = false;
   el.innerHTML = `
-    <div class="pl-head"><b>M10 SLICE 2 · CODE TAB + LISTING · CONSOLE</b>
-      <span class="dim">live engine, seed 42, tick ${e.tick}: default firmware + ${q.get('program') ?? 'Explorer'} program · click a listing row to jump to its line</span></div>
+    <div class="pl-head"><b>M11 · CODE TAB (DUMP STATE) · COMMS · REFERENCE RADIO · MISSION EVENTS</b>
+      <span class="dim">live engine, seed 42, tick ${e.tick}: default firmware + ${name} program</span></div>
     <div class="ui-lab">
-      <aside class="ui-side" style="width:${width}px"><div class="tabs"><button class="tab active">Code</button><button class="tab">Console</button></div>
+      <aside class="ui-side" style="width:${width}px"><div class="tabs"><button class="tab active">Code</button><button class="tab">Comms</button></div>
         <div class="tabpane active"><div id="lab-code"></div></div></aside>
-      <aside class="ui-side" style="width:${width}px"><div class="tabs"><button class="tab">Code</button><button class="tab active">Console</button></div>
-        <div class="tabpane active"><div id="lab-console"></div></div></aside>
-    </div>
-    <pre class="ui-log" id="lab-log"></pre>`;
-  const logEl = el.querySelector('#lab-log')!;
-  const log = (level: string, m: string) => (logEl.textContent = `[${level}] ${m}\n${logEl.textContent}`);
-  const code = new CodeWorkspace({ el: el.querySelector('#lab-code')!, engine: e, rover: () => u, log, listing: true });
-  if (q.get('slot') === 'firmware') code.setSlot('firmware');
-  code.updateCost();
-  const con = new ConsolePanel(el.querySelector('#lab-console')!, e, () => u, (cmd, slot) => {
+      <aside class="ui-side" style="width:${width}px"><div class="tabs"><button class="tab">Code</button><button class="tab active">Comms</button></div>
+        <div class="tabpane active"><div id="lab-console"></div></div>
+        <div id="log-head">Mission events${hint(MISSION_EVENTS_HELP, 'up')}</div><div id="log" class="lab-log"></div></aside>
+    </div>`;
+  const logEl = el.querySelector<HTMLElement>('#log')!;
+  const log = (level: string, m: string) => events.push(`<div class="${level}">[t${e.tick}] ${m}</div>`);
+  const send = (cmd: UplinkCommand, slot: Slot) => {
     const err = e.command(u, cmd, slot);
-    if (err) log('warn', `Uplink rejected: ${err}.`);
-  }, { redesign: q.get('console') !== '1' });
-  con.update();
-  setInterval(() => {
+    if (err) log('warn', `Not sent: ${err}.`);
+    return err;
+  };
+  const code = new CodeWorkspace({ el: el.querySelector('#lab-code')!, engine: e, rover: () => u, log, listing: true, inspect: send });
+  if (q.get('slot') === 'firmware') code.setSlot('firmware');
+  const con = new CommsPanel(el.querySelector('#lab-console')!, e, () => u);
+  con.onGoto = (slot, line) => {
+    code.setSlot(slot);
+    code.editorOf(slot).goToLine(line);
+  };
+  let shown = -1;
+  const update = () => {
+    e.advanceTick(); // 4 ticks/s, so requests sent from the page come back
     code.updateCost();
+    code.updateInspect();
     con.update();
-  }, 250);
+    if (events.length !== shown) {
+      shown = events.length;
+      logEl.innerHTML = events.slice(-200).join('');
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+  };
+  update();
+  setInterval(update, 250);
 }
