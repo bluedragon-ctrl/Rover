@@ -28,6 +28,11 @@ interface RoverView {
 /** How far (tiles) the camera focus may be panned away from the rover. */
 export const PAN_LEASH = 24;
 
+/** While paused and idle, render at most this often (ms): ~30 fps saves laptop battery. */
+export const IDLE_FRAME_MS = 33;
+/** The camera counts as idle this long (ms) after the last input. */
+export const IDLE_AFTER_MS = 1000;
+
 /** Camera distance (tiles) beyond which chunks use the far LOD; hysteresis band below. */
 export const LOD_FAR_DIST = 36;
 export const LOD_NEAR_DIST = 30;
@@ -229,7 +234,13 @@ export class ThreeScene {
     return [u.x + 0.5, u.y + 0.5];
   }
 
-  render(alpha: number, now: number): void {
+  /**
+   * Draw a frame. With `paused` (simulation stopped) and an idle camera, frames are
+   * throttled to IDLE_FRAME_MS; returns false when this frame was skipped.
+   */
+  render(alpha: number, now: number, paused = false): boolean {
+    const throttled = paused && this.followSettled() && !this.rig.easing && now - this.rig.lastInputAt > IDLE_AFTER_MS;
+    if (throttled && now - this.lastNow < IDLE_FRAME_MS - 2) return false;
     const cpu0 = performance.now();
     const intervalMs = now - this.lastNow;
     this.renderer.info.reset();
@@ -352,9 +363,22 @@ export class ThreeScene {
     if (intervalMs > 0) {
       const cpuMs = performance.now() - cpu0;
       this.stats.push(intervalMs, cpuMs);
-      this.adaptStats.push(intervalMs, cpuMs);
-      this.adaptResolution(now);
+      // Throttled frames are slow on purpose: they say nothing about the GPU.
+      if (throttled) this.adaptStats.reset();
+      else {
+        this.adaptStats.push(intervalMs, cpuMs);
+        this.adaptResolution(now);
+      }
     }
+    return true;
+  }
+
+  /** The follow camera has caught up with its rover (no easing left). */
+  private followSettled(): boolean {
+    if (this.followUnitId === null) return true;
+    const u = this.engine.getUnit(this.followUnitId);
+    if (!u) return true;
+    return Math.abs(u.x + 0.5 - this.rig.focusX) < 0.01 && Math.abs(u.y + 0.5 - this.rig.focusY) < 0.01;
   }
 
   private adaptResolution(now: number): void {

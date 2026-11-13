@@ -31,6 +31,8 @@ export class CameraRig {
   /** Eased targets for programmatic changes (view toggles, rotate keys). */
   private targetYaw: number | null = null;
   private targetPitch: number | null = null;
+  /** performance.now() of the last pointer/wheel input (idle detection). */
+  lastInputAt = 0;
   /** Called when the user pans (e.g. to stop following a rover). */
   onUserPan?: () => void;
 
@@ -88,6 +90,11 @@ export class CameraRig {
     this.apply();
   }
 
+  /** True while an eased rotation/pitch change is still running. */
+  get easing(): boolean {
+    return this.targetYaw !== null || this.targetPitch !== null;
+  }
+
   /** Visible half-extent in tiles (rough), for chunk radius / LOD decisions. */
   get viewRadius(): number {
     return this.dist * Math.tan((this.camera.fov * Math.PI) / 360) * Math.max(1, this.camera.aspect) * (1 + Math.sin(this.pitch) * 1.5);
@@ -125,6 +132,8 @@ export class CameraRig {
     const el = this.el;
     let drag: { x: number; y: number; orbit: boolean } | null = null;
     el.addEventListener('contextmenu', (e) => e.preventDefault());
+    const touch = () => (this.lastInputAt = performance.now());
+    for (const ev of ['pointerdown', 'pointermove', 'wheel'] as const) el.addEventListener(ev, touch, { passive: true });
     el.addEventListener('pointerdown', (e) => {
       if (e.shiftKey) return; // reserved (admin teleport)
       drag = { x: e.clientX, y: e.clientY, orbit: e.button === 2 || e.button === 1 || e.ctrlKey };
