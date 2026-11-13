@@ -20,7 +20,7 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | **M8** | **Visual overhaul (SPEC §7)** | 🚧 in progress: asset preview, indicator lamps, **game renderer switched to v2**, frame-time HUD + geometry baseline, pan leash; performance fine on PC, remaining items (LOD, fat lines, zoom range, atmosphere) deferred to the next visual pass |
 | M8.1 | Radar `SCAN` vs. light-limited operator view; headlight cone; `@HEADING` | ✅ done |
 | Flash bytes | Program size in machine-code bytes instead of lines (SPEC §5.7) | ✅ core done; editor byte gutter awaiting preview approval |
-| **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | 🚧 slices 1–4 done (link layer, `LOG`, Console tab; recorder, spectra, Gallery tab; dumps, `BRK`, admin-only debugger; `@POST` display; save v7); ⏭ next: slice 5 (camera + photos); photo POC in `preview.html?photos=1` |
+| **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | 🚧 slices 1–5 done (link layer, `LOG`, Console tab; recorder, spectra, Gallery tab; dumps, `BRK`, admin-only debugger; `@POST` display; camera + photos; save v8); ⏭ next: slice 6 (upgrades + anomalies) |
 | M10 | Firmware + program slot (SPEC §3.9) | planned: design agreed, plan below |
 | M11 | User interface review (after M10) | planned |
 | M12 | Multiple rovers (after single-rover tuning) | planned |
@@ -214,11 +214,27 @@ Slices, one PR each, in order. Every slice: tests green, build, SPEC markers upd
        renderer (`buildRoverRig({ post })`, `RoverPose.post`, dark while powered off).
        Port `@POST` (0–255, free, no `@STATUS`, survives reboots), `Unit.post`, save v7.
        Tests in `tests/indicators.test.ts`.
-5. [ ] **Camera + photos.** `SNAP dir [mode]` (modes 1–2 on Mk-I), subject rules and light
-       rule from SPEC §3.8.5, deterministic integer image generator per subject (port the
-       POC scenes from `src/preview/photos.ts`, no float trig in the tick path; the
-       generator only runs when a product is created or decoded), partial photos in the
-       gallery, credits incl. first-of-a-kind bonus. Goal *Photographer*.
+5. [x] **Camera + photos.** `SNAP dir [mode]` (hardware op, blocks `snapTicks` 10,
+       `snapEnergy` 200; internal `CAMERA` tool with `keepsHeading`: the mast camera does
+       not turn the rover); `chassis.cameraModes` (Mk-I `[1, 2]`). Subject (first rover /
+       obstacle / item within `snapReach` 2, else a **landscape**, owner request: skyline of
+       16 columns over 90° from cliffs/ore up to `horizonRange` 16 tiles, ground from the
+       first 4 tiles, sun position, light; `engine.horizonView`, stored as
+       `ProductDesc.horizon`, drawn by `horizonScene`; auto-exposure clips the brightest 3 %
+       so the sun does not black out the frame) and light
+       (`@SUN_LIGHT ≥ 20` or headlight aimed at `dir`) taken when the exposure ends;
+       descriptor gains `sx`, `sy`, `lit`. `src/core/photos.ts`: integer-only generator,
+       POC scenes ported to Q10 fixed point (waves from `SIN1000`, `Math.sqrt` only via
+       `isqrt`) plus scenes for repair kits, supply crates and rovers; per-subject-tile
+       seed, sensor noise per exposure, dark frames = dim signal + strong noise; auto-exposure;
+       all five formats (grey, dither, 16-colour palette, 64×64, RGB332) encode and decode,
+       so slice 6 only adds the upgrades. Credits decided on delivery (`photoCredits` 1,
+       `photoFirstBonus` 5, dark 0; `engine.photoSubjects`). Stats `photosTaken`,
+       `photosDelivered`; goal *Photographer* (3 lit photos, 15 cr); *Scientist* counts
+       photos too. Gallery: crisp 128 px photo, missing rows hatched, subject / dark /
+       format, hex shortened. Reference tab, `@REC_FREE` text. Save v8 + migration.
+       Tests in `tests/photos.test.ts`. The tool FX uses the generic white tool effect (no
+       new 3D visual; a camera flash would go through the preview first).
 6. [ ] **Upgrades + anomalies.** Catalogue additions (SPEC §3.8.6), camera modes 3–5,
        seeded anomaly tiles, gallery flagging (+20 / −5). Goal *Anomaly hunter*.
 
@@ -335,3 +351,5 @@ window with a fixed dish?
 | 2026-11-12 | `ccr-a25966c0-1wr43t` (6) | M9 slice 3: uplinked Dump / Dump stacks / Continue, dump frames ahead of the log, `BRK` and `HALTED`, live debugger admin-only, save v6. |
 | 2026-11-12 | `ccr-a25966c0-1wr43t` (6b) | Design: firmware + program slot agreed as M10 (SPEC §3.9), UI review as M11, multiple rovers renumbered to M12. |
 | 2026-11-12 | `ccr-a25966c0-1wr43t` (7) | M9 slice 4: `@POST` two-digit hex display (preview reviewed, then game), port, save v7; M10/M11 design docs from PR #12 that missed the merge. |
+| 2026-11-13 | `ccr-2c7af876-8dzljn` | M9 slice 5: mast camera `SNAP dir [mode]`, integer-only photo generator (all 5 formats), light and subject rules, partial photos in the gallery, first-of-a-kind credits, goal *Photographer*, save v8. |
+| 2026-11-13 | `ccr-2c7af876-8dzljn` (2) | M9 slice 5: landscape photos when nothing is within reach (ridges from real cliffs and ore, ground, sun, night sky with headlight foreground). |

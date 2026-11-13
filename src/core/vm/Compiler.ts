@@ -8,7 +8,7 @@ export type Op =
   | 'ADD' | 'SUB' | 'MUL' | 'DIV' | 'MOD'
   | 'JMP' | 'JEQ' | 'JNE' | 'JLT' | 'JGT' | 'JLE' | 'JGE'
   | 'CALL' | 'RET'
-  | 'SLEEP' | 'SCAN' | 'STEP' | 'ACT' | 'PEEK' | 'USE'
+  | 'SLEEP' | 'SCAN' | 'STEP' | 'ACT' | 'PEEK' | 'USE' | 'SNAP'
   | 'LOG' | 'BRK';
 
 export type Operand =
@@ -108,12 +108,13 @@ const SIGNATURES: Record<Op, string[]> = {
   ACT: ['v', 'v?'],
   PEEK: ['v', 'd'],
   USE: ['v', 'v?'],
+  SNAP: ['v', 'v?'],
   LOG: ['k', 'v?'],
   BRK: [],
 };
 
 export const OPCODES = Object.keys(SIGNATURES) as Op[];
-export const HARDWARE_OPS: ReadonlySet<Op> = new Set(['SLEEP', 'SCAN', 'STEP', 'ACT', 'USE']);
+export const HARDWARE_OPS: ReadonlySet<Op> = new Set(['SLEEP', 'SCAN', 'STEP', 'ACT', 'USE', 'SNAP']);
 
 export function builtinConstants(): Record<string, number> {
   const c: Record<string, number> = {};

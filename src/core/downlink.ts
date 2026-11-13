@@ -12,6 +12,8 @@
  * product between bytes; the product resumes where it stopped.
  */
 
+import type { HorizonView } from './photos';
+
 /** Tag reserved for system frames (boot, dumps). `LOG 15` is a compile error. */
 export const SYSTEM_TAG = 15;
 export const MAX_LOG_TAG = 14;
@@ -35,10 +37,17 @@ const SIZE_BYTES = [0, 1, 2, 4];
 /** Science product types (frame tag of a science frame). */
 export const ProductType = {
   SPECTRUM: 0,
+  /** Photos: product type = camera mode (`SNAP dir mode`), formats in photos.ts. */
+  PHOTO_GREY: 1,
+  PHOTO_DITHER: 2,
+  PHOTO_PALETTE: 3,
+  PHOTO_HIRES: 4,
+  PHOTO_RGB: 5,
 } as const;
-export const PRODUCT_NAMES: Record<number, string> = { 0: 'spectrum' };
+export const PRODUCT_NAMES: Record<number, string> = { 0: 'spectrum', 1: 'photo', 2: 'photo (dither)', 3: 'photo (colour)', 4: 'photo (hi-res)', 5: 'photo (RGB)' };
 /** Payload bytes per product type. */
-export const PRODUCT_PAYLOAD: Record<number, number> = { 0: 16 };
+export const PRODUCT_PAYLOAD: Record<number, number> = { 0: 16, 1: 256, 2: 256, 3: 512, 4: 1024, 5: 1024 };
+export const isPhoto = (type: number): boolean => type >= 1 && type <= 5;
 /** On-air size: header + sequence byte + payload. */
 export const productFrameBytes = (type: number): number => 2 + (PRODUCT_PAYLOAD[type] ?? 0);
 
@@ -59,8 +68,15 @@ export interface ProductDesc {
   y: number;
   /** Tick it was recorded. */
   tick: number;
-  /** Science credits paid on full delivery. */
+  /** Science credits paid on full delivery (photos: set at delivery, first-of-a-kind bonus). */
   credits: number;
+  /** Photos: subject tile (the same rock gives the same scene). */
+  sx?: number;
+  sy?: number;
+  /** Photos: enough light (sun, or the headlight aimed at the subject). Dark photos are worth nothing. */
+  lit?: boolean;
+  /** Photos: landscape view sampled from the world (no subject within reach; subject = 0). */
+  horizon?: HorizonView;
 }
 
 /** Payload size code for a signed 32-bit value: smallest of 1/2/4 bytes that holds it. */

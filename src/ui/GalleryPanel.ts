@@ -1,5 +1,6 @@
-import { hex, PRODUCT_NAMES, productFrameBytes, ProductType, type ReceivedProduct } from '../core/downlink';
+import { hex, isPhoto, PRODUCT_NAMES, productFrameBytes, ProductType, type ReceivedProduct } from '../core/downlink';
 import { bandNm, productFrame, SPECTRUM_BANDS } from '../core/imaging';
+import { decodePhoto, PHOTO_FORMATS } from '../core/photos';
 import type { SimulationEngine } from '../core/SimulationEngine';
 
 /** Bar colour for a wavelength: visible bands roughly in their colour, near-IR grey. */
@@ -29,17 +30,56 @@ export function spectrumSvg(payload: number[], received: number): string {
   </svg>`;
 }
 
+const PHOTO_PX = 128;
+
+/** A (possibly partial) photo as a data URL: crisp pixels scaled up, missing rows hatched. */
+export function photoDataUrl(type: number, payload: number[]): string {
+  const ph = decodePhoto(type, payload);
+  if (!ph) return '';
+  const small = document.createElement('canvas');
+  small.width = ph.w;
+  small.height = ph.h;
+  const sctx = small.getContext('2d')!;
+  const img = sctx.createImageData(ph.w, ph.h);
+  for (let p = 0; p < ph.pixelsReceived; p++) {
+    img.data[p * 4] = ph.rgb[p * 3];
+    img.data[p * 4 + 1] = ph.rgb[p * 3 + 1];
+    img.data[p * 4 + 2] = ph.rgb[p * 3 + 2];
+    img.data[p * 4 + 3] = 255;
+  }
+  sctx.putImageData(img, 0, 0);
+  const out = document.createElement('canvas');
+  out.width = out.height = PHOTO_PX;
+  const ctx = out.getContext('2d')!;
+  ctx.fillStyle = '#111a26';
+  ctx.fillRect(0, 0, PHOTO_PX, PHOTO_PX);
+  ctx.strokeStyle = '#2b3b52';
+  for (let i = -PHOTO_PX; i < PHOTO_PX; i += 8) {
+    ctx.beginPath();
+    ctx.moveTo(i, PHOTO_PX);
+    ctx.lineTo(i + PHOTO_PX, 0);
+    ctx.stroke();
+  }
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(small, 0, 0, PHOTO_PX, PHOTO_PX);
+  return out.toDataURL();
+}
+
 /** Mission control gallery: science products received over the downlink (SPEC §3.8.5). */
 export class GalleryPanel {
   private lastKey = '';
+  /** Rendered photos by product and bytes received (complete ones never change). */
+  private photoCache = new Map<string, string>();
   private list: HTMLElement;
   private status: HTMLElement;
 
   constructor(el: HTMLElement, private engine: SimulationEngine) {
     el.innerHTML = `<div class="toolbar small"><span class="dim" id="gallery-status"></span></div>
       <div id="gallery-list"></div>
-      <p class="small dim">The spectrometer (<code>ACT TOOL_2 slot</code>) records a 16-band spectrum (18 B) in the science
-      recorder. The downlink sends it after the log FIFO is empty; credits are paid when the last byte arrives.</p>`;
+      <p class="small dim">The spectrometer (<code>ACT TOOL_2 slot</code>) records a 16-band spectrum (18 B) and the mast camera
+      (<code>SNAP dir [mode]</code>) a 32×32 photo (258 B) in the science recorder. The downlink sends them after the log FIFO is
+      empty; photos fill in row by row, and credits are paid when the last byte arrives (lit photos 1, +5 for the first of a
+      subject type; dark photos nothing).</p>`;
     this.list = el.querySelector('#gallery-list')!;
     this.status = el.querySelector('#gallery-status')!;
   }
@@ -49,12 +89,27 @@ export class GalleryPanel {
     const frame = productFrame(this.engine.seed, g).slice(0, g.received);
     const done = g.received >= size;
     const multi = this.engine.units.length > 1 ? ` · ${this.engine.getUnit(g.unitId)?.name ?? `#${g.unitId}`}` : '';
-    const body = g.type === ProductType.SPECTRUM ? spectrumSvg(frame.slice(2), Math.max(0, g.received - 2)) : '';
+    let body = '';
+    let what = '';
+    if (g.type === ProductType.SPECTRUM) body = spectrumSvg(frame.slice(2), Math.max(0, g.received - 2));
+    else if (isPhoto(g.type)) {
+      const key = `${g.unitId}:${g.tick}:${g.seq}:${g.received}`;
+      let url = this.photoCache.get(key);
+      if (!url) {
+        url = photoDataUrl(g.type, frame.slice(2));
+        this.photoCache.set(key, url);
+        if (this.photoCache.size > 160) this.photoCache.delete(this.photoCache.keys().next().value!);
+      }
+      body = `<img class="photo" src="${url}" width="${PHOTO_PX}" height="${PHOTO_PX}" alt="photo">`;
+      const subject = g.horizon ? 'landscape' : (this.engine.registry.get(g.subject)?.name ?? `tile ${g.subject}`);
+      what = ` · ${subject}${g.lit ? '' : ' · <span class="warn">dark</span>'} · ${PHOTO_FORMATS[g.type]?.label ?? ''}`;
+    }
+    const shown = frame.length > 34 ? `${hex(frame.slice(0, 34))} …` : hex(frame);
     return `<div class="product${done ? '' : ' partial'}">
       <b>${PRODUCT_NAMES[g.type] ?? `type ${g.type}`} #${g.seq}<span>${done ? `+${g.credits} cr` : `${g.received}/${size} B`}</span></b>
       ${body}
-      <div class="small dim">recorded t${g.tick} at (${g.x}, ${g.y}) · ${done ? `arrived t${g.arrived}` : `receiving… t${g.arrived}`} · ${size} B${multi}</div>
-      <div class="hex small">${hex(frame)}</div>
+      <div class="small dim">recorded t${g.tick} at (${g.x}, ${g.y})${what} · ${done ? `arrived t${g.arrived}` : `receiving… t${g.arrived}`} · ${size} B${multi}</div>
+      <div class="hex small">${shown}</div>
     </div>`;
   }
 

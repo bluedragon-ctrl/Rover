@@ -286,7 +286,8 @@ Built so far: the link (§3.8.1) with the log FIFO, log and boot frames (§3.8.2
 `@LOG_FREE`, `@LOG_LOST`, `@TX_DATA` as `LOG 0` and the Console tab (§3.8.3) (slice 1);
 the science recorder, science frames, spectra, `@REC_FREE` and the Gallery tab
 (§3.8.5) (slice 2); dumps, `BRK`, `HALTED` and the admin-only debugger (§3.8.4) (slice 3);
-`@POST` (§3.8.3) (slice 4). Still planned: the camera and the upgrades.
+`@POST` (§3.8.3) (slice 4); the camera, `SNAP` and photos (§3.8.5) (slice 5). Still planned:
+the upgrades, camera modes 3–5 and anomalies.
 
 Design principle: **mission control knows only what the rover sent**, plus the program
 it uploaded itself. There is no live view of registers, stacks or ports for the player
@@ -397,8 +398,9 @@ kind 1 = science frame   size = 0; followed by 1 sequence byte, then the product
 
 ### 3.8.5 Science products and the recorder
 
-Built: the recorder, science frames, spectra (type 0) and the Gallery tab. Photos
-(types 1–5), `SNAP` and anomalies are **[M9, planned]**.
+Built: the recorder, science frames, spectra (type 0), the Gallery tab, the camera
+(`SNAP`) and photos (all five formats are generated and decoded; Mk-I installs modes 1–2).
+The upgrades for modes 3–5 and anomalies are **[M9, planned]**.
 
 Science lives in the **science recorder** (Mk-I 1024 B) until it has been sent
 completely; it is never lost. A product interrupted by a link drop resumes where it
@@ -427,9 +429,19 @@ range, keeping hue) before quantizing. Reference renders: `preview.html?photos=1
 * **Camera** (mast, not a hardpoint): `SNAP dir [mode=1]`, blocks 10 ticks,
   200 energy, writes `@STATUS`: `ERR_FULL` (not enough recorder space),
   `ERR_INVALID` (bad direction or mode not installed), `ERR_LOW_POWER`. Subject: the first
-  obstacle or item within 2 tiles in `dir`, else the ground tile in front. **Light:**
+  rover, obstacle or item within 2 tiles in `dir`; with nothing that close, a **landscape**
+  (subject `NONE`): a loose view of what really lies ahead over a 90° field of view. Cliff
+  walls up to 16 tiles away rise as ridges (about 3 tiles tall, so nearer ones stand taller,
+  hazier with distance), ore veins as low coloured hills, a far range always on the horizon;
+  the ground shows sand, gravel or glowing vents from the first 4 tiles ahead; the sun appears
+  when it is above the horizon within 50° of the view; at night the sky is dark with stars
+  and the headlight lights the foreground. The view is sampled when the photo is taken and
+  kept in the descriptor (skyline of 16 columns, ground, sun, light). **Light:**
   `@SUN_LIGHT ≥ 20`, or the headlight on and `@HEADING = dir`; otherwise the photo is dark
-  and noisy (auto-exposure amplifies sensor noise) and worth nothing.
+  and noisy (auto-exposure amplifies sensor noise) and worth nothing. The camera sits on the
+  mast: `SNAP` does **not** turn the rover. Subject and light are taken when the exposure
+  ends (after the 10 ticks). The scene depends on the subject type and the subject tile (the
+  same rock photographed again looks the same, apart from a little sensor noise).
 * `@REC_FREE` (R): free recorder bytes. `@SCIENCE_READY` (R): products waiting in the
   recorder (meaning unchanged: science waiting for downlink).
 * **Content is deterministic:** a product is stored as a descriptor (type, subject tile,
@@ -439,7 +451,8 @@ range, keeping hue) before quantizing. Reference renders: `preview.html?photos=1
 
 **Credits on delivery** (tunable, `BALANCE`): spectrum = the item's `science` value
 (sample 3, ore 1, as today); lit photo = 1, +5 the first time a subject type is
-delivered; dark photo = 0. **Anomalies:** rare tiles (seeded, e.g. 1 in 40 cliff walls
+delivered (decided on delivery; the list of subject types already delivered is saved);
+dark photo = 0 (a landscape counts as its own subject type). Goal *Photographer*: deliver 3 lit photos. **Anomalies:** rare tiles (seeded, e.g. 1 in 40 cliff walls
 and samples) show a pattern only a photo reveals; flagging a delivered anomaly photo in
 the gallery pays +20, a wrong flag −5, one flag per photo.
 
@@ -578,7 +591,7 @@ friction, but the set should stay small enough to learn in one sitting.
 | | `ACT tool [arg]` | tool-defined | Fire the tool in hardpoint `tool` (§3.3.2). |
 | | `PEEK slot -> dst` | 1 cycle | Item ID in cargo `slot` (0 = empty); bad slot → `ERR_INVALID`. |
 | | `USE slot` | 5 ticks | Consume a cargo item (§3.3.2). |
-| | `SNAP dir [mode]` | blocks 10 | **[M9, planned]** Photograph the subject in `dir` into the science recorder (§3.8.5). |
+| | `SNAP dir [mode]` | blocks 10 | **[M9]** Photograph the subject in `dir` into the science recorder (§3.8.5). |
 | Debug | `LOG tag [src]` | 1 cycle | **[M9]** Queue a log frame for the downlink; compute, no `@STATUS` (§3.8.3). |
 | | `BRK` | 1 cycle | **[M9]** Halt the CPU (`HALTED`) until *Continue* or an upload (§3.8.4). |
 
