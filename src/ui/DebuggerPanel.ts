@@ -15,7 +15,6 @@ export class DebuggerPanel {
 
   update(u: Unit): void {
     const vm = u.vm;
-    const prog = vm.program;
     const stateClass =
       vm.state === CpuState.RUNNING ? 'ok' : vm.state === CpuState.BLOCKED ? 'info' : vm.state === CpuState.HALTED ? 'warn' : 'bad';
     const regs = Array.from(vm.regs)
