@@ -320,11 +320,11 @@ function imageHtml(): string {
     <p class="small dim">The camera does not send a photo by itself. Taking a picture, changing it and sending it are
     three steps, and your program decides what happens in between. Real rovers work the same way: Curiosity's cameras keep
     their images in their own memory, and only the products made from them go to Earth.</p>
-    <pre class="ref-diagram">        SNAP               SEND
-camera ─────► image memory ─────► recorder ──► downlink ──► Gallery
-                ▲     │
-            STB │     │ LDB
-                └ your program</pre>
+    <pre class="ref-diagram">       SNAP              SEND        downlink
+camera ───► image memory ───► recorder ───► Gallery
+              ▲     │
+          STB │     │ LDB
+              └ your program</pre>
     <h4>Instructions</h4>
     <table class="radio-kv">
       <tr><td><code>SNAP dir [mode]</code></td><td>Photograph into image memory (overwrites all of it). ${B.snapTicks} ticks, ${B.snapEnergy} energy. Nothing is sent yet.</td></tr>
