@@ -12,6 +12,7 @@ import { PostFx } from '../render/PostFx';
 import { RoverAnimator, type RoverPose } from '../render/RoverRig';
 import { radarFront, TileLighting } from '../render/TileLighting';
 import { FxOverlay } from '../render/FxOverlay';
+import { Dust } from '../render/Dust';
 import { compile } from '../core/vm/Compiler';
 import { PROSPECTOR, TEMPLATES } from '../core/programs';
 import { EditorPanel } from '../ui/EditorPanel';
@@ -96,14 +97,8 @@ const patch = buildPatch();
 worldRoot.add(patch);
 
 // ------------------------------------------------------------------ dust
-const DUST = 500;
-const dustPos = new Float32Array(DUST * 3).map((_, i) => (i % 3 === 1 ? Math.random() * 3 : (Math.random() - 0.5) * 40));
-const dustGeo = new THREE.BufferGeometry();
-dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
-const dustMat = new THREE.PointsMaterial({ color: 0xd8b48a, size: 0.035, transparent: true, opacity: 0.5, depthWrite: false });
-const dust = new THREE.Points(dustGeo, dustMat);
-dust.frustumCulled = false;
-scene.add(dust);
+const dust = new Dust();
+scene.add(dust.points);
 
 // ------------------------------------------------------------------ rover
 const rover = buildRoverRig({ post: true });
@@ -238,6 +233,7 @@ function resize(): void {
   renderer.setSize(w, h, false);
   post.setSize(w, h);
   rig.resize(w, h);
+  dust.setViewportHeight(renderer.domElement.height);
 }
 new ResizeObserver(resize).observe(view);
 resize();
@@ -350,15 +346,7 @@ function frame(now: number): void {
   rover.model.scale.setScalar(THREE.MathUtils.clamp(rig.dist / 30, 1, 2.5));
 
   // Dust drifts with the wind; brighter by day, caught by the headlight at night.
-  const dp = dustGeo.getAttribute('position') as THREE.BufferAttribute;
-  for (let i = 0; i < DUST; i++) {
-    let x = dp.getX(i) + dt * 0.6, z = dp.getZ(i) + dt * 0.15;
-    if (x > 20) x -= 40;
-    if (z > 20) z -= 40;
-    dp.setXYZ(i, x, dp.getY(i) + Math.sin(t + i) * dt * 0.05, z);
-  }
-  dp.needsUpdate = true;
-  dustMat.opacity = 0.12 + 0.35 * day;
+  dust.update(t, day, fog);
 
   fx.update(fxp, fyp, now);
   post.render(scene, rig.camera);

@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 
+const Y_UP = new THREE.Vector3(0, 1, 0);
+
 /**
  * Perspective orbit camera around a floating origin: the scene is drawn relative to
  * (focusX, focusY) in world tile coordinates, so the camera always orbits (0, 0, 0).
@@ -108,11 +110,15 @@ export class CameraRig {
     const s = Math.sin(this.pitch);
     this.camera.position.set(-Math.sin(this.yaw) * s * this.dist, Math.cos(this.pitch) * this.dist, Math.cos(this.yaw) * s * this.dist);
     // "Up" on screen points north-ish so top-down view keeps the yaw.
-    this.camera.up.set(Math.sin(this.yaw), 0, -Math.cos(this.yaw)).lerp(new THREE.Vector3(0, 1, 0), Math.min(1, s * 4)).normalize();
+    this.camera.up.set(Math.sin(this.yaw), 0, -Math.cos(this.yaw)).lerp(Y_UP, Math.min(1, s * 4)).normalize();
     this.camera.lookAt(0, 0, 0);
-    this.camera.near = Math.max(0.02, this.dist * 0.01);
-    this.camera.far = this.dist * 12;
-    this.camera.updateProjectionMatrix();
+    const near = Math.max(0.02, this.dist * 0.01);
+    const far = this.dist * 12;
+    if (near !== this.camera.near || far !== this.camera.far) {
+      this.camera.near = near;
+      this.camera.far = far;
+      this.camera.updateProjectionMatrix();
+    }
   }
 
   private bind(): void {

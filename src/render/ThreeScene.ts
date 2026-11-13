@@ -7,6 +7,7 @@ import { FrameStats } from './FrameStats';
 import { ChunkPool } from './ChunkPool';
 import { FxOverlay } from './FxOverlay';
 import { CameraRig } from './CameraRig';
+import { Dust } from './Dust';
 import { PostFx } from './PostFx';
 import { RoverAnimator, type RoverPose } from './RoverRig';
 import { MAX_LIGHTS, radarFront, TileLighting } from './TileLighting';
@@ -19,6 +20,8 @@ interface RoverView {
   angle: number;
   /** performance.now() of the last SCAN (radar wave). */
   radarAt: number;
+  /** Reused pose arrays (no per-frame allocation). */
+  indicators: number[];
 }
 
 /** How far (tiles) the camera focus may be panned away from the rover. */
@@ -78,9 +81,11 @@ export class ThreeScene {
   /** Called on shift+click with the world tile (admin teleport). */
   onTileShiftClick?: (x: number, y: number) => void;
   private squall: THREE.LineSegments;
+  private squallMat: THREE.ShaderMaterial;
   private capsules = new Map<number, { capsule: THREE.LineSegments; ring: THREE.LineLoop }>();
-  private squallSeeds: Float32Array;
-  private dust: THREE.Points;
+  private liveDrops = new Set<number>();
+  private dust = new Dust();
+  private bg = new THREE.Color();
   private lastNow = performance.now();
   /** World tile under the mouse, or null. */
   hover: { x: number; y: number } | null = null;
@@ -106,24 +111,28 @@ export class ThreeScene {
     new ResizeObserver(() => this.resize()).observe(container);
     this.bindInput();
 
-    // Micrometeorite streaks, shown during squalls (purely cosmetic, Math.random is fine here).
+    // Micrometeorite streaks, shown during squalls (purely cosmetic, Math.random is fine
+    // here). Animated in the vertex shader: each streak has a random seed, both of its
+    // vertices share it, `end` tells the head (1) from the tail (0).
     const N = 160;
-    this.squallSeeds = new Float32Array(N * 3).map(() => Math.random());
+    const seeds = new Float32Array(N * 6);
+    const end = new Float32Array(N * 2);
+    for (let i = 0; i < N; i++) {
+      const a = Math.random(), b = Math.random(), c = Math.random();
+      seeds.set([a, b, c, a, b, c], i * 6);
+      end[i * 2 + 1] = 1;
+    }
     const sg = new THREE.BufferGeometry();
-    sg.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(N * 6), 3));
-    this.squall = new THREE.LineSegments(sg, new THREE.LineBasicMaterial({ color: 0xffb070, transparent: true, opacity: 0.8 }));
+    sg.setAttribute('position', new THREE.BufferAttribute(seeds, 3)); // seeds (positions come from the shader)
+    sg.setAttribute('end', new THREE.BufferAttribute(end, 1));
+    this.squallMat = squallMaterial();
+    this.squall = new THREE.LineSegments(sg, this.squallMat);
     this.squall.frustumCulled = false;
     this.squall.visible = false;
     this.scene.add(this.squall);
 
     // Drifting dust, brighter by day (cosmetic).
-    const DUST = 500;
-    const dustPos = new Float32Array(DUST * 3).map((_, i) => (i % 3 === 1 ? Math.random() * 3 : (Math.random() - 0.5) * 40));
-    const dustGeo = new THREE.BufferGeometry();
-    dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
-    this.dust = new THREE.Points(dustGeo, new THREE.PointsMaterial({ color: 0xd8b48a, size: 0.035, transparent: true, opacity: 0.5, depthWrite: false }));
-    this.dust.frustumCulled = false;
-    this.scene.add(this.dust);
+    this.scene.add(this.dust.points);
 
     engine.events.on('SCAN_PULSE', (e) => {
       const color = e.hit ? (engine.registry.get(e.hit)?.color ?? 0xffffff) : 0x3affc8;
@@ -180,6 +189,7 @@ export class ThreeScene {
     this.renderer.setSize(w, h, false);
     this.post.setSize(w, h);
     this.rig.resize(w, h);
+    this.dust.setViewportHeight(this.renderer.domElement.height);
   }
 
   private bindInput(): void {
@@ -251,7 +261,7 @@ export class ThreeScene {
       if (!v) {
         const mesh = buildRoverRig({ post: true });
         this.worldRoot.add(mesh.group, mesh.sensorRing);
-        v = { mesh, anim: new RoverAnimator(mesh), angle: -u.heading * (Math.PI / 2), radarAt: -Infinity };
+        v = { mesh, anim: new RoverAnimator(mesh), angle: -u.heading * (Math.PI / 2), radarAt: -Infinity, indicators: [] };
         this.rovers.set(u.id, v);
       }
       const [x, y] = this.unitPos(u, simTime);
@@ -279,7 +289,7 @@ export class ThreeScene {
         dishHealth: u.antennaHealth,
         cpu: dead ? 'off' : fault ? 'fault' : u.action?.kind === 'WAIT' ? 'idle' : 'run',
         beaconHex: dead || blinkOff ? 0x222222 : LIGHT_HEX[u.lightColor] ?? 0xffffff,
-        indicators: u.indicators.map((i) => indicatorHex(dead ? 0 : i)),
+        indicators: fillIndicators(v.indicators, u.indicators, dead),
         // Dark while powered off. The operator's view is centred on the rover, so its own
         // display is always in view; other rovers (M12) will need the view check.
         post: dead ? null : u.post,
@@ -308,7 +318,7 @@ export class ThreeScene {
     L.uDay.value = day;
     L.uGrade.value.copy(DUSK).lerp(NOON, THREE.MathUtils.smoothstep(light, 0.05, 0.6));
 
-    const bg = NIGHT_BG.clone().lerp(DAY_BG, day);
+    const bg = this.bg.copy(NIGHT_BG).lerp(DAY_BG, day);
     this.scene.background = bg;
     const fog = this.scene.fog as THREE.Fog;
     fog.color.copy(bg);
@@ -319,8 +329,8 @@ export class ThreeScene {
     L.fogFar.value = fog.far;
     this.post.bloom.strength = 0.6 + (1 - day) * 0.35;
 
-    this.updateDust(dt, t, day);
-    this.updateSquall(now);
+    this.dust.update(t, day, fog);
+    this.updateSquall(now, fog);
     this.updateCapsules(simTime, now);
     this.fx.update(fx, fy, now);
     this.post.render(this.scene, rig.camera);
@@ -359,21 +369,10 @@ export class ThreeScene {
     this.rig.focusY = u.y + 0.5;
   }
 
-  private updateDust(dt: number, t: number, day: number): void {
-    const dp = this.dust.geometry.getAttribute('position') as THREE.BufferAttribute;
-    for (let i = 0; i < dp.count; i++) {
-      let x = dp.getX(i) + dt * 0.6, z = dp.getZ(i) + dt * 0.15;
-      if (x > 20) x -= 40;
-      if (z > 20) z -= 40;
-      dp.setXYZ(i, x, dp.getY(i) + Math.sin(t + i) * dt * 0.05, z);
-    }
-    dp.needsUpdate = true;
-    (this.dust.material as THREE.PointsMaterial).opacity = 0.12 + 0.35 * day;
-  }
-
   /** Supply crates in flight: a parachute capsule descending onto a pulsing target ring. */
   private updateCapsules(simTime: number, now: number): void {
-    const live = new Set<number>();
+    const live = this.liveDrops;
+    live.clear();
     for (const d of this.engine.drops) {
       if (d.landed) continue;
       live.add(d.id);
@@ -404,25 +403,63 @@ export class ThreeScene {
     }
   }
 
-  private updateSquall(now: number): void {
+  private updateSquall(now: number, fog: THREE.Fog): void {
     const active = this.engine.director.isActive('SQUALL', this.engine.tick);
     this.squall.visible = active;
     if (!active) return;
-    const pos = this.squall.geometry.getAttribute('position') as THREE.BufferAttribute;
-    const span = Math.min(80, this.rig.dist * 1.6 + 8);
-    const s = this.squallSeeds;
-    for (let i = 0; i < s.length / 3; i++) {
-      const t = (s[i * 3 + 2] + now / 900) % 1; // fall phase
-      const x = (s[i * 3] - 0.5) * span;
-      const z = (s[i * 3 + 1] - 0.5) * span;
-      const y = 12 * (1 - t);
-      pos.setXYZ(i * 2, x - 0.9, y + 1.6, z - 0.5);
-      pos.setXYZ(i * 2 + 1, x, y, z);
-    }
-    pos.needsUpdate = true;
+    const u = this.squallMat.uniforms;
+    u.uPhase.value = (now / 900) % 1;
+    u.uSpan.value = Math.min(80, this.rig.dist * 1.6 + 8);
+    u.fogColor.value.copy(fog.color);
+    u.fogNear.value = fog.near;
+    u.fogFar.value = fog.far;
   }
 
   setRevealAll(v: boolean): void {
     this.chunks.setRevealAll(v);
   }
+}
+
+/** Indicator lamp colours into a reused array. */
+function fillIndicators(out: number[], ind: number[], dead: boolean): number[] {
+  out.length = ind.length;
+  for (let i = 0; i < ind.length; i++) out[i] = indicatorHex(dead ? 0 : ind[i]);
+  return out;
+}
+
+/** Squall streaks: a fall phase per streak from its seed (see the constructor). */
+function squallMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog),
+      uPhase: { value: 0 },
+      uSpan: { value: 30 },
+      uColor: { value: new THREE.Color(0xffb070) },
+      uOpacity: { value: 0.8 },
+    },
+    vertexShader: /* glsl */ `
+      uniform float uPhase;
+      uniform float uSpan;
+      attribute float end;
+      #include <fog_pars_vertex>
+      void main() {
+        vec3 s = position; // random seeds in [0, 1)
+        float t = fract(s.z + uPhase);
+        vec3 p = vec3((s.x - 0.5) * uSpan, 12.0 * (1.0 - t), (s.y - 0.5) * uSpan);
+        p += (1.0 - end) * vec3(-0.9, 1.6, -0.5); // tail trails up and back
+        vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
+        gl_Position = projectionMatrix * mvPosition;
+        #include <fog_vertex>
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uColor;
+      uniform float uOpacity;
+      #include <fog_pars_fragment>
+      void main() {
+        gl_FragColor = vec4(uColor, uOpacity);
+        #include <fog_fragment>
+      }`,
+    transparent: true,
+    fog: true,
+  });
 }

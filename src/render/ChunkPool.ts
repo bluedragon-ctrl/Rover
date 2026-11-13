@@ -83,9 +83,7 @@ export class ChunkPool {
     let buildMs = 0;
     let patches = 0;
     // Build nearest chunks first.
-    const order: [number, number][] = [];
-    for (let dy = -radiusChunks; dy <= radiusChunks; dy++) for (let dx = -radiusChunks; dx <= radiusChunks; dx++) order.push([dx, dy]);
-    order.sort((a, b) => a[0] * a[0] + a[1] * a[1] - (b[0] * b[0] + b[1] * b[1]));
+    const order = this.orderFor(radiusChunks);
 
     for (const [dx, dy] of order) {
       const cx = fcx + dx;
@@ -145,6 +143,20 @@ export class ChunkPool {
     this.lastBuilds = builds;
     this.lastBuildMs = buildMs;
     this.lastPatches = patches;
+  }
+
+  private orders = new Map<number, [number, number][]>();
+
+  /** Chunk offsets within `r`, nearest first (cached per radius). */
+  private orderFor(r: number): [number, number][] {
+    let order = this.orders.get(r);
+    if (!order) {
+      order = [];
+      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) order.push([dx, dy]);
+      order.sort((a, b) => a[0] * a[0] + a[1] * a[1] - (b[0] * b[0] + b[1] * b[1]));
+      this.orders.set(r, order);
+    }
+    return order;
   }
 
   /** Remember what the entry's geometry was built from. */
