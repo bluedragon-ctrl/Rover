@@ -1,7 +1,8 @@
 /**
  * Science product content (docs/SPEC.md §3.8.5). Pure, integer-only functions of the world
  * seed and a product descriptor: the recorder stores descriptors, the bytes are generated
- * only when mission control decodes a product. No Math.random, no float trig.
+ * when mission control decodes a product (and when SNAP fills image memory, §3.8.7).
+ * Edited and drawn products carry their own bytes. No Math.random, no float trig.
  */
 import { productFrameBytes, ProductType, scienceHeader, type ProductDesc } from './downlink';
 import { photoPayload } from './photos';
@@ -40,8 +41,21 @@ export function spectrum(seed: number, d: Pick<ProductDesc, 'subject' | 'x' | 'y
   return out;
 }
 
+/** Bytes as hex (`data` of edited / drawn products, image memory in saves). */
+export function toHex(bytes: ArrayLike<number>): string {
+  let s = '';
+  for (let i = 0; i < bytes.length; i++) s += (bytes[i] & 255).toString(16).padStart(2, '0');
+  return s;
+}
+export function fromHex(hex: string): number[] {
+  const out: number[] = [];
+  for (let i = 0; i + 1 < hex.length; i += 2) out.push(parseInt(hex.slice(i, i + 2), 16));
+  return out;
+}
+
 /** Product payload bytes. */
 export function productPayload(seed: number, d: ProductDesc): number[] {
+  if (d.data !== undefined) return fromHex(d.data);
   switch (d.type) {
     case ProductType.SPECTRUM:
       return spectrum(seed, d);
@@ -50,7 +64,7 @@ export function productPayload(seed: number, d: ProductDesc): number[] {
     case ProductType.PHOTO_PALETTE:
     case ProductType.PHOTO_HIRES:
     case ProductType.PHOTO_RGB:
-      return photoPayload(seed, { type: d.type, subject: d.subject, sx: d.sx ?? d.x, sy: d.sy ?? d.y, lit: d.lit ?? false, tick: d.tick, seq: d.seq, horizon: d.horizon, anomaly: d.anomaly });
+      return photoPayload(seed, { type: d.type, subject: d.subject, sx: d.sx ?? d.x, sy: d.sy ?? d.y, lit: d.lit ?? false, tick: d.noise?.tick ?? d.tick, seq: d.noise?.seq ?? d.seq, horizon: d.horizon, anomaly: d.anomaly });
     default:
       return [];
   }
@@ -58,6 +72,6 @@ export function productPayload(seed: number, d: ProductDesc): number[] {
 
 /** The complete science frame as sent: header, sequence byte, payload. */
 export function productFrame(seed: number, d: ProductDesc): number[] {
-  const f = [scienceHeader(d.type), d.seq & 255, ...productPayload(seed, d)];
+  const f = [scienceHeader(d.type, d.level ?? 0), d.seq & 255, ...productPayload(seed, d)];
   return f.slice(0, productFrameBytes(d.type));
 }

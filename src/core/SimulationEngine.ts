@@ -12,6 +12,7 @@ import {
   encodeStackDump,
   GALLERY_KEEP,
   isPhoto,
+  Level,
   productFrameBytes,
   RECEIVED_KEEP,
   SYSTEM_TAG,
@@ -25,10 +26,11 @@ import { TOOLS, type ToolDef } from './tools';
 import { Environment, signalStrength, solarGain, wrapDeg, angleDiff, type SunState } from './Environment';
 import { getPort, writePortClamped, type PortContext } from './ports';
 import { CpuState, DIR_VEC, Layer, ProgState, Status } from './types';
-import { Unit } from './Unit';
+import { Unit, type Capture } from './Unit';
+import { productPayload, toHex } from './imaging';
 import { compile, type CompileResult, type Instr, type Slot } from './vm/Compiler';
 import type { VmHost } from './vm/RoverVM';
-import { HORIZON_COLUMNS, HORIZON_V, isAnomaly, type HorizonView } from './photos';
+import { HORIZON_COLUMNS, HORIZON_V, isAnomaly, photoBytes, type HorizonView } from './photos';
 import { coneOffsets, shapeContains, type SensorShape } from './sensors';
 import { createDefaultRegistry, T, type WorldRegistry } from './WorldRegistry';
 
@@ -660,6 +662,59 @@ export class SimulationEngine {
     return this.sun.light >= BALANCE.snapMinSunLight || (u.headlight === 1 && u.heading === dir);
   }
 
+  /**
+   * SNAP's exposure ends (SPEC §3.8.7): the photo fills image memory (the rest is zeroed) and
+   * becomes the capture. Its bytes come from the same function that regenerates a raw product.
+   */
+  capturePhoto(u: Unit, dir: number, mode: number): void {
+    const shot = this.cameraSubject(u, dir);
+    const cap: Capture = {
+      type: mode,
+      subject: shot.subject,
+      x: u.x,
+      y: u.y,
+      sx: shot.x,
+      sy: shot.y,
+      lit: this.photoLit(u, dir),
+      noise: { tick: this.tick, seq: u.link.seq },
+      ...(shot.horizon ? { horizon: shot.horizon } : {}),
+      ...(this.anomalyAt(shot.subject, shot.x, shot.y) ? { anomaly: true } : {}),
+    };
+    const mem = u.imageMemory();
+    mem.fill(0);
+    mem.set(productPayload(this.seed, { ...cap, seq: 0, tick: 0, credits: 0 }));
+    u.capture = cap;
+    u.snapMode = mode;
+    u.imgEdited = false;
+    this.stats.photosTaken++;
+  }
+
+  /**
+   * SEND [type] (SPEC §3.8.7): image memory → a photo product in the recorder. The first SEND
+   * of the capture's type carries the capture (RAW, or EDITED after an STB); any other is DRAWN.
+   */
+  private send(u: Unit, type: number): void {
+    const mem = u.imageMemory();
+    const n = isPhoto(type) ? photoBytes(type) : 0;
+    if (!n || n > mem.length) return this.setStatus(u, Status.ERR_INVALID);
+    if (u.link.recFree(u.chassis.recorderBytes) < productFrameBytes(type)) return this.setStatus(u, Status.ERR_FULL);
+    const cap = u.capture?.type === type ? u.capture : null;
+    let p: Omit<ProductDesc, 'seq' | 'tick'>;
+    if (cap) {
+      const { noise, ...photo } = cap;
+      p = { ...photo, noise, credits: 0, ...(u.imgEdited ? { level: Level.EDITED, data: toHex(mem.subarray(0, n)) } : {}) };
+      u.capture = null;
+    } else {
+      p = { type, subject: 0, x: u.x, y: u.y, lit: false, credits: 0, level: Level.DRAWN, data: toHex(mem.subarray(0, n)) };
+    }
+    this.recordProduct(u, p);
+    this.setStatus(u, Status.OK);
+    if (u.powered) {
+      u.action = { kind: 'WAIT', ticksLeft: BALANCE.sendTicks };
+      u.cpu.block();
+    }
+  }
+
   /** Is the subject at (x, y) an anomaly? Landscapes (subject 0) never are. */
   anomalyAt(subject: number, x: number, y: number): boolean {
     return isAnomaly(this.seed, subject, x, y, BALANCE.anomalyOneIn);
@@ -673,6 +728,7 @@ export class SimulationEngine {
   flagAnomaly(g: ReceivedProduct): string | null {
     if (!this.gallery.includes(g)) return 'unknown product';
     if (!isPhoto(g.type)) return 'only photos can be flagged';
+    if (g.level === Level.DRAWN) return 'drawn picture: no camera photo';
     if (g.flag) return 'already flagged';
     if (g.received < productFrameBytes(g.type)) return 'photo not complete';
     if (!g.lit) return 'dark photo';
@@ -696,7 +752,7 @@ export class SimulationEngine {
   /** Credits for a delivered product; lit photos pay a bonus for the first of a subject type. */
   private deliveryCredits(p: ProductDesc): number {
     if (!isPhoto(p.type)) return p.credits;
-    if (!p.lit) return 0;
+    if (!p.lit || p.level === Level.DRAWN) return 0;
     this.stats.photosDelivered++;
     if (this.photoSubjects.includes(p.subject)) return BALANCE.photoCredits;
     this.photoSubjects.push(p.subject);
@@ -894,6 +950,7 @@ export class SimulationEngine {
     u.energy = Math.max(0, u.energy - amount);
     if (u.energy === 0 && u.powered) {
       u.vm.state = CpuState.POWER_OFF;
+      u.clearImageMemory();
       u.action = null;
       u.cyclesLeft = 0;
       this.abortSlice(u);
@@ -929,6 +986,15 @@ export class SimulationEngine {
         if (p) writePortClamped(p, u, v, this.portCtx);
       },
       hardware: (ins, values) => this.hardware(u, ins, values),
+      load: (addr) => {
+        const mem = u.imageMemory();
+        return mem[((addr % mem.length) + mem.length) % mem.length];
+      },
+      store: (addr, value) => {
+        const mem = u.imageMemory();
+        mem[((addr % mem.length) + mem.length) % mem.length] = value & 255;
+        u.imgEdited = true;
+      },
       log: (tag, value) => {
         u.link.enqueue(encodeLog(tag, value), u.chassis.logFifoBytes);
       },
@@ -1080,6 +1146,9 @@ export class SimulationEngine {
         return;
       case 'SNAP':
         this.startTool(u, TOOLS.CAMERA, v[0], v.length > 1 ? v[1] : 1);
+        return;
+      case 'SEND':
+        this.send(u, v.length ? v[0] : u.snapMode);
         return;
       case 'PEEK': {
         const slot = v[0];

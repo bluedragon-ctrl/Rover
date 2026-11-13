@@ -51,8 +51,18 @@ export const isPhoto = (type: number): boolean => type >= 1 && type <= 5;
 /** On-air size: header + sequence byte + payload. */
 export const productFrameBytes = (type: number): number => 2 + (PRODUCT_PAYLOAD[type] ?? 0);
 
-/** Science frame header byte for a product type. */
-export const scienceHeader = (type: number): number => 0x80 | ((type & 15) << 3);
+/**
+ * Processing level of a product (SPEC §3.8.7), carried in bits 2–1 of its science header:
+ * RAW = sent as the camera took it (and every spectrum), EDITED = changed with STB after the
+ * SNAP, DRAWN = no camera picture behind it.
+ */
+export const Level = { RAW: 0, EDITED: 1, DRAWN: 2 } as const;
+export const LEVEL_NAMES: readonly string[] = ['raw', 'edited', 'drawn'];
+
+/** Science frame header byte for a product type and processing level. */
+export const scienceHeader = (type: number, level = 0): number => 0x80 | ((type & 15) << 3) | ((level & 3) << 1);
+/** Processing level of a received science frame header. */
+export const headerLevel = (header: number): number => (header >> 1) & 3;
 
 /**
  * A science product in the recorder. Its bytes are a pure function of the world seed and
@@ -79,6 +89,12 @@ export interface ProductDesc {
   horizon?: HorizonView;
   /** Photos: the subject tile is an anomaly (ground truth: the gallery never shows this). */
   anomaly?: boolean;
+  /** M12: processing level (Level; absent = RAW). */
+  level?: number;
+  /** M12: the payload as hex, for edited and drawn products (raw ones are regenerated). */
+  data?: string;
+  /** M12: tick and sequence number the camera noise was generated with (absent = tick, seq). */
+  noise?: { tick: number; seq: number };
 }
 
 /** Payload size code for a signed 32-bit value: smallest of 1/2/4 bytes that holds it. */

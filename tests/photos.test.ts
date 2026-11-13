@@ -48,8 +48,8 @@ describe('SNAP instruction', () => {
     expect(compile('SNAP', CHASSIS_MK1).errors).toHaveLength(1);
   });
 
-  it('photographs the first obstacle within 2 tiles: 10 ticks, 200 energy, 258 B, no turn', () => {
-    const { e, u } = rover('SNAP EAST\nMOV r0 @STATUS\nMOV r1 @REC_FREE\nSLEEP 1000');
+  it('photographs the first obstacle within 2 tiles into image memory; SEND records 258 B; 10 ticks, 200 energy, no turn', () => {
+    const { e, u } = rover('SNAP EAST\nMOV r0 @STATUS\nSEND\nMOV r1 @REC_FREE\nSLEEP 1000');
     e.world.setTile(2, 0, Layer.OBSTACLE, T.CLIFF_WALL);
     u.heading = 0;
     e.advanceTick();
@@ -58,11 +58,15 @@ describe('SNAP instruction', () => {
     expect(spent).toBeGreaterThanOrEqual(BALANCE.snapEnergy);
     expect(spent).toBeLessThan(BALANCE.snapEnergy + 20);
     for (let i = 0; i < BALANCE.snapTicks - 1; i++) e.advanceTick();
-    expect(u.link.products).toHaveLength(0);
-    e.advanceTick();
+    expect(u.capture).toBeNull();
+    expect([...u.img].every((b) => b === 0)).toBe(true);
+    e.advanceTick(); // the exposure ends and fills image memory; the CPU wakes: MOV r0 @STATUS, SEND
+    expect(u.capture).toBeNull(); // carried home by the SEND
     expect(u.link.products).toHaveLength(1);
     const p = u.link.products[0];
     expect(p).toMatchObject({ type: ProductType.PHOTO_GREY, subject: T.CLIFF_WALL, sx: 2, sy: 0, x: 0, y: 0, lit: true });
+    expect(p.level).toBeUndefined(); // RAW: regenerated from the descriptor
+    expect(productFrame(e.seed, p).slice(2)).toEqual([...u.img.subarray(0, 256)]);
     e.advanceTick();
     expect(u.vm.regs[0]).toBe(Status.OK);
     expect(u.vm.regs[1]).toBe(CHASSIS_MK1.recorderBytes - 258);
@@ -71,7 +75,7 @@ describe('SNAP instruction', () => {
   });
 
   it('items and rovers are subjects; with nothing within reach, a landscape', () => {
-    const { e, u } = rover('SNAP SOUTH\nSNAP WEST 2\nSNAP NORTH\nSLEEP 1000');
+    const { e, u } = rover('SNAP SOUTH\nSEND\nSNAP WEST 2\nSEND\nSNAP NORTH\nSEND\nSLEEP 1000');
     // NORTH is +y, SOUTH −y (DIR_VEC)
     e.world.setTile(0, -2, Layer.ITEM, T.SAMPLE);
     e.world.setTile(0, 1, Layer.TERRAIN, T.ROUGH_GRAVEL);
@@ -91,11 +95,12 @@ describe('SNAP instruction', () => {
     expect(u.link.products[0].horizon).toBeUndefined();
   });
 
-  it('ERR_INVALID for a bad direction or a mode not installed, ERR_FULL, ERR_LOW_POWER', () => {
-    const { e, u } = rover('SNAP 4\nMOV r0 @STATUS\nSNAP NORTH 3\nMOV r1 @STATUS\nSNAP NORTH\nMOV r2 @STATUS\nSLEEP 1000');
+  it('ERR_INVALID for a bad direction or a mode not installed, ERR_LOW_POWER; a full recorder fails the SEND, not the SNAP', () => {
+    const { e, u } = rover('SNAP 4\nMOV r0 @STATUS\nSNAP NORTH 3\nMOV r1 @STATUS\nSNAP NORTH\nMOV r2 @STATUS\nSEND\nMOV r3 @STATUS\nSLEEP 1000');
     while (u.link.recFree(u.chassis.recorderBytes) >= 258) e.recordProduct(u, { type: 1, subject: T.FLAT_SAND, x: 0, y: 0, credits: 0 });
-    run(e, 5);
-    expect([u.vm.regs[0], u.vm.regs[1], u.vm.regs[2]]).toEqual([Status.ERR_INVALID, Status.ERR_INVALID, Status.ERR_FULL]);
+    run(e, 16);
+    expect([u.vm.regs[0], u.vm.regs[1], u.vm.regs[2], u.vm.regs[3]]).toEqual([Status.ERR_INVALID, Status.ERR_INVALID, Status.OK, Status.ERR_FULL]);
+    expect(u.capture).not.toBeNull(); // still waiting for a SEND
 
     const lp = rover('SNAP NORTH\nMOV r0 @STATUS\nSLEEP 1000');
     lp.u.energy = 150;
@@ -106,7 +111,7 @@ describe('SNAP instruction', () => {
   });
 
   it('needs light: daylight, or the headlight on and facing the subject', () => {
-    const day = rover('SNAP NORTH\nSLEEP 1000');
+    const day = rover('SNAP NORTH\nSEND\nSLEEP 1000');
     run(day.e, 12);
     expect(day.e.sun.light).toBeGreaterThanOrEqual(BALANCE.snapMinSunLight);
     expect(day.u.link.products[0].lit).toBe(true);
@@ -117,8 +122,8 @@ describe('SNAP instruction', () => {
       run(r.e, 30);
       return r.u.link.products.map((p) => p.lit);
     };
-    expect(night('SNAP NORTH\nSLEEP 1000')).toEqual([false]);
-    expect(night('MOV @HEADLIGHT 1\nMOV @HEADING EAST\nSNAP EAST\nSNAP NORTH\nSLEEP 1000')).toEqual([true, false]);
+    expect(night('SNAP NORTH\nSEND\nSLEEP 1000')).toEqual([false]);
+    expect(night('MOV @HEADLIGHT 1\nMOV @HEADING EAST\nSNAP EAST\nSEND\nSNAP NORTH\nSEND\nSLEEP 1000')).toEqual([true, false]);
   });
 });
 
@@ -225,7 +230,7 @@ describe('photo delivery and credits', () => {
 
   it('save mid-photo, load, continue == uninterrupted run', () => {
     const make = () => {
-      const { e, u } = rover('loop: SNAP NORTH\nSNAP EAST 2\nSLEEP 50\nJMP loop', { seed: 9, link: true });
+      const { e, u } = rover('loop: SNAP NORTH\nSEND\nSNAP EAST 2\nSEND\nSLEEP 50\nJMP loop', { seed: 9, link: true });
       u.antennaHealth = 75;
       e.world.setTile(1, 0, Layer.OBSTACLE, T.IRON_ORE);
       return e;

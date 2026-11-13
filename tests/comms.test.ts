@@ -201,7 +201,7 @@ describe('Saving the sent record', () => {
     const v12 = serialize(e) as unknown as Record<string, unknown>;
     v12.version = 12;
     delete v12.sent;
-    expect(SAVE_VERSION).toBe(13);
+    expect(SAVE_VERSION).toBeGreaterThanOrEqual(13);
     expect(migrate(v12).sent).toEqual([]);
     expect(deserialize(v12).sent).toEqual([]);
   });
