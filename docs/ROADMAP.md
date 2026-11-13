@@ -24,7 +24,27 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | **M10** | **Firmware + program slot (SPEC §3.9)** | 🚧 slice 1 (core, save v10) done; slice 2 (machine code + byte addresses, save v11, Code tab / Console redesign, listing pane) in review |
 | M11 | User interface review (after M10) | 🚧 Comms tab, Code tab dump box, Reference → Radio, Mission events: default since 2026-11-13 (save v13); `BRK` reports itself |
 | M12 | Image memory: `SNAP` → `LDB` / `STB` → `SEND` (SPEC §3.8.7, guide [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md)) | ✅ done (bit instructions; image memory in the core, save v14; templates, Reference → Image, Gallery labels + hex view, `SNAP` warning; goal *Darkroom* + first-edit bonus per camera mode, save v15) |
+| **M14** | **Assembler core**: hardware through device ports + `WAIT`, ROM library, RAM / `VAR` / addressing modes / `DATA`, program called like a subroutine (draft [`ASSEMBLER_CORE.md`](ASSEMBLER_CORE.md)) | 📝 design draft, awaiting owner review |
 | M13 | Realism pass 1: watchdog `@WDT`, thermal model + array dust, fault protection `@PREEMPT` (SPEC §3.3.4, §3.9.2, §3.9.5) | 🚧 core, default firmware, *Fault protection* template, Reference, save v16 done; in review (balance numbers to playtest) |
+
+## M14 — Assembler core (design draft)
+
+Owner, 2026-11-13: the game is a fun introduction to how assembler works, so the hardware
+instructions (`STEP`, `SCAN`, …) should become communication with ports, with the old
+instructions as subroutines; bigger memory is fine; programs may need rewriting. Full draft:
+[`ASSEMBLER_CORE.md`](ASSEMBLER_CORE.md) (principle, sizes, devices, `WAIT`, the program as a
+subroutine with a timer interrupt, ROM library and its other uses, memory map, `VAR`,
+addressing modes, `DATA` / `LDF`, examples, machine code, save v17 migration, slices, open
+questions).
+
+Agreed so far: ports instead of hardware instructions; a small ROM library (more uses to be
+considered); Mk-I 512 B Flash, 64 B RAM, 8 cycles per tick; the memory proposal; on
+preemption the firmware decides. `RUN`: counterproposal in the draft (§5), awaiting review.
+
+- [ ] Slice 1: owner review of the draft; rules into SPEC.
+- [ ] Slice 2: memory model.
+- [ ] Slice 3: devices, `WAIT`, ROM, `CALL PROGRAM`, removal of the old instructions, migration.
+- [ ] Slice 4: templates as lessons, image guide, Reference, tests.
 
 ## M13 — Realism pass 1 (in review)
 
@@ -698,3 +718,4 @@ window with a fixed dish?
 | 2026-11-13 | `claude/gallant-bell-hb1kyd` (6) | M12 slice 3: goal *Darkroom* (a lit edited photo, 15 cr); first-edit bonus +5 per camera mode (`editedTypes`, save v15). M12 complete. |
 | 2026-11-13 | `claude/gallant-bell-hb1kyd` (7) | Program templates reworked as lessons (owner: they are teaching material): headers with *Learn* / *Try*, five new templates (Photographer, Field repair, Spiral, Seismic survey, Weather station), Explorer logs acid vents, Prospector `CALL lab` + `PEEK`, Fetch result 2 when blocked; tests: every instruction used, every template run. |
 | 2026-11-13 | `claude/intelligent-faraday-lx8xgo` | Realism review of the virtual hardware; M13 realism pass 1: watchdog `@WDT` (boot reason 5, default firmware kicks it, 158 B), thermal model (`@TEMP`, survival heaters `@HEATER`), array dust (`@SOLAR_DUST`, shed on stow, dust squall), fault protection (`@PREEMPT`, `@BAT_ALARM`, `@PREEMPTED`, `ERR_PREEMPTED`, *Fault protection* firmware template), save v16; remaining realism items in Backlog. |
+| 2026-11-13 | `claude/intelligent-faraday-lx8xgo` (2) | Review of the language and the player's development workflow against real assembler and flight-software practice; M14 *Assembler core* design draft (`docs/ASSEMBLER_CORE.md`): device ports + `WAIT`, ROM library, RAM / `VAR` / addressing modes / `DATA` / `LDF`, the program as a subroutine with a slice timer, migration plan, open questions. |
