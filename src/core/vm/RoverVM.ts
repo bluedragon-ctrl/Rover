@@ -186,6 +186,22 @@ export class RoverVM {
         }
         break;
       }
+      case 'AND':
+        put(a[0], val(a[0]) & val(a[1]));
+        break;
+      case 'OR':
+        put(a[0], val(a[0]) | val(a[1]));
+        break;
+      case 'SHL':
+      case 'SHR': {
+        // Counts are clamped to 0–32: 32 or more shifts every bit out (unlike JS, which
+        // uses the count mod 32). SHR is logical: zeros come in from the left.
+        const n = Math.max(0, Math.min(32, val(a[1])));
+        const x = val(a[0]);
+        if (n === 32) put(a[0], 0);
+        else put(a[0], ins.op === 'SHL' ? x << n : i32(x >>> n));
+        break;
+      }
       case 'JMP':
         jump(a[0]);
         return 'continue';

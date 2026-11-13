@@ -23,7 +23,7 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | ✅ slices 1–6 done (link layer, `LOG`, Console tab; recorder, spectra, Gallery tab; dumps, `BRK`, admin-only debugger; `@POST` display; camera + photos; upgrades, camera modes 3–5, fossil anomalies; save v9) |
 | **M10** | **Firmware + program slot (SPEC §3.9)** | 🚧 slice 1 (core, save v10) done; slice 2 (machine code + byte addresses, save v11, Code tab / Console redesign, listing pane) in review |
 | M11 | User interface review (after M10) | 🚧 Comms tab, Code tab dump box, Reference → Radio, Mission events: default since 2026-11-13 (save v13); `BRK` reports itself |
-| M12 | Image memory: `SNAP` → `LDB` / `STB` → `SEND` (SPEC §3.8.7, guide [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md)) | planned (design + verified examples) |
+| M12 | Image memory: `SNAP` → `LDB` / `STB` → `SEND` (SPEC §3.8.7, guide [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md)) | 🚧 bit instructions `AND` / `OR` / `SHL` / `SHR` + extended opcodes done; image memory planned (design + verified examples) |
 
 ## Done: Flash measured in bytes
 
@@ -432,7 +432,7 @@ pictures, changed photos), reflecting real techniques, but keep the model simple
 player guide [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md) explains the memory layout and has six
 worked examples (line, test pattern, negative, stamp, plot, memory map). The examples were
 run against a prototype of the rules: pictures, cycle counts and Flash sizes are measured
-(all fit beside the default firmware; `plot` is the largest at 103 of 108 B).
+(all fit beside the default firmware; `plot` is the largest at 95 of 108 B).
 
 Decided in the design:
 - **One image memory, four instructions** (`SNAP`, `LDB`, `STB`, `SEND`), no control
@@ -448,6 +448,16 @@ Decided in the design:
   (no shipped program uses `SNAP`). The compiler warns about it.
 
 Slices:
+0. [x] **Bit instructions** (owner, 2026-11-13): `AND`, `OR`, `SHL`, `SHR` (1 cycle,
+       compute, no `@STATUS`; shift counts clamped to 0–32, `SHR` logical). The 5-bit opcode
+       field had only 1D–1F left, so **1F became an extension prefix** (2-byte opcodes
+       `1F 01`–`1F 04`, like Z80 / x86 prefixes); 1D / 1E stay one byte, reserved for
+       `LDB` / `STB`; `SEND` will be `1F 05`. Reference: *Bits* group, hex column shows
+       `1F 01`, Basics → Machine code explains the prefix. Guide: byte recipes (address,
+       read, mask, clear with `OR` + `SUB`, set), `plot` 104 → 95 B and 27 % faster,
+       `put16` with `AND 0xFF` / `SHR 8`. Tests in `tests/vm.test.ts`,
+       `tests/machine-code.test.ts`. No save change (source is recompiled on load; old
+       programs encode as before).
 1. [ ] **Core.** `chassis.imageBytes` (from the installed camera modes, upgrades grow it);
        `SNAP` writes `photoPayload` into image memory at the end of the exposure and keeps
        the capture; `LDB` / `STB` / `SEND` in `isa.ts`, `Compiler.ts`, `RoverVM.ts`;
@@ -465,8 +475,8 @@ Slices:
        *Postcard home* (a drawn picture). Rewards to decide.
 
 Open (decide during slice 1 or in playtests):
-- `plot` needs 103 B on Mk-I. If players find pixels too costly, add `AND` / `OR` / `SHL` /
-  `SHR` (shorter, and needed for compression later), or pixel instructions.
+- ~~`plot` needs 103 B on Mk-I: bit instructions?~~ → added (slice 0). Still open: `XOR` /
+  `NOT` if clearing bits with `OR` + `SUB` proves too obscure.
 - `SEND` energy (0 now: the transmitter pays per byte) and whether drawn pictures earn
   anything beyond goals.
 - Later techniques on top: deleting products from the recorder (triage), holding the
@@ -594,3 +604,4 @@ window with a fixed dish?
 | 2026-11-13 | `ccr-2a541ea4-pbkrmo` (3) | M11 clarity pass: `BRK` sends a register dump by itself (*sent by BRK*, "stopped at the BRK on line 5"); not-running program dumps marked; value comments for state / `@STATUS`; `fw L55` and dump addresses link to the Code tab; waiting estimate; foldable dump box; rejected sends listed in Comms (`engine.sent` `rejected`). |
 | 2026-11-13 | `ccr-2a541ea4-pbkrmo` (4) | Comms is the default: Console tab, `ConsolePanel.ts`, its CSS and the `?comms=1` flag removed; "Console" wording replaced (Reference, shipped firmware comments, admin banner, SPEC). |
 | 2026-11-13 | `claude/gallant-bell-hb1kyd` | M12 designed with the owner: image memory (`SNAP` → `LDB` / `STB` → `SEND`, SPEC §3.8.7) and player guide `docs/IMAGE_MEMORY.md` with six examples checked on a prototype interpreter; multiple rovers dropped from the plan (one rover is plenty of work). |
+| 2026-11-13 | `claude/gallant-bell-hb1kyd` (2) | M12 slice 0: bit instructions `AND` / `OR` / `SHL` / `SHR`, opcode `1F` as extension prefix (2-byte opcodes; 1D / 1E reserved for `LDB` / `STB`), Reference *Bits* group; guide examples `plot` and `put16` rewritten with them and re-checked on the prototype. |

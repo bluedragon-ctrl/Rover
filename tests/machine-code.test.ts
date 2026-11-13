@@ -5,7 +5,7 @@ import { DEFAULT_FIRMWARE, FACTORY_IDLE, PROGRAM_TEMPLATES, TEMPLATES } from '..
 import { deserialize, serialize } from '../src/core/SaveManager';
 import { SimulationEngine } from '../src/core/SimulationEngine';
 import { compile, type Program } from '../src/core/vm/Compiler';
-import { decodeProgram, encodeInstr, formatAddr, OPCODE_NUMBERS, OPCODES } from '../src/core/vm/isa';
+import { decodeProgram, encodeInstr, EXT_OPCODE_NUMBERS, EXT_PREFIX, formatAddr, OPCODE_NUMBERS, OPCODES, opcodeHex } from '../src/core/vm/isa';
 import { createDefaultRegistry } from '../src/core/WorldRegistry';
 
 const consts = createDefaultRegistry().constants();
@@ -19,8 +19,41 @@ const bytesOf = (src: string) => hex(prog(src).code);
 
 describe('machine code (SPEC §5.7.1)', () => {
   it('has fixed opcode numbers in §5.4 order: MOV 01 … BRK 1A, RUN 1B, END 1C', () => {
-    expect(OPCODES.map((op) => OPCODE_NUMBERS[op])).toEqual(OPCODES.map((_, i) => i + 1));
+    const base = OPCODES.filter((op) => !(op in EXT_OPCODE_NUMBERS));
+    expect(base.map((op) => OPCODE_NUMBERS[op])).toEqual(base.map((_, i) => i + 1));
     expect([OPCODE_NUMBERS.MOV, OPCODE_NUMBERS.JLE, OPCODE_NUMBERS.BRK, OPCODE_NUMBERS.RUN, OPCODE_NUMBERS.END]).toEqual([0x01, 0x0e, 0x1a, 0x1b, 0x1c]);
+  });
+
+  it('gives every instruction exactly one opcode; 1D–1E are reserved, 1F is the extension prefix', () => {
+    for (const op of OPCODES) expect((OPCODE_NUMBERS[op] === undefined) !== (EXT_OPCODE_NUMBERS[op] === undefined)).toBe(true);
+    const base = Object.values(OPCODE_NUMBERS);
+    expect(Math.max(...base)).toBeLessThan(0x1d);
+    expect(EXT_PREFIX).toBe(0x1f);
+    expect([EXT_OPCODE_NUMBERS.AND, EXT_OPCODE_NUMBERS.OR, EXT_OPCODE_NUMBERS.SHL, EXT_OPCODE_NUMBERS.SHR]).toEqual([1, 2, 3, 4]);
+    expect(opcodeHex('AND')).toBe('1F 01');
+    expect(opcodeHex('ADD')).toBe('04');
+  });
+
+  it('encodes bit instructions with a 2-byte opcode and decodes them back', () => {
+    const src = 'AND r0 3\nOR r1 @POST\nSHL r2 r0\nSHR r3 -1';
+    expect(bytesOf(src)).toBe('1F 01 10 03 1F 02 11 74 1F 03 12 10 1F 04 13 18 FF'.replace('74', hex([0x40 | PORT_CODES.indexOf('POST')])));
+    const p = prog(src);
+    expect(p.instrs.map((i) => i.size)).toEqual([4, 4, 4, 5]);
+    expect(p.code.length).toBe(17);
+    const back = decodeProgram(p.code);
+    expect(back.map((i) => i.op)).toEqual(['AND', 'OR', 'SHL', 'SHR']);
+    expect(back.map((i) => i.addr)).toEqual([0, 4, 8, 12]);
+    expect(back[3].args).toEqual([{ k: 'reg', i: 3 }, { k: 'imm', v: -1 }]);
+  });
+
+  it('counts the 2-byte opcode for label addresses', () => {
+    const p = prog('AND r0 1\nhere: JMP here');
+    expect(bytesOf('AND r0 1\nhere: JMP here')).toBe('1F 01 10 01 09 00 04');
+    expect(p.instrs[1].addr).toBe(4);
+  });
+
+  it('rejects an unknown extended opcode', () => {
+    expect(() => decodeProgram([0x1f, 0x7f])).toThrow(/Unknown opcode/);
   });
 
   it('gives every port a unique fixed number 0–63', () => {

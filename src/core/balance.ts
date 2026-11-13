@@ -81,6 +81,7 @@ export const BALANCE = {
  */
 export const ENCODING = {
   opcode: 1,
+  extOpcode: 2, // extension prefix 1F + the instruction's number (AND, OR, SHL, SHR)
   register: 1, // operand byte: addressing mode + register index
   port: 1, // operand byte: addressing mode + port number
   shortImm: 1, // 0..shortImmMax packed into the operand byte itself

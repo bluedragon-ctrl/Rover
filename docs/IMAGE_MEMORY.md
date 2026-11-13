@@ -5,7 +5,8 @@ Status: **design, not built yet.** Rules in [`SPEC.md`](SPEC.md) §3.8.7, plan i
 **Reference → Image** sub-tab, and the six examples become Code tab program templates
 (compiled and run in tests, like every shipped program). All six examples have been run
 against a prototype of these rules: the pictures, byte values, cycle counts and Flash sizes
-below are measured, not guessed.
+below are measured, not guessed. The bit instructions they use (`AND`, `OR`, `SHL`, `SHR`)
+are already in the game.
 
 ---
 
@@ -45,6 +46,12 @@ and only those products are sent to Earth.
 | `SEND [type]` | blocks 1 tick | Copy image memory into the recorder as a product of `type` (default: the mode of the last `SNAP`). Writes `@STATUS`: `ERR_FULL` (no room in the recorder), `ERR_INVALID` (bad type, or the type is bigger than image memory). |
 
 `LDB` and `STB` are compute instructions like `MOV`: no energy, no `@STATUS`.
+
+The **bit instructions** `AND`, `OR`, `SHL`, `SHR` (1 cycle each, compute) are made for
+taking bytes apart (§3): `AND dst mask` keeps only the bits set in `mask`, `OR dst bits`
+sets bits, `SHL dst n` / `SHR dst n` move all bits `n` places left / right (zeros come in;
+`SHL 2` = × 4, `SHR 2` = / 4). Their opcode is 2 bytes (`1F 01` …), so each costs one
+Flash byte more than `ADD`.
 
 ## 3. How a picture is stored
 
@@ -90,8 +97,19 @@ Handy byte values:
 | `192` = `0xC0` | `11 00 00 00` | white, then three black |
 | `3` = `0x03` | `00 00 00 11` | three black, then white |
 
-To read one pixel: `(byte / weight) MOD 4`. To change one pixel, take its old value out
-and put the new one in: `byte − old × weight + new × weight` (example 5 does exactly this).
+Pixel `k` of a byte (k = x AND 3) sits `shift = 6 − 2k` bits up: 6, 4, 2 or 0. With the
+bit instructions:
+
+| Task | Code | Example (byte `0xD8` = `11 01 10 00`, pixel 1) |
+| :--- | :--- | :--- |
+| byte address | `y SHL 3` + `x SHR 2` | (5, 2): 2 × 8 + 1 = 17 |
+| read a pixel | `(byte SHR shift) AND 3` | `0xD8 SHR 4` = `1101`, `AND 3` = 1 |
+| mask of a pixel | `3 SHL shift` | `3 SHL 4` = `00 11 00 00` |
+| clear a pixel | `OR mask`, then `SUB mask` (there is no NOT) | `11 11 10 00` − `00 11 00 00` = `11 00 10 00` |
+| set its colour | `OR (colour SHL shift)` | `OR 2 SHL 4` = `11 10 10 00` |
+
+Without bit instructions the same works with arithmetic: read = `(byte / weight) MOD 4`,
+change = `byte − old × weight + new × weight`; slower, but just as correct.
 
 ### Other camera modes (upgrades)
 
@@ -130,9 +148,9 @@ In mode 5 one byte is one pixel: **address = y × 32 + x**, the easiest mode to 
   three times longer than sending it (128 ticks at full signal). The firmware runs your
   program in time slices, so long loops just take several slices. *CPU overclock*
   upgrades make processing faster.
-* **Flash.** Every example fits next to the default firmware (108 B free on Mk-I). The
-  pixel routine of example 5 is the largest (103 B): delete a comfort block of the firmware
-  if you want to add more to it.
+* **Flash.** Every example fits next to the default firmware (108 B free on Mk-I).
+  Example 5 is the largest (95 B): delete a comfort block of the firmware if you want to
+  add more to it.
 
 ## 5. Examples
 
@@ -140,11 +158,11 @@ Measured on Mk-I (4 cycles per tick). Ticks are CPU time only; the `SNAP` adds 1
 
 | # | Example | Teaches | Flash | CPU time |
 | :--- | :--- | :--- | :--- | :--- |
-| 1 | Line | rows, addresses, clearing | 40 B | 796 cycles ≈ 200 ticks |
-| 2 | Test pattern | grey levels, computing from the address | 33 B | 1795 cycles ≈ 450 ticks |
-| 3 | Negative | `SNAP` → change → `SEND` | 40 B | 1541 cycles ≈ 390 ticks |
-| 4 | Stamp | numbers as bytes, negative numbers | 61 B | 29 cycles ≈ 8 ticks |
-| 5 | Plot | single pixels inside a byte | 103 B | 1061 cycles ≈ 270 ticks |
+| 1 | Line | rows, addresses, clearing | 41 B | 796 cycles ≈ 200 ticks |
+| 2 | Test pattern | grey levels, computing from the address | 34 B | 1795 cycles ≈ 450 ticks |
+| 3 | Negative | `SNAP` → change → `SEND` | 41 B | 1541 cycles ≈ 390 ticks |
+| 4 | Stamp | numbers as bytes (masks and shifts), negative numbers | 60 B | 27 cycles ≈ 7 ticks |
+| 5 | Plot | single pixels inside a byte (bit instructions) | 95 B | 773 cycles ≈ 190 ticks |
 | 6 | Memory map | image memory as plain RAM | 86 B | runs forever |
 
 ### Example 1: Line, your first picture
@@ -223,8 +241,8 @@ fail:   END 0
 
 The read → change → write loop is the heart of all image processing. The photo arrives
 labelled *edited*, and still earns its credits: it is the first `SEND` after the `SNAP`.
-**Try:** brighten the photo (each pixel +1, but not above 3: you need the pixel routine
-of example 5, or a cleverer byte trick); mirror it left to right.
+**Try:** brighten the photo (each pixel +1, but not above 3: use the recipe of §3, or a
+cleverer byte trick); mirror it left to right.
 
 ### Example 4: Stamp, numbers as bytes
 
@@ -251,10 +269,9 @@ fail:   END 0
 
 ; put16: write value as two bytes (high, low) at addr; addr += 2
 put16:  MOV low value
-        MOD low 256           ; low byte 0–255 (MOD is never negative)
-        SUB value low
-        DIV value 256         ; now exact, also for negative values
-        MOD value 256         ; high byte: −300 → FE D4
+        AND low 0xFF          ; keep bits 7–0: the low byte
+        SHR value 8           ; bits 15–8 move down to 7–0
+        AND value 0xFF        ; the high byte: −300 → FE D4
         STB addr value
         ADD addr 1
         STB addr low
@@ -263,7 +280,10 @@ put16:  MOV low value
 ```
 
 At (5, −300) the first bytes are `00 05 FE D4`: 5, and −300 in 16-bit two's complement,
-high byte first, the same way the radio sends numbers (Reference → Radio). The top-left
+high byte first, the same way the radio sends numbers (Reference → Radio). `AND 0xFF`
+keeps the lowest 8 bits; `SHR 8` moves the next 8 down. Because `SHR` fills with zeros, this
+works for negative numbers too (without bit instructions: `MOD 256` for the low byte, then
+subtract it and `DIV 256`). The top-left
 corner of the photo shows them as a few odd pixels. **Try:** add `@TICK` (use 4 bytes:
 call a `put16` for the high and the low half); stamp `@SUN_LIGHT` to see why a photo
 came out dark.
@@ -288,36 +308,32 @@ diag:   MOV r1 r0             ; y = x
 fail:   END 0
 
 ; plot: pixel (r0 = x, r1 = y) = colour r2 (0–3).
-; Keeps r0 and r1; changes r2 and r3.
+; Keeps r0; changes r1, r2 and r3.
 plot:   PUSH r0
-        PUSH r1
-        MUL r1 8              ; row start: y × 8
+        SHL r1 3              ; y × 8: start of the row
         MOV r3 r0
-        DIV r3 4
-        ADD r1 r3             ; r1 = address: y × 8 + x / 4
-        MOD r0 4              ; r0 = pixel in the byte (0 = leftmost)
-        MOV r3 64             ; weight of pixel 0 (bits 7–6)
-weight: JEQ r0 0 have
-        DIV r3 4              ; next pixel: 16, 4, 1
-        SUB r0 1
-        JMP weight
-have:   MUL r2 r3             ; new colour × weight
-        LDB r0 r1
-        PUSH r0               ; keep the byte
-        DIV r0 r3
-        MOD r0 4              ; old colour of the pixel
-        MUL r0 r3             ; old colour × weight
-        POP r3                ; r3 = the byte
-        SUB r3 r0             ; take the old colour out...
-        ADD r3 r2             ; ...put the new one in
+        SHR r3 2              ; x / 4
+        ADD r1 r3             ; r1 = address of the byte
+        AND r0 3              ; pixel in the byte (0 = leftmost)
+        MOV r3 3
+        SUB r3 r0
+        SHL r3 1              ; r3 = shift: 6, 4, 2 or 0
+        SHL r2 r3             ; new colour moved into place
+        MOV r0 3
+        SHL r0 r3             ; r0 = mask: the pixel's two bits
+        LDB r3 r1             ; the byte
+        OR r3 r0              ; set the pixel's bits...
+        SUB r3 r0             ; ...and take them away: now 00
+        OR r3 r2              ; put the new colour in
         STB r1 r3
-        POP r1
         POP r0
         RET
 ```
 
-`plot` is a reusable routine: copy it into your own programs. With only four registers it
-saves `x` and `y` on the data stack and restores them before `RET`. **Try:** draw the
+`plot` is a reusable routine: copy it into your own programs. It follows the recipe of
+§3: address, shift, mask, clear the old colour (`OR` then `SUB`, as there is no NOT), put
+the new one in. With only four registers it saves `x` on the data stack; the caller sets
+`y` again for every pixel. **Try:** draw the
 other diagonal (y = 31 − x); a crosshair through the centre; your initials in a corner of
 a photo; a filled square.
 

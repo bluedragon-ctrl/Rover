@@ -38,7 +38,7 @@ integer lookup tables.
 
 Each tick, every powered rover's CPU receives `cyclesPerTick` cycles.
 
-* **Compute instructions** (`MOV`, arithmetic, stack, jumps, `CALL`/`RET`, `PEEK`) cost
+* **Compute instructions** (`MOV`, arithmetic, bit instructions, stack, jumps, `CALL`/`RET`, `PEEK`) cost
   **1 cycle** each. Several run per tick.
 * **Hardware instructions** (`SCAN`, `STEP`, `ACT`, `USE`, `SLEEP`) **end the current
   tick** and may block the CPU for a number of ticks while the physical action happens.
@@ -515,9 +515,10 @@ readable and writable. Player guide with six worked examples: [`IMAGE_MEMORY.md`
 * **`SNAP dir [mode]`** (timing, energy, subject and light rules unchanged, §3.8.5)
   writes the photo's bytes (layout §3.8.5) into image memory instead of the recorder and
   remembers the **capture** (the descriptor and the mode). `ERR_FULL` no longer applies.
-* **`LDB dst addr`** / **`STB addr src`** (1 cycle each, compute: no energy, no `@STATUS`):
-  read a byte (0–255) / write `src & 255`. Addresses wrap modulo the memory size.
-* **`SEND [type]`** (hardware, blocks 1 tick, no energy): copies the first
+* **`LDB dst addr`** / **`STB addr src`** (1 cycle each, compute: no energy, no `@STATUS`;
+  opcodes 1D / 1E): read a byte (0–255) / write `src & 255`. Addresses wrap modulo the
+  memory size. The bit instructions (`AND`, `OR`, `SHL`, `SHR`, §5.4) take pixels apart.
+* **`SEND [type]`** (hardware, blocks 1 tick, no energy; extended opcode `1F 05`): copies the first
   `photoBytes(type)` bytes into the recorder as a product of `type` (photo types 1–5;
   default: the mode of the last `SNAP`, else 1). Writes `@STATUS`: `OK`; `ERR_FULL` if
   the recorder lacks room; `ERR_INVALID` for a bad type or one larger than image memory.
@@ -746,6 +747,8 @@ friction, but the set should stay small enough to learn in one sitting.
 | Arithmetic | `ADD dst src` / `SUB` / `MUL` | 1 cycle | 32-bit signed, wraps. |
 | | `DIV dst src` | 1 cycle | Truncates toward zero. Divide by 0 → `dst = 0`, `@STATUS = ERR_INVALID`. |
 | | `MOD dst src` | 1 cycle | **Euclidean**: result is never negative for positive `src` (`-1 MOD 4 = 3`). Turning is `ADD dir 1` + `MOD dir 4`. |
+| Bits | `AND dst src` / `OR dst src` | 1 cycle | **[M12]** Bitwise on the 32-bit value (`0xB6 AND 0x0F` = `0x06`, `0x50 OR 3` = `0x53`). 2-byte opcode (§5.7.1). |
+| | `SHL dst n` / `SHR dst n` | 1 cycle | **[M12]** Shift left / right by `n` bits; zeros come in (`SHR` is logical: `-8 SHR 1` = `0x7FFFFFFC`; use `DIV` for signed division). `n` is clamped to 0–32, so 32 or more gives 0. No `@STATUS`. 2-byte opcode. |
 | Flow | `JMP label` | 1 cycle | |
 | | `JEQ / JNE / JLT / JGT / JLE / JGE a b label` | 1 cycle | Compare and branch. |
 | | `CALL label [args...]` | 1 cycle | Pushes args in order to the data stack, return address to the call stack. |
@@ -828,7 +831,7 @@ speed (every compute instruction is still 1 cycle). Numbers live in `ENCODING`
 
 | Element | Bytes | Notes |
 | :--- | :--- | :--- |
-| Opcode | 1 | |
+| Opcode | 1 | 2 for extended instructions (`AND`, `OR`, `SHL`, `SHR`; §5.7.1). |
 | Register / alias | 1 | Operand byte: addressing mode + register index. |
 | Port | 1 | Operand byte: addressing mode + port number. |
 | Immediate 0…15 | 1 | Packed into the operand byte (short immediate). |
@@ -850,7 +853,14 @@ slot, assembled on the ground (free) while typing.
 
 * **Opcode byte** `kkknnnnn`: `nnnnn` is the instruction from a fixed table (`MOV` 01,
   `PUSH` 02, … `BRK` 1A, `RUN` 1B, `END` 1C, in §5.4 order; the Reference tab lists them);
-  new instructions get new numbers (up to 1F), old ones never change. `kkk` counts the
+  old numbers never change. 1D and 1E are reserved for the planned `LDB` / `STB` (§3.8.7),
+  the most frequent instructions of image loops.
+* **Extended instructions:** `nnnnn` = `1F` is a prefix; the next byte is the
+  instruction's number in a second table (append only): `AND` 01, `OR` 02, `SHL` 03,
+  `SHR` 04 (planned: `SEND` 05). Like the prefix bytes of real CPUs (Z80 `CB` / `ED`, x86
+  `0F`): one byte longer, same speed. `AND r0 3` = `1F 01 10 03`. `kkk` in the prefix byte
+  counts optional operands as usual.
+* `kkk` counts the
   optional operands present (`STEP d [n]`, `END [v]`, the arguments of `CALL`), because a
   short-immediate or register byte looks like an opcode: `STEP 1` = `14 01`,
   `STEP 1 2` = `34 01 02`, `END 1` = `3C 01`. Hence `CALL` passes at most 7 arguments.

@@ -11,6 +11,7 @@ import { PORT_CODES } from '../ports';
 export type Op =
   | 'MOV' | 'PUSH' | 'POP'
   | 'ADD' | 'SUB' | 'MUL' | 'DIV' | 'MOD'
+  | 'AND' | 'OR' | 'SHL' | 'SHR'
   | 'JMP' | 'JEQ' | 'JNE' | 'JLT' | 'JGT' | 'JLE' | 'JGE'
   | 'CALL' | 'RET'
   | 'SLEEP' | 'SCAN' | 'STEP' | 'ACT' | 'PEEK' | 'USE' | 'SNAP'
@@ -52,6 +53,10 @@ export const SIGNATURES: Record<Op, string[]> = {
   MUL: ['m', 'v'],
   DIV: ['m', 'v'],
   MOD: ['m', 'v'],
+  AND: ['m', 'v'],
+  OR: ['m', 'v'],
+  SHL: ['m', 'v'],
+  SHR: ['m', 'v'],
   JMP: ['l'],
   JEQ: ['v', 'v', 'l'],
   JNE: ['v', 'v', 'l'],
@@ -79,9 +84,10 @@ export const HARDWARE_OPS: ReadonlySet<Op> = new Set(['SLEEP', 'SCAN', 'STEP', '
 
 /**
  * Fixed opcode numbers (SPEC §5.7.1), in §5.4 order. Append only: never renumber.
- * The low 5 bits of the opcode byte hold this number (1–31).
+ * The low 5 bits of the opcode byte hold this number (1–30). 1D and 1E are reserved for
+ * the planned image-memory `LDB` / `STB` (SPEC §3.8.7); 1F is the extension prefix.
  */
-export const OPCODE_NUMBERS: Readonly<Record<Op, number>> = {
+export const OPCODE_NUMBERS: Readonly<Partial<Record<Op, number>>> = {
   MOV: 0x01, PUSH: 0x02, POP: 0x03,
   ADD: 0x04, SUB: 0x05, MUL: 0x06, DIV: 0x07, MOD: 0x08,
   JMP: 0x09, JEQ: 0x0a, JNE: 0x0b, JLT: 0x0c, JGT: 0x0d, JLE: 0x0e, JGE: 0x0f,
@@ -90,7 +96,34 @@ export const OPCODE_NUMBERS: Readonly<Record<Op, number>> = {
   LOG: 0x19, BRK: 0x1a,
   RUN: 0x1b, END: 0x1c,
 };
+
+/**
+ * Extended instructions (SPEC §5.7.1): the opcode byte holds `EXT_PREFIX` (with the optional
+ * operand count in its top 3 bits as usual) and the next byte holds this number. Like the
+ * prefix bytes of real CPUs (Z80 `CB` / `ED`, x86 `0F`): one byte longer, same speed.
+ * Append only: never renumber.
+ */
+export const EXT_PREFIX = 0x1f;
+export const EXT_OPCODE_NUMBERS: Readonly<Partial<Record<Op, number>>> = {
+  AND: 0x01, OR: 0x02, SHL: 0x03, SHR: 0x04,
+};
 const OP_BY_NUMBER = new Map(Object.entries(OPCODE_NUMBERS).map(([op, n]) => [n, op as Op]));
+const OP_BY_EXT_NUMBER = new Map(Object.entries(EXT_OPCODE_NUMBERS).map(([op, n]) => [n, op as Op]));
+
+/** The opcode bytes of `op` without the optional-operand count: `[0x04]` (ADD), `[0x1F, 0x01]` (AND). */
+export function opcodeBytes(op: Op): number[] {
+  const ext = EXT_OPCODE_NUMBERS[op];
+  if (ext !== undefined) return [EXT_PREFIX, ext];
+  const n = OPCODE_NUMBERS[op];
+  if (n === undefined) throw new Error(`${op} has no opcode number`);
+  return [n];
+}
+
+/** Opcode as the Reference tab shows it: `04`, `1F 01`. */
+export const opcodeHex = (op: Op): string => opcodeBytes(op).map((b) => b.toString(16).toUpperCase().padStart(2, '0')).join(' ');
+
+/** Size of the opcode in bytes: 1, or 2 for an extended instruction. */
+export const opcodeSize = (op: Op): number => (EXT_OPCODE_NUMBERS[op] !== undefined ? ENCODING.extOpcode : ENCODING.opcode);
 
 /**
  * The top 3 bits of the opcode byte count the optional operands present (`STEP d [n]`,
@@ -137,8 +170,8 @@ export function operandBytes(o: Operand): number {
   }
 }
 
-export function instrBytes(i: Pick<Instr, 'args'>): number {
-  return i.args.reduce<number>((n, o) => n + operandBytes(o), ENCODING.opcode);
+export function instrBytes(i: Pick<Instr, 'op' | 'args'>): number {
+  return i.args.reduce<number>((n, o) => n + operandBytes(o), opcodeSize(i.op));
 }
 
 /** Number of operands a signature always has (before the optional / variadic ones). */
@@ -158,7 +191,8 @@ const portNumber = new Map(PORT_CODES.map((name, i) => [name, i]));
 export function encodeInstr(ins: Pick<Instr, 'op' | 'args'>): number[] {
   const optional = ins.args.length - requiredOperands(ins.op);
   if (optional < 0 || optional > MAX_OPTIONAL) throw new Error(`${ins.op}: ${ins.args.length} operands cannot be encoded`);
-  const out = [OPCODE_NUMBERS[ins.op] | (optional << OPT_SHIFT)];
+  const [first, ...rest] = opcodeBytes(ins.op);
+  const out = [first | (optional << OPT_SHIFT), ...rest];
   for (const o of ins.args) {
     switch (o.k) {
       case 'reg':
@@ -212,8 +246,9 @@ export function decodeProgram(code: ArrayLike<number>): DecodedInstr[] {
   while (at < code.length) {
     const addr = at;
     const ob = byte();
-    const op = OP_BY_NUMBER.get(ob & OP_MASK);
-    if (!op) throw new DecodeError(`Unknown opcode 0x${ob.toString(16)} at 0x${addr.toString(16)}`);
+    const ext = (ob & OP_MASK) === EXT_PREFIX ? byte() : null;
+    const op = ext === null ? OP_BY_NUMBER.get(ob & OP_MASK) : OP_BY_EXT_NUMBER.get(ext);
+    if (!op) throw new DecodeError(`Unknown opcode 0x${ob.toString(16)}${ext === null ? '' : ` ${ext.toString(16)}`} at 0x${addr.toString(16)}`);
     const sig = SIGNATURES[op];
     const count = requiredOperands(op) + (ob >> OPT_SHIFT);
     if (!sig.some((s) => s.endsWith('*')) && count > sig.length) throw new DecodeError(`${op} at 0x${addr.toString(16)} cannot have ${count} operands`);
