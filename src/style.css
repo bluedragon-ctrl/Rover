@@ -58,6 +58,7 @@ main { display: flex; height: calc(100% - 44px); }
 #log { height: 110px; overflow: auto; border-top: 1px solid var(--line); padding: 4px 8px; font-family: var(--mono); font-size: 11px; }
 #log .warn { color: var(--warn); } #log .error { color: var(--bad); } #log .info { color: var(--dim); }
 #reference table { border-collapse: collapse; width: 100%; } #reference td { border-bottom: 1px solid var(--line); padding: 3px 4px; vertical-align: top; }
+#reference h3 { margin: 16px 0 2px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); border-bottom: 1px solid var(--line); padding-bottom: 2px; }
 #reference h4 { margin: 12px 0 4px; color: var(--accent); }
 .consts code { display: inline-block; margin: 1px 2px; }
 .consts code[hidden] { display: none; }
@@ -74,7 +75,7 @@ main { display: flex; height: calc(100% - 44px); }
 .ref-pane[data-ref=instr] td:first-child { width: 42%; }
 .ref-pane[data-ref=ports] td:first-child { width: 128px; } .ref-pane[data-ref=ports] td:nth-child(3) { width: 26px; }
 .ref-pane[data-ref=tools] td:first-child { width: 150px; }
-.ref-pane[data-ref=registry] td:first-child { width: 108px; } .ref-pane[data-ref=registry] td:nth-child(3) { width: 96px; }
+.ref-pane[data-ref=consts] td:first-child { width: 108px; } .ref-pane[data-ref=consts] td:nth-child(3) { width: 96px; }
 #console-list { font-family: var(--mono); font-size: 11px; flex: 1; min-height: 140px; overflow: auto; border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; }
 #console-list .hex { color: #5d7a9a; }
 #console-list .warn { color: var(--warn); }

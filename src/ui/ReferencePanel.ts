@@ -4,6 +4,7 @@ import { formatSig, OPCODES } from '../core/vm/Compiler';
 import type { TileDef, WorldRegistry } from '../core/WorldRegistry';
 import { CHASSIS_MK1, ENCODING as E } from '../core/balance';
 import { TOOLS } from '../core/tools';
+import { UPGRADES } from '../core/upgrades';
 import { Alert, Dir, Layer, LightColor, ProgState, Status, SystemId } from '../core/types';
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
@@ -59,7 +60,7 @@ const SECTIONS = [
   ['instr', 'Instructions'],
   ['ports', 'Ports'],
   ['tools', 'Tools'],
-  ['registry', 'Registry'],
+  ['consts', 'Constants'],
 ] as const;
 
 /** Split `items` into the named groups (in order) plus an "Other" group for leftovers. */
@@ -91,6 +92,13 @@ function basicsHtml(): string {
     The program loops back to the top when it runs off the end.
     Compute instructions are fast (several per tick); hardware instructions (<code>SCAN STEP SLEEP ACT USE SNAP</code>) end the tick and take time.
     Names are case-insensitive.</p>
+    <h4>Registers</h4>
+    <p>The Mk-I has ${CHASSIS_MK1.registers} registers, <code>r0</code>–<code>r${CHASSIS_MK1.registers - 1}</code>${regUpgrades()}.
+    Each holds a signed 32-bit integer that wraps on overflow. All of them are general purpose: no register has a fixed meaning,
+    and any of them can hold a direction, a count, a tile ID or a coordinate (<code>STEP r2</code>, <code>JEQ r1 IRON_ORE found</code>).
+    <code>ALIAS r0 dir</code> gives a register a name (free, compile time only); the shipped firmware's <code>dir</code> is just its own choice.
+    The firmware and the program each have their own set. A reboot (upload or watchdog) zeroes them; a register the chassis
+    does not have is a compile error.</p>
     <h4>Program size</h4>
     <p>Flash is counted in bytes: opcode ${E.opcode} B; register ${E.register} B; port ${E.port} B;
     number 0–${E.shortImmMax} ${E.shortImm} B, −128…127 ${E.imm8} B, up to ±32767 ${E.imm16} B, larger ${E.imm32} B; label used as a jump/call target ${E.label} B.
@@ -166,7 +174,13 @@ function tileNotes(d: TileDef): string {
   return n.join(' · ');
 }
 
-function registryHtml(registry: WorldRegistry): string {
+/** ` (upgrades: …)` listing the register-file upgrades, or nothing. */
+function regUpgrades(): string {
+  const ups = UPGRADES.filter((u) => u.id.startsWith('REGS_'));
+  return ups.length ? `; upgrades: ${ups.map((u) => `<b>${esc(u.title)}</b>`).join(', ')}, values kept` : '';
+}
+
+function constantsHtml(registry: WorldRegistry): string {
   const layers = enumEntries(Layer).sort((a, b) => a[1] - b[1]);
   const tiles = layers
     .map(([layer, lv]) => {
@@ -180,8 +194,11 @@ function registryHtml(registry: WorldRegistry): string {
   const consts = CONST_GROUPS.map(([title, e]) => `<h4>${title}</h4>${constList(enumEntries(e))}`).join('');
   const toolSlots = constList(CHASSIS_MK1.tools.map((_, i) => [`TOOL_${i}`, i]));
   return `
+    <p class="small dim">Names that stand for a fixed number; usable wherever a value goes. Your own: <code>CONST NAME 5</code>.</p>
+    <h3>Tiles</h3>
     <p class="small dim">Every tile name is a constant: <code>SCAN</code>, <code>PEEK</code> and <code>@GROUND</code> return these IDs; <code>NONE=0</code>.</p>
     ${tiles}
+    <h3>Other constants</h3>
     ${consts}
     <h4>Hardpoints (ACT)</h4>${toolSlots}`;
 }
@@ -193,7 +210,7 @@ export function renderReference(el: HTMLElement, registry: WorldRegistry): void 
     instr: instructionsHtml(),
     ports: portsHtml(),
     tools: toolsHtml(),
-    registry: registryHtml(registry),
+    consts: constantsHtml(registry),
   };
   el.innerHTML = `
     <div class="ref-head">
@@ -215,6 +232,13 @@ export function renderReference(el: HTMLElement, registry: WorldRegistry): void 
       if (!body || (body.tagName !== 'TABLE' && !body.classList.contains('consts'))) return;
       const visible = body.querySelector(body.tagName === 'TABLE' ? 'tr:not([hidden])' : 'code:not([hidden])');
       h.hidden = body.hidden = q !== '' && !visible;
+    });
+    // Hide a part heading (h3) when every section under it is hidden.
+    pane.querySelectorAll<HTMLElement>('h3').forEach((h) => {
+      let any = false;
+      for (let n = h.nextElementSibling as HTMLElement | null; n && n.tagName !== 'H3'; n = n.nextElementSibling as HTMLElement | null)
+        if (n.tagName === 'H4' && !n.hidden) any = true;
+      h.hidden = q !== '' && !any;
     });
   };
   filter.addEventListener('input', applyFilter);
