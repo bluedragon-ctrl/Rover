@@ -23,7 +23,8 @@ const NOTES: Record<string, string> = {
   SNAP: 'photograph the subject in dir into image memory (see Tools); nothing is sent until SEND. Mk-I modes 1 (grey) and 2 (dithered), 256 B each; needs daylight or the headlight aimed at dir',
   LDB: 'dst = byte at addr of image memory (0–255); the address wraps at the memory size (Mk-I 256 B). 1 cycle, no @STATUS',
   STB: 'byte at addr of image memory = v (only the low 8 bits: 256 → 0, −1 → 255). 1 cycle, no @STATUS. Makes the next SEND of the photo "edited"',
-  SEND: 'copy image memory into the science recorder as a photo of [type] (default: the last SNAP\'s mode; SEND 1 = 32×32 grey). The first SEND after a SNAP carries its credits; any other SEND is a "drawn" picture worth nothing. 1 tick; ERR_FULL (recorder), ERR_INVALID (type)',
+  SEND: 'copy image memory into the science recorder as a photo of [type] (default: the last SNAP\'s mode; SEND 1 = 32×32 grey). The first SEND after a SNAP carries its credits; any other SEND is a "drawn" picture worth nothing. Image memory is kept. 1 tick, 10 energy; ERR_FULL (recorder), ERR_INVALID (type), ERR_LOW_POWER',
+  ERASE: 'zero all of image memory and forget the last SNAP (the next SEND is a drawn picture). Image memory keeps its contents through reboots and power loss until ERASE or a new SNAP. 2 ticks, 10 energy',
   LOG: 'queue a log frame for the downlink (Comms tab). tag: number or CONST 0–14 (15 = system). 1 cycle, no @STATUS; dropped if the FIFO is full (@LOG_LOST)',
   BRK: 'breakpoint: halt the CPU (HALTED) until mission control sends Resume (Continue) or you upload; the world keeps running, no watchdog. The rover sends a register dump by itself (Comms: "sent by BRK"). 1 cycle. In a program: halts only the program (PROG_HALTED)',
   RUN: 'firmware only: run the program for N ticks (a STEP or SLEEP in progress finishes first), then continue here. @STATUS ERR_INVALID if @PROG_STATE is not PROG_READY',
@@ -37,7 +38,7 @@ const OP_GROUPS: [string, Op[]][] = [
   ['Bits (2-byte opcodes)', ['AND', 'OR', 'SHL', 'SHR']],
   ['Flow control', ['JMP', 'JEQ', 'JNE', 'JLT', 'JGT', 'JLE', 'JGE', 'CALL', 'RET']],
   ['Hardware (end the tick, write @STATUS)', ['SLEEP', 'SCAN', 'STEP', 'ACT', 'PEEK', 'USE', 'SNAP']],
-  ['Image memory (SNAP → LDB / STB → SEND)', ['LDB', 'STB', 'SEND']],
+  ['Image memory (SNAP → LDB / STB → SEND)', ['LDB', 'STB', 'SEND', 'ERASE']],
   ['Program, log and debug', ['RUN', 'END', 'LOG', 'BRK']],
 ];
 
@@ -100,7 +101,7 @@ function basicsHtml(): string {
     <h4>Syntax</h4>
     <p>One instruction per line. <code>label:</code> marks a jump target, <code>;</code> starts a comment.
     The program loops back to the top when it runs off the end.
-    Compute instructions are fast (several per tick); hardware instructions (<code>SCAN STEP SLEEP ACT USE SNAP SEND</code>) end the tick and take time.
+    Compute instructions are fast (several per tick); hardware instructions (<code>SCAN STEP SLEEP ACT USE SNAP SEND ERASE</code>) end the tick and take time.
     Names are case-insensitive.</p>
     <h4>Registers</h4>
     <p>The Mk-I has ${CHASSIS_MK1.registers} registers, <code>r0</code>–<code>r${CHASSIS_MK1.registers - 1}</code>${regUpgrades()}.

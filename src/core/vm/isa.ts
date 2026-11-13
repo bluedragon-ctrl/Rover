@@ -17,7 +17,7 @@ export type Op =
   | 'SLEEP' | 'SCAN' | 'STEP' | 'ACT' | 'PEEK' | 'USE' | 'SNAP'
   | 'LOG' | 'BRK'
   | 'RUN' | 'END'
-  | 'LDB' | 'STB' | 'SEND';
+  | 'LDB' | 'STB' | 'SEND' | 'ERASE';
 
 export type Operand =
   | { k: 'imm'; v: number }
@@ -81,10 +81,11 @@ export const SIGNATURES: Record<Op, string[]> = {
   LDB: ['d', 'v'],
   STB: ['v', 'v'],
   SEND: ['v?'],
+  ERASE: [],
 };
 
 export const OPCODES = Object.keys(SIGNATURES) as Op[];
-export const HARDWARE_OPS: ReadonlySet<Op> = new Set(['SLEEP', 'SCAN', 'STEP', 'ACT', 'USE', 'SNAP', 'RUN', 'SEND']);
+export const HARDWARE_OPS: ReadonlySet<Op> = new Set(['SLEEP', 'SCAN', 'STEP', 'ACT', 'USE', 'SNAP', 'RUN', 'SEND', 'ERASE']);
 
 /**
  * Fixed opcode numbers (SPEC §5.7.1), in §5.4 order. Append only: never renumber.
@@ -111,7 +112,7 @@ export const OPCODE_NUMBERS: Readonly<Partial<Record<Op, number>>> = {
 export const EXT_PREFIX = 0x1f;
 export const EXT_OPCODE_NUMBERS: Readonly<Partial<Record<Op, number>>> = {
   AND: 0x01, OR: 0x02, SHL: 0x03, SHR: 0x04,
-  SEND: 0x05,
+  SEND: 0x05, ERASE: 0x06,
 };
 const OP_BY_NUMBER = new Map(Object.entries(OPCODE_NUMBERS).map(([op, n]) => [n, op as Op]));
 const OP_BY_EXT_NUMBER = new Map(Object.entries(EXT_OPCODE_NUMBERS).map(([op, n]) => [n, op as Op]));
@@ -128,7 +129,7 @@ export function opcodeBytes(op: Op): number[] {
 /** Opcode as the Reference tab shows it: `04`, `1F 01`. */
 export const opcodeHex = (op: Op): string => opcodeBytes(op).map((b) => b.toString(16).toUpperCase().padStart(2, '0')).join(' ');
 
-/** Size of the opcode in bytes: 1, or 2 for an extended instruction (bit instructions, SEND). */
+/** Size of the opcode in bytes: 1, or 2 for an extended instruction (bit instructions, SEND, ERASE). */
 export const opcodeSize = (op: Op): number => (EXT_OPCODE_NUMBERS[op] !== undefined ? ENCODING.extOpcode : ENCODING.opcode);
 
 /**

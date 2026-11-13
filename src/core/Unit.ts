@@ -56,8 +56,9 @@ export class Unit {
   /** Byte downlink: log FIFO, science recorder, transmitter (M9). */
   link = new Downlink();
   /**
-   * M12 image memory (SPEC §3.8.7). Physical: survives reboots, zeroed at power-off. Grows
-   * with camera upgrades; use imageMemory() to read it at the right size.
+   * M12 image memory (SPEC §3.8.7). Non-volatile, like a camera's flash: survives reboots and
+   * power-off; only SNAP (overwrites) and ERASE clear it. Grows with camera upgrades; use
+   * imageMemory() to read it at the right size.
    */
   img = new Uint8Array(0);
   /** The last SNAP's capture, until a SEND of the same type carries it home. */
@@ -108,7 +109,7 @@ export class Unit {
     return this.img;
   }
 
-  /** Power lost: image memory and the capture are gone (SPEC §3.8.7). */
+  /** ERASE: image memory zeroed, the capture dropped (SPEC §3.8.7). */
   clearImageMemory(): void {
     this.img.fill(0);
     this.capture = null;

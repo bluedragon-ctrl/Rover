@@ -690,7 +690,8 @@ export class SimulationEngine {
   }
 
   /**
-   * SEND [type] (SPEC §3.8.7): image memory → a photo product in the recorder. The first SEND
+   * SEND [type] (SPEC §3.8.7): image memory → a photo product in the recorder, for
+   * BALANCE.sendEnergy (ERR_LOW_POWER without it). The first SEND
    * of the capture's type carries the capture (RAW, or EDITED after an STB); any other is DRAWN.
    */
   private send(u: Unit, type: number): void {
@@ -698,6 +699,7 @@ export class SimulationEngine {
     const n = isPhoto(type) ? photoBytes(type) : 0;
     if (!n || n > mem.length) return this.setStatus(u, Status.ERR_INVALID);
     if (u.link.recFree(u.chassis.recorderBytes) < productFrameBytes(type)) return this.setStatus(u, Status.ERR_FULL);
+    if (u.energy < BALANCE.sendEnergy) return this.setStatus(u, Status.ERR_LOW_POWER);
     const cap = u.capture?.type === type ? u.capture : null;
     let p: Omit<ProductDesc, 'seq' | 'tick'>;
     if (cap) {
@@ -709,8 +711,21 @@ export class SimulationEngine {
     }
     this.recordProduct(u, p);
     this.setStatus(u, Status.OK);
+    this.drain(u, BALANCE.sendEnergy);
     if (u.powered) {
       u.action = { kind: 'WAIT', ticksLeft: BALANCE.sendTicks };
+      u.cpu.block();
+    }
+  }
+
+  /** ERASE (SPEC §3.8.7): zero image memory and drop the capture, on request only. */
+  private erase(u: Unit): void {
+    if (u.energy < BALANCE.eraseEnergy) return this.setStatus(u, Status.ERR_LOW_POWER);
+    u.clearImageMemory();
+    this.setStatus(u, Status.OK);
+    this.drain(u, BALANCE.eraseEnergy);
+    if (u.powered) {
+      u.action = { kind: 'WAIT', ticksLeft: BALANCE.eraseTicks };
       u.cpu.block();
     }
   }
@@ -950,7 +965,6 @@ export class SimulationEngine {
     u.energy = Math.max(0, u.energy - amount);
     if (u.energy === 0 && u.powered) {
       u.vm.state = CpuState.POWER_OFF;
-      u.clearImageMemory();
       u.action = null;
       u.cyclesLeft = 0;
       this.abortSlice(u);
@@ -1149,6 +1163,9 @@ export class SimulationEngine {
         return;
       case 'SEND':
         this.send(u, v.length ? v[0] : u.snapMode);
+        return;
+      case 'ERASE':
+        this.erase(u);
         return;
       case 'PEEK': {
         const slot = v[0];
