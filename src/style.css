@@ -83,6 +83,14 @@ main { display: flex; height: calc(100% - 44px); }
 .product b { display: flex; justify-content: space-between; text-transform: capitalize; }
 .product b span { color: #ffd23a; font-weight: 400; font-family: var(--mono); font-size: 11px; text-transform: none; }
 .product .hex { font-family: var(--mono); color: #5d7a9a; word-break: break-all; }
+.product b em { font-style: normal; }
+.product .lvl { font-style: normal; font-weight: 400; font-size: 10px; text-transform: none; padding: 0 5px; margin-left: 4px; border-radius: 8px; border: 1px solid var(--line); color: var(--dim); }
+.product .lvl-edited { color: var(--info); border-color: var(--info); } .product .lvl-drawn { color: #ffd23a; border-color: #8a7420; }
+.product .hexview summary { cursor: pointer; list-style: none; } .product .hexview summary::-webkit-details-marker { display: none; }
+.product .hexview summary::before { content: '▸ '; color: var(--dim); } .product .hexview[open] summary::before { content: '▾ '; }
+.product .hexview .when-open { display: none; } .product .hexview[open] .when-open { display: inline; } .product .hexview[open] .when-closed { display: none; }
+.product .hexview pre { font-family: var(--mono); font-size: 11px; line-height: 1.35; color: #8fb0cc; margin: 2px 0 0; white-space: pre; overflow-x: auto; }
+
 .product svg.spectrum { display: block; margin: 4px 0; }
 .product img.photo { display: block; margin: 4px 0; image-rendering: pixelated; border: 1px solid var(--line); }
 .product .warn { color: #ff8a3a; } .product .ok { color: var(--accent); } .product .info { color: var(--info); }
@@ -242,6 +250,9 @@ button.link { border: none; background: none; padding: 0; color: var(--info); te
 .frame-fields .fc { color: #5d7a9a; font-style: italic; }
 #reference table.frame-fields { table-layout: auto; }
 #reference table.radio-kv td:first-child { width: 92px; color: var(--dim); }
+.ref-diagram { font-family: var(--mono); font-size: 11px; line-height: 1.35; color: var(--dim); background: #05070c80; border: 1px solid var(--line); border-radius: 3px; padding: 6px 8px; margin: 6px 0; overflow-x: auto; white-space: pre; }
+#reference .ref-pane[data-ref=image] table.radio-kv td:first-child { width: 124px; }
+#reference .ref-pane[data-ref=image] table:not(.radio-kv) td:first-child { width: 40px; }
 #comms-list .row-fields { flex-basis: 100%; padding: 0 0 2px 22px; }
 .inspect .fold { border: none; background: none; color: var(--dim); padding: 0 4px 0 0; font-size: 11px; cursor: pointer; }
 .inspect.folded .ins-flow, .inspect.folded #ins-cards { display: none; }

@@ -505,9 +505,13 @@ gallery keeps the last 100 products (saved). Old saves: science points still wai
 ### 3.8.7 Image memory **[M12]**
 
 Designed with the owner (2026-11-13): take a picture → change it → send it, with every byte
-readable and writable. Built in the core (M12 slice 1); the Reference → Image sub-tab and the
-program templates follow (slice 2). Player guide with six worked examples, run by the tests:
+readable and writable. Built: the core (M12 slice 1), the **Reference → Image** sub-tab, six
+program templates *Image: …* and the compiler warning below (slice 2). Player guide with the
+six worked examples (the templates, word for word, run by the tests):
 [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md).
+
+* **Code tab warning:** code that `SNAP`s while neither slot on the rover ever `SEND`s is
+  flagged (*takes photos but never sends them*); it still compiles and uploads.
 
 * **Image memory:** one flat byte array per rover, as big as the largest photo the
   installed camera modes take (`imageBytes(chassis)`: Mk-I 256 B; 512 B with *Colour
@@ -532,8 +536,10 @@ program templates follow (slice 2). Player guide with six worked examples, run b
   `@STATUS` `OK` or `ERR_LOW_POWER`. The only way to clear image memory besides a `SNAP`.
 * **Provenance:** bits 2–1 of a science frame's header (unused so far) carry the
   processing level: `00` *raw* (sent as captured), `01` *edited* (an `STB` since the
-  `SNAP`), `10` *drawn* (no capture behind it). The Gallery labels photos by it, from the
-  received bytes alone.
+  `SNAP`), `10` *drawn* (no capture behind it). The Gallery labels every photo by it (a
+  *raw* / *edited* / *drawn* chip), from the received bytes alone. Its **hex view** (click
+  the hex line) shows the decoded header byte, the sequence byte and the payload 16 bytes
+  per row, numbered like image memory addresses.
 * **Credits** come from the capture, never from the bytes: the **first** `SEND` after a
   `SNAP`, with `type` = the `SNAP`'s mode, carries the capture (lit photo 1, +5 first of a
   subject type; anomaly flags allowed, checked against the real tile). Every other `SEND`

@@ -1,4 +1,10 @@
 import { headerLevel, hex, isPhoto, Level, LEVEL_NAMES, PRODUCT_NAMES, productFrameBytes, ProductType, type ReceivedProduct } from '../core/downlink';
+
+const LEVEL_TIPS: Record<number, string> = {
+  [Level.RAW]: 'raw: sent as the camera took it',
+  [Level.EDITED]: 'edited: changed with STB after the SNAP',
+  [Level.DRAWN]: 'drawn: no camera picture behind it (no credits)',
+};
 import { bandNm, productFrame, SPECTRUM_BANDS } from '../core/imaging';
 import { BALANCE } from '../core/balance';
 import { decodePhoto, PHOTO_FORMATS } from '../core/photos';
@@ -34,6 +40,29 @@ export function spectrumSvg(payload: number[], received: number): string {
 const PHOTO_PX = 128;
 
 const productId = (g: ReceivedProduct): string => `${g.unitId}:${g.tick}:${g.seq}`;
+
+const h2 = (n: number): string => n.toString(16).toUpperCase().padStart(2, '0');
+
+/**
+ * Hex view of a received science frame: the header byte (decoded), the sequence byte, then
+ * the payload 16 bytes per row, numbered like image memory addresses (SPEC §3.8.7).
+ */
+export function hexDump(frame: readonly number[], total: number): string {
+  const lines: string[] = [];
+  if (frame.length) {
+    const h = frame[0];
+    const level = isPhoto((h >> 3) & 15) ? ` · ${LEVEL_NAMES[headerLevel(h)] ?? '?'}` : '';
+    lines.push(`header  ${h2(h)}  ${PRODUCT_NAMES[(h >> 3) & 15] ?? 'type ' + ((h >> 3) & 15)}${level}`);
+  }
+  if (frame.length > 1) lines.push(`seq     ${h2(frame[1])}  product #${frame[1]}`);
+  const payload = frame.slice(2);
+  for (let at = 0; at < payload.length; at += 16) {
+    const row = payload.slice(at, at + 16).map(h2);
+    lines.push(`${at.toString(16).toUpperCase().padStart(3, '0')}     ${row.slice(0, 8).join(' ')}${row.length > 8 ? '  ' + row.slice(8).join(' ') : ''}`);
+  }
+  if (frame.length < total) lines.push(`        … ${total - frame.length} B not received yet`);
+  return lines.join('\n');
+}
 const FLAG_TEXT = {
   hit: `<span class="ok">⚑ anomaly confirmed: +${BALANCE.anomalyFlagCredits} cr</span>`,
   known: '<span class="info">⚑ anomaly confirmed, already catalogued: no credits</span>',
@@ -81,6 +110,13 @@ export class GalleryPanel {
   private list: HTMLElement;
   private status: HTMLElement;
 
+  /** Products whose hex view is open. */
+  private openHex = new Set<string>();
+
+  private dumpOf(g: ReceivedProduct): string {
+    return hexDump(productFrame(this.engine.seed, g).slice(0, g.received), productFrameBytes(g.type));
+  }
+
   /** Called after a flag attempt (main.ts logs the outcome). */
   onFlag?: (g: ReceivedProduct, err: string | null) => void;
 
@@ -95,6 +131,20 @@ export class GalleryPanel {
       one, <i>Flag anomaly</i> on the complete, lit photo (+${BALANCE.anomalyFlagCredits} for a new one, −${BALANCE.anomalyWrongFlag} for a wrong flag;
       one flag per photo).</p>`;
     this.list = el.querySelector('#gallery-list')!;
+    // Hex views: built only when opened, and kept open across re-renders ('toggle' does not bubble).
+    this.list.addEventListener(
+      'toggle',
+      (ev) => {
+        const d = ev.target as HTMLDetailsElement;
+        const id = d.dataset.hex;
+        if (!id) return;
+        if (d.open) this.openHex.add(id);
+        else this.openHex.delete(id);
+        const g = this.engine.gallery.find((p) => productId(p) === id);
+        if (d.open && g) d.querySelector('pre')!.textContent = this.dumpOf(g);
+      },
+      true,
+    );
     this.list.addEventListener('click', (ev) => {
       const id = (ev.target as HTMLElement).closest<HTMLButtonElement>('button[data-flag]')?.dataset.flag;
       const g = id ? this.engine.gallery.find((p) => productId(p) === id) : undefined;
@@ -114,6 +164,7 @@ export class GalleryPanel {
     const multi = this.engine.units.length > 1 ? ` · ${this.engine.getUnit(g.unitId)?.name ?? `#${g.unitId}`}` : '';
     let body = '';
     let what = '';
+    let chip = '';
     if (g.type === ProductType.SPECTRUM) body = spectrumSvg(frame.slice(2), Math.max(0, g.received - 2));
     else if (isPhoto(g.type)) {
       const key = `${g.unitId}:${g.tick}:${g.seq}:${g.received}`;
@@ -130,16 +181,19 @@ export class GalleryPanel {
       what =
         level === Level.DRAWN
           ? ` · drawn picture · ${PHOTO_FORMATS[g.type]?.label ?? ''}`
-          : ` · ${subject}${g.lit ? '' : ' · <span class="warn">dark</span>'}${level === Level.EDITED ? ` · ${LEVEL_NAMES[level]}` : ''} · ${PHOTO_FORMATS[g.type]?.label ?? ''}`;
+          : ` · ${subject}${g.lit ? '' : ' · <span class="warn">dark</span>'} · ${PHOTO_FORMATS[g.type]?.label ?? ''}`;
+      if (frame.length) chip = ` <i class="lvl lvl-${LEVEL_NAMES[level]}" title="${LEVEL_TIPS[level] ?? ''}">${LEVEL_NAMES[level] ?? '?'}</i>`;
       if (g.flag) body += `<div class="small">${FLAG_TEXT[g.flag]}</div>`;
       else if (done && g.lit && level !== Level.DRAWN) body += `<div class="small"><button data-flag="${productId(g)}" title="Mark this photo as showing an anomaly">⚑ Flag anomaly</button></div>`;
     }
     const shown = frame.length > 34 ? `${hex(frame.slice(0, 34))} …` : hex(frame);
+    const id = productId(g);
+    const open = this.openHex.has(id);
     return `<div class="product${done ? '' : ' partial'}">
-      <b>${PRODUCT_NAMES[g.type] ?? `type ${g.type}`} #${g.seq}<span>${done ? `+${g.credits} cr` : `${g.received}/${size} B`}</span></b>
+      <b><em>${PRODUCT_NAMES[g.type] ?? `type ${g.type}`} #${g.seq}${chip}</em><span>${done ? `+${g.credits} cr` : `${g.received}/${size} B`}</span></b>
       ${body}
       <div class="small dim">recorded t${g.tick} at (${g.x}, ${g.y})${what} · ${done ? `arrived t${g.arrived}` : `receiving… t${g.arrived}`} · ${size} B${multi}</div>
-      <div class="hex small">${shown}</div>
+      <details class="hexview small" data-hex="${id}"${open ? ' open' : ''}><summary class="hex" title="Show every byte"><span class="when-closed">${shown}</span><span class="when-open">hex view: header, sequence, then the payload by address</span></summary><pre>${open ? this.dumpOf(g) : ''}</pre></details>
     </div>`;
   }
 

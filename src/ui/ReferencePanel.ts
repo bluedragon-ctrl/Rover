@@ -8,6 +8,9 @@ import { emptyDictionary, fieldsHtml, frameFields, type Dictionaries } from './c
 import { TOOLS } from '../core/tools';
 import { UPGRADES } from '../core/upgrades';
 import { Alert, Dir, Layer, LightColor, ProgState, Status, SystemId } from '../core/types';
+import { PHOTO_FORMATS, photoBytes } from '../core/photos';
+import { imageBytes } from '../core/Unit';
+import { PROGRAM_TEMPLATES } from '../core/programs';
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
 const h2 = (n: number) => n.toString(16).toUpperCase().padStart(2, '0');
@@ -72,6 +75,7 @@ const SECTIONS = [
   ['tools', 'Tools'],
   ['consts', 'Constants'],
   ['radio', 'Radio'],
+  ['image', 'Image'],
 ] as const;
 
 /** Split `items` into the named groups (in order) plus an "Other" group for leftovers. */
@@ -286,6 +290,105 @@ function radioHtml(): string {
     </table>`;
 }
 
+/** What a pixel value means in each photo kind. */
+const PIXEL_MEANING: Record<string, string> = {
+  grey: 'grey 0–3',
+  dither: 'grey 0–3',
+  palette: 'palette 0–15',
+  rgb332: '<code>RRRGGGBB</code>',
+};
+
+/**
+ * Image: image memory (SPEC §3.8.7), from the player guide docs/IMAGE_MEMORY.md. Sizes, costs
+ * and formats come from the game's own tables (BALANCE, PHOTO_FORMATS, imageBytes).
+ */
+function imageHtml(): string {
+  const B = BALANCE;
+  const examples = Object.keys(PROGRAM_TEMPLATES).filter((n) => n.startsWith('Image: '));
+  const teaches: Record<string, string> = {
+    'Image: Line': 'rows, addresses, <code>ERASE</code>',
+    'Image: Test pattern': 'grey levels, computing a byte from its address',
+    'Image: Negative': '<code>SNAP</code> → change → <code>SEND</code>',
+    'Image: Stamp': 'numbers as bytes (masks and shifts)',
+    'Image: Plot': 'single pixels inside a byte',
+    'Image: Memory map': 'image memory as plain memory (a map of visited tiles)',
+  };
+  const modes = Object.entries(PHOTO_FORMATS)
+    .map(([m, f]) => `<tr><td>${m}</td><td>${f.w}×${f.h}</td><td>${8 / f.bpp}</td><td>${(f.w * f.bpp) / 8}</td><td>${photoBytes(Number(m))} B</td><td>${PIXEL_MEANING[f.kind]}</td></tr>`)
+    .join('');
+  return `
+    <p class="small dim">The camera does not send a photo by itself. Taking a picture, changing it and sending it are
+    three steps, and your program decides what happens in between. Real rovers work the same way: Curiosity's cameras keep
+    their images in their own memory, and only the products made from them go to Earth.</p>
+    <pre class="ref-diagram">       SNAP              SEND        downlink
+camera ───► image memory ───► recorder ───► Gallery
+              ▲     │
+          STB │     │ LDB
+              └ your program</pre>
+    <h4>Instructions</h4>
+    <table class="radio-kv">
+      <tr><td><code>SNAP dir [mode]</code></td><td>Photograph into image memory (overwrites all of it). ${B.snapTicks} ticks, ${B.snapEnergy} energy. Nothing is sent yet.</td></tr>
+      <tr><td><code>LDB dst addr</code></td><td>Read one byte (0–255). 1 cycle, no energy, no <code>@STATUS</code>.</td></tr>
+      <tr><td><code>STB addr v</code></td><td>Write one byte (only the low 8 bits: 256 → 0, −1 → 255). 1 cycle, no energy, no <code>@STATUS</code>.</td></tr>
+      <tr><td><code>SEND [type]</code></td><td>Copy image memory into the science recorder as a photo of <code>type</code> (default: the last <code>SNAP</code>'s mode).
+        Image memory is kept. ${B.sendTicks} tick, ${B.sendEnergy} energy; <code>ERR_FULL</code>, <code>ERR_INVALID</code>, <code>ERR_LOW_POWER</code>.</td></tr>
+      <tr><td><code>ERASE</code></td><td>Set every byte to 0 and forget the last <code>SNAP</code>. ${B.eraseTicks} ticks, ${B.eraseEnergy} energy.</td></tr>
+    </table>
+    <h4>Rows and addresses (modes 1 and 2: 32×32 grey)</h4>
+    <p class="small">Stored row by row, top row first. A pixel has 4 grey levels (2 bits), so <b>one byte holds 4 pixels</b>:
+    a row of 32 pixels is 8 bytes, the picture ${photoBytes(1)} bytes (addresses 0–${photoBytes(1) - 1}).
+    <b>address = y × 8 + x / 4</b> (rounded down) = <code>(y SHL 3) + (x SHR 2)</code>. Pixel (10, 3) is in byte 3 × 8 + 2 = 26.</p>
+    <pre class="ref-diagram">         x: 0–3   4–7   8–11  …  28–31
+row  0:  byte   0     1     2   …    7
+row  1:  byte   8     9    10   …   15
+  …
+row 31:  byte 248   249   250   …  255</pre>
+    <h4>Inside a byte</h4>
+    <pre class="ref-diagram">bit:     7 6     5 4     3 2     1 0
+       pixel 0 pixel 1 pixel 2 pixel 3     (x AND 3 tells which)
+weight:   64      16      4       1</pre>
+    <table class="radio-kv">
+      <tr><td><code>0</code></td><td><code>00 00 00 00</code> four black pixels</td></tr>
+      <tr><td><code>85</code> = <code>0x55</code></td><td><code>01 01 01 01</code> four dark grey</td></tr>
+      <tr><td><code>170</code> = <code>0xAA</code></td><td><code>10 10 10 10</code> four light grey</td></tr>
+      <tr><td><code>255</code> = <code>0xFF</code></td><td><code>11 11 11 11</code> four white</td></tr>
+      <tr><td><code>192</code> = <code>0xC0</code></td><td><code>11 00 00 00</code> white, then three black</td></tr>
+    </table>
+    <h4>Pixel recipes (bit instructions)</h4>
+    <p class="small dim">Pixel <code>k</code> = <code>x AND 3</code> sits <code>shift = 6 − 2k</code> bits up. Example: byte <code>0xD8</code> = <code>11 01 10 00</code>, pixel 1 (shift 4).</p>
+    <table class="radio-kv">
+      <tr><td>read</td><td><code>(byte SHR shift) AND 3</code>: <code>0xD8 SHR 4</code> = <code>1101</code>, <code>AND 3</code> = 1</td></tr>
+      <tr><td>mask</td><td><code>3 SHL shift</code> = <code>00 11 00 00</code></td></tr>
+      <tr><td>clear</td><td><code>OR mask</code>, then <code>SUB mask</code> (there is no NOT): <code>11 00 10 00</code></td></tr>
+      <tr><td>set</td><td><code>OR (colour SHL shift)</code>: colour 2 gives <code>11 10 10 00</code></td></tr>
+      <tr><td>without bits</td><td>read <code>(byte / weight) MOD 4</code>; change <code>byte − old × weight + new × weight</code></td></tr>
+    </table>
+    <h4>Camera modes and memory size</h4>
+    <p class="small dim">Image memory is as big as the largest picture the camera can take: ${imageBytes(CHASSIS_MK1)} B on Mk-I,
+    more with the camera upgrades (Upgrades tab). Bigger pictures take more bytes to send. Grey: 0 black … 3 white;
+    mode 5: red 0–7, green 0–7, blue 0–3 in one byte.</p>
+    <table>
+      <tr class="dim"><td>mode</td><td>picture</td><td>px/byte</td><td>B/row</td><td>size</td><td>pixel</td></tr>
+      ${modes}
+    </table>
+    <h4>Things to know</h4>
+    <table class="radio-kv">
+      <tr><td>keeps</td><td>Image memory keeps its contents through reboots and a flat battery, like a camera's flash memory.
+        Only a new <code>SNAP</code> or <code>ERASE</code> clears it, never <code>SEND</code>.</td></tr>
+      <tr><td>wraps</td><td>Addresses wrap around the memory size: on Mk-I address 256 is byte 0, −1 is byte 255. No error.</td></tr>
+      <tr><td>type</td><td><code>SEND type</code> only says how mission control decodes the bytes: <code>SEND 1</code> shows any bytes as a 32×32 grey photo.</td></tr>
+      <tr><td>labels</td><td>The Gallery labels what arrived: <b>raw</b> (sent as the camera took it), <b>edited</b> (changed with <code>STB</code>),
+        <b>drawn</b> (no camera picture behind it). The label travels in the header byte (Radio).</td></tr>
+      <tr><td>credits</td><td>Only the first <code>SEND</code> after a <code>SNAP</code>, of the same type, earns photo credits, edited or not.
+        Drawn pictures earn nothing. Anomaly flags are checked against the real tile.</td></tr>
+      <tr><td>speed</td><td>Touching every byte costs about 6 cycles each: ~400 ticks for a whole 32×32 picture on Mk-I. Programs run in time slices, so long loops just take longer.</td></tr>
+    </table>
+    <h4>Examples (Code tab → Program → template)</h4>
+    <table class="radio-kv">
+      ${examples.map((n) => `<tr><td>${esc(n.slice(7))}</td><td>${teaches[n] ?? ''}</td></tr>`).join('')}
+    </table>`;
+}
+
 /** Generated language reference: always in sync with the compiler, port, tool and tile tables. */
 export function renderReference(el: HTMLElement, registry: WorldRegistry): void {
   const panes: Record<string, string> = {
@@ -295,6 +398,7 @@ export function renderReference(el: HTMLElement, registry: WorldRegistry): void 
     tools: toolsHtml(),
     consts: constantsHtml(registry),
     radio: radioHtml(),
+    image: imageHtml(),
   };
   el.innerHTML = `
     <div class="ref-head">

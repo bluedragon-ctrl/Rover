@@ -2,15 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { BALANCE, CHASSIS_MK1 } from '../src/core/balance';
 import { headerLevel, Level, productFrameBytes } from '../src/core/downlink';
 import { productFrame, productPayload } from '../src/core/imaging';
-import { DEFAULT_FIRMWARE } from '../src/core/programs';
+import { DEFAULT_FIRMWARE, PROGRAM_TEMPLATES } from '../src/core/programs';
 import { deserialize, migrate, SAVE_VERSION, serialize } from '../src/core/SaveManager';
 import { SimulationEngine } from '../src/core/SimulationEngine';
 import { CpuState, Layer, Status } from '../src/core/types';
 import type { Unit } from '../src/core/Unit';
-import { compile } from '../src/core/vm/Compiler';
+import { compile, snapsWithoutSend } from '../src/core/vm/Compiler';
 import { decodeProgram } from '../src/core/vm/isa';
 import { createDefaultRegistry, T } from '../src/core/WorldRegistry';
 import md from '../docs/IMAGE_MEMORY.md?raw';
+import { hexDump } from '../src/ui/GalleryPanel';
 
 const consts = createDefaultRegistry().constants();
 const hex = (b: number[]) => b.map((x) => x.toString(16).toUpperCase().padStart(2, '0')).join(' ');
@@ -220,16 +221,24 @@ describe('image memory instructions (SPEC §3.8.7)', () => {
   });
 });
 
-describe('the guide examples (docs/IMAGE_MEMORY.md) run as documented', () => {
+describe('the image templates = the guide examples (docs/IMAGE_MEMORY.md), and they run as documented', () => {
   const blocks = [...md.matchAll(/```\n(; [A-Z ]+:[\s\S]*?)```/g)].map((m) => m[1]);
   const sizes = [...md.matchAll(/^\| (\d) \| [^|]+\|[^|]+\| (\d+) B \|/gm)].map((m) => Number(m[2]));
-  const ex = (name: string) => blocks.find((b) => b.startsWith(`; ${name}:`))!;
-  /** Run a guide example as the program under the default firmware until it sent `n` products. */
+  const templates = Object.entries(PROGRAM_TEMPLATES).filter(([n]) => n.startsWith('Image: '));
+  /** The shipped template whose first line names `name` (LINE, TEST PATTERN, ...). */
+  const ex = (name: string) => templates.find(([, src]) => src.startsWith(`; ${name}:`))![1];
+  /** Run a template as the program under the default firmware until it sent `n` products. */
   const runExample = (name: string, n = 1, at?: [number, number]) => {
     const r = rover(DEFAULT_FIRMWARE, { program: ex(name), at });
     until(r.e, () => r.u.link.products.length >= n);
     return r;
   };
+
+  it('the Code tab offers the six guide examples word for word', () => {
+    expect(blocks).toHaveLength(6);
+    expect(templates.map(([, src]) => src)).toEqual(blocks);
+    expect(templates.map(([n]) => n)).toEqual(['Image: Line', 'Image: Test pattern', 'Image: Negative', 'Image: Stamp', 'Image: Plot', 'Image: Memory map']);
+  });
 
   it('has six examples whose Flash sizes match the table', () => {
     expect(blocks).toHaveLength(6);
@@ -288,5 +297,31 @@ describe('the guide examples (docs/IMAGE_MEMORY.md) run as documented', () => {
     expect(u.img[cell]).toBeGreaterThan(0);
     expect([...u.img].filter((v) => v === 200)).toHaveLength(0);
     expect([...u.img].filter((v) => v > 0).length).toBeGreaterThan(10);
+  });
+});
+
+describe('M12 slice 2 helpers', () => {
+  const c = (src: string, slot: 'firmware' | 'program' = 'program') => compile(src, CHASSIS_MK1, consts, { slot });
+
+  it('warns about SNAP without SEND, unless one of the two slots sends', () => {
+    expect(snapsWithoutSend(c('SNAP NORTH\nEND'), null)).toBe(true);
+    expect(snapsWithoutSend(c('SNAP NORTH\nSEND\nEND'), null)).toBe(false);
+    expect(snapsWithoutSend(c('SNAP NORTH\nEND'), c('SEND\nSLEEP 5', 'firmware'))).toBe(false);
+    expect(snapsWithoutSend(c('SEND 1\nEND'), null)).toBe(false);
+    expect(snapsWithoutSend(c('SNAP NORTH\nbad'), null)).toBe(false); // does not compile: the errors speak
+    for (const [name, src] of Object.entries(PROGRAM_TEMPLATES)) expect(snapsWithoutSend(c(src), null), name).toBe(false);
+  });
+
+  it('hex view: header decoded with its level, payload rows by image memory address', () => {
+    const { e, u } = rover('STB 17 0xAB\nSEND 1\nSLEEP 100000');
+    until(e, () => u.link.products.length === 1);
+    const frame = productFrame(e.seed, u.link.products[0]);
+    const lines = hexDump(frame, frame.length).split('\n');
+    expect(lines[0]).toBe('header  8C  photo · drawn');
+    expect(lines[1]).toBe('seq     00  product #0');
+    expect(lines[2]).toBe('000     00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00');
+    expect(lines[3]).toBe('010     00 AB 00 00 00 00 00 00  00 00 00 00 00 00 00 00');
+    expect(lines).toHaveLength(2 + 16);
+    expect(hexDump(frame.slice(0, 20), frame.length).split('\n').at(-1)).toBe(`        … ${frame.length - 20} B not received yet`);
   });
 });
