@@ -101,7 +101,7 @@ export class GalleryPanel {
         if (this.photoCache.size > 160) this.photoCache.delete(this.photoCache.keys().next().value!);
       }
       body = `<img class="photo" src="${url}" width="${PHOTO_PX}" height="${PHOTO_PX}" alt="photo">`;
-      const subject = this.engine.registry.get(g.subject)?.name ?? `tile ${g.subject}`;
+      const subject = g.horizon ? 'landscape' : (this.engine.registry.get(g.subject)?.name ?? `tile ${g.subject}`);
       what = ` · ${subject}${g.lit ? '' : ' · <span class="warn">dark</span>'} · ${PHOTO_FORMATS[g.type]?.label ?? ''}`;
     }
     const shown = frame.length > 34 ? `${hex(frame.slice(0, 34))} …` : hex(frame);

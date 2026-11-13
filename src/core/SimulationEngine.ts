@@ -27,6 +27,7 @@ import { CpuState, DIR_VEC, Layer, Status } from './types';
 import { Unit } from './Unit';
 import { compile, type CompileResult, type Instr } from './vm/Compiler';
 import type { VmHost } from './vm/RoverVM';
+import { HORIZON_COLUMNS, HORIZON_V, type HorizonView } from './photos';
 import { coneOffsets, shapeContains, type SensorShape } from './sensors';
 import { createDefaultRegistry, T, type WorldRegistry } from './WorldRegistry';
 
@@ -422,8 +423,11 @@ export class SimulationEngine {
     return u.link.record({ ...p, tick: this.tick }, u.chassis.recorderBytes);
   }
 
-  /** Camera subject in `dir`: first rover / obstacle / item within snapReach tiles, else the ground in front. */
-  cameraSubject(u: Unit, dir: number): { subject: number; x: number; y: number } {
+  /**
+   * Camera subject in `dir`: the first rover / obstacle / item within snapReach tiles; with
+   * nothing that close, a landscape (subject 0) sampled from the world ahead.
+   */
+  cameraSubject(u: Unit, dir: number): { subject: number; x: number; y: number; horizon?: HorizonView } {
     const [dx, dy] = DIR_VEC[dir];
     for (let d = 1; d <= BALANCE.snapReach; d++) {
       const x = u.x + dx * d;
@@ -431,7 +435,51 @@ export class SimulationEngine {
       const hit = this.tileAt(x, y, Layer.ACTOR) || this.tileAt(x, y, Layer.OBSTACLE) || this.tileAt(x, y, Layer.ITEM);
       if (hit) return { subject: hit, x, y };
     }
-    return { subject: this.world.getTile(u.x + dx, u.y + dy, Layer.TERRAIN), x: u.x + dx, y: u.y + dy };
+    return { subject: 0, x: u.x, y: u.y, horizon: this.horizonView(u, dir) };
+  }
+
+  /** Skyline, ground and sun over a 90° field of view in `dir` (integer only). */
+  horizonView(u: Unit, dir: number): HorizonView {
+    const [fx, fy] = DIR_VEC[dir];
+    const [rx, ry] = DIR_VEC[(dir + 1) % 4]; // to the right of the view
+    const h: number[] = [];
+    const ds: number[] = [];
+    const ts: number[] = [];
+    for (let c = 0; c < HORIZON_COLUMNS; c++) {
+      let best = 0;
+      let bd = 0;
+      let bt = 0;
+      for (let d = 1; d <= BALANCE.horizonRange; d++) {
+        const lat = Math.floor((d * (2 * c - 15) + 8) / 16); // ±45°
+        const id = this.world.getTile(u.x + fx * d + rx * lat, u.y + fy * d + ry * lat, Layer.OBSTACLE);
+        if (!id) continue;
+        const app = Math.min(256, Math.floor((id === T.CLIFF_WALL ? 768 : 256) / d)); // cliffs ~3 tiles tall, ore mounds ~1
+        if (app > best) {
+          best = app;
+          bd = d;
+          bt = id;
+        }
+      }
+      h.push(best);
+      ds.push(bd);
+      ts.push(bt);
+    }
+    // Ground ahead: vents if any on the first 4 tiles, else gravel if it is most of them, else sand.
+    let gravel = 0;
+    let vent = false;
+    for (let d = 1; d <= 4; d++) {
+      const id = this.world.getTile(u.x + fx * d, u.y + fy * d, Layer.TERRAIN);
+      if (id === T.ACID_VENT) vent = true;
+      if (id === T.ROUGH_GRAVEL) gravel++;
+    }
+    const ground: number = vent ? T.ACID_VENT : gravel >= 2 ? T.ROUGH_GRAVEL : T.FLAT_SAND;
+    // Sun in view: within 50° of the view axis and above the horizon (45° = top of the frame).
+    let rel = wrapDeg(this.sun.azimuth - dir * 90);
+    if (rel > 180) rel -= 360;
+    const inView = this.sun.elevation > 0 && rel >= -50 && rel <= 50;
+    const sunU = inView ? 512 + Math.floor((rel * 1024) / 90) : -1;
+    const sunV = inView ? HORIZON_V - Math.floor((this.sun.elevation * HORIZON_V) / 45) : 0;
+    return { h, d: ds, t: ts, ground, sunU, sunV, light: this.sun.light };
   }
 
   /** Enough light for a photo in `dir`: daylight, or the headlight on and facing `dir`. */

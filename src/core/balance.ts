@@ -50,7 +50,8 @@ export const BALANCE = {
   // Camera (docs/SPEC.md §3.8.5): SNAP dir [mode]
   snapTicks: 10,
   snapEnergy: 200,
-  snapReach: 2, // subject: first obstacle / item / rover within this many tiles, else the ground in front
+  snapReach: 2, // subject: first obstacle / item / rover within this many tiles, else a landscape
+  horizonRange: 16, // landscape: obstacles up to this far shape the skyline
   snapMinSunLight: 20, // @SUN_LIGHT needed for a lit photo (or the headlight aimed at the subject)
   photoCredits: 1, // lit photo
   photoFirstBonus: 5, // first lit photo of a subject type

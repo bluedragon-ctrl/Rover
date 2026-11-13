@@ -70,7 +70,7 @@ describe('SNAP instruction', () => {
     expect(e.stats.photosTaken).toBe(1);
   });
 
-  it('items and rovers are subjects; else the ground tile in front', () => {
+  it('items and rovers are subjects; with nothing within reach, a landscape', () => {
     const { e, u } = rover('SNAP SOUTH\nSNAP WEST 2\nSNAP NORTH\nSLEEP 1000');
     // NORTH is +y, SOUTH −y (DIR_VEC)
     e.world.setTile(0, -2, Layer.ITEM, T.SAMPLE);
@@ -81,8 +81,14 @@ describe('SNAP instruction', () => {
     expect(u.link.products.map((p) => [p.type, p.subject, p.sx, p.sy])).toEqual([
       [1, T.SAMPLE, 0, -2],
       [2, T.ROVER, -2, 0],
-      [1, T.ROUGH_GRAVEL, 0, 1],
+      [1, 0, 0, 0],
     ]);
+    const land = u.link.products[2].horizon!;
+    expect(land.h).toHaveLength(16);
+    expect(land.d[7]).toBe(3); // the cliff 3 tiles north, straight ahead
+    expect(land.h[7]).toBe(256); // a cliff 3 tiles tall, 3 tiles away, fills the sky
+    expect(land.t[7]).toBe(T.CLIFF_WALL);
+    expect(u.link.products[0].horizon).toBeUndefined();
   });
 
   it('ERR_INVALID for a bad direction or a mode not installed, ERR_FULL, ERR_LOW_POWER', () => {
@@ -160,6 +166,35 @@ describe('photo generator', () => {
     const f = productFrame(2, { type: 1, seq: 4, subject: T.CLIFF_WALL, x: 0, y: 0, sx: 3, sy: 4, lit: true, tick: 50, credits: 0 });
     expect(f.slice(0, 2)).toEqual([0x88, 4]);
     expect(f.slice(2)).toEqual(photoPayload(2, shot({ seq: 4 })));
+  });
+});
+
+describe('landscape photos', () => {
+  it('sun in view only when facing it and above the horizon; open view has no ridges', () => {
+    const { e, u } = rover('SLEEP 1000');
+    const az = e.sun.azimuth; // morning: sun in the east
+    const toward = Math.round(az / 90) % 4;
+    const v = e.horizonView(u, toward);
+    expect(v.sunU).toBeGreaterThanOrEqual(0);
+    expect(v.sunV).toBeLessThan(448);
+    expect(e.horizonView(u, (toward + 2) % 4).sunU).toBe(-1);
+    const night = rover('SLEEP 1000', { tick: 1300 });
+    for (let d = 0; d < 4; d++) expect(night.e.horizonView(night.u, d).sunU).toBe(-1);
+  });
+
+  it('nearer cliffs stand taller; landscapes render deterministically in every format', () => {
+    const { e, u } = rover('SLEEP 1000');
+    for (let x = -4; x <= 4; x++) e.world.setTile(x, 8, Layer.OBSTACLE, T.CLIFF_WALL);
+    const far = e.horizonView(u, 0);
+    for (let x = -4; x <= 4; x++) e.world.setTile(x, 4, Layer.OBSTACLE, T.CLIFF_WALL);
+    const near = e.horizonView(u, 0);
+    expect(far.h[7]).toBe(96); // 768 / 8
+    expect(near.h[7]).toBe(192);
+    for (const type of [1, 2, 3, 4, 5]) {
+      const p = photoPayload(1, shot({ type, subject: 0, horizon: near }));
+      expect(p).toHaveLength(photoBytes(type));
+      expect(photoPayload(1, shot({ type, subject: 0, horizon: near }))).toEqual(p);
+    }
   });
 });
 

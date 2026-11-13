@@ -12,6 +12,8 @@
  * product between bytes; the product resumes where it stopped.
  */
 
+import type { HorizonView } from './photos';
+
 /** Tag reserved for system frames (boot, dumps). `LOG 15` is a compile error. */
 export const SYSTEM_TAG = 15;
 export const MAX_LOG_TAG = 14;
@@ -73,6 +75,8 @@ export interface ProductDesc {
   sy?: number;
   /** Photos: enough light (sun, or the headlight aimed at the subject). Dark photos are worth nothing. */
   lit?: boolean;
+  /** Photos: landscape view sampled from the world (no subject within reach; subject = 0). */
+  horizon?: HorizonView;
 }
 
 /** Payload size code for a signed 32-bit value: smallest of 1/2/4 bytes that holds it. */

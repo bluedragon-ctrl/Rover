@@ -145,7 +145,7 @@ export const TOOLS: Record<ToolId, ToolDef> = {
     energy: BALANCE.snapEnergy,
     keepsHeading: true,
     description:
-      'SNAP <dir> [mode=1] photographs the first obstacle, item or rover within 2 tiles in <dir> (else the ground in front) into the science recorder. Needs @SUN_LIGHT ≥ 20 or the headlight aimed that way (@HEADING = dir), else the photo is dark and worth nothing. Mk-I modes: 1 grey, 2 dithered (258 B each).',
+      'SNAP <dir> [mode=1] photographs the first obstacle, item or rover within 2 tiles in <dir>; with nothing that close, a landscape of what lies ahead (ridges, ground, the sun) into the science recorder. Needs @SUN_LIGHT ≥ 20 or the headlight aimed that way (@HEADING = dir), else the photo is dark and worth nothing. Mk-I modes: 1 grey, 2 dithered (258 B each).',
     target: (u, d) => (validDir(d) ? adjacent(u, d) : null),
     check(_e, u, dir, mode = 1) {
       if (!validDir(dir) || !u.chassis.cameraModes.includes(mode)) return Status.ERR_INVALID;
@@ -155,7 +155,7 @@ export const TOOLS: Record<ToolId, ToolDef> = {
       const st = this.check(e, u, dir, mode);
       if (st !== Status.OK) return st;
       const shot = e.cameraSubject(u, dir);
-      e.recordProduct(u, { type: mode, subject: shot.subject, x: u.x, y: u.y, sx: shot.x, sy: shot.y, lit: e.photoLit(u, dir), credits: 0 });
+      e.recordProduct(u, { type: mode, subject: shot.subject, x: u.x, y: u.y, sx: shot.x, sy: shot.y, lit: e.photoLit(u, dir), credits: 0, ...(shot.horizon ? { horizon: shot.horizon } : {}) });
       e.stats.photosTaken++;
       return Status.OK;
     },

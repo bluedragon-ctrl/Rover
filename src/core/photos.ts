@@ -190,6 +190,108 @@ const SCENES: Record<number, Scene> = {
   [T.ROVER]: rover,
 };
 
+// ---------------------------------------------------------------- landscape (nothing within reach)
+
+/**
+ * What the camera sees looking out over open ground, sampled from the real world when the
+ * photo is taken (so it can be redrawn later without the world): a skyline of 16 columns
+ * across a 90° field of view, the ground ahead, the sun and the light.
+ */
+export interface HorizonView {
+  /** Apparent height of the tallest obstacle per column, 0–256 (256 = top of the frame). */
+  h: number[];
+  /** Distance in tiles of that obstacle (0 = open view). */
+  d: number[];
+  /** Its tile id (colour). */
+  t: number[];
+  /** Most common terrain on the first tiles ahead. */
+  ground: number;
+  /** Sun position in the frame (Q10), sunU −1 = not in view. */
+  sunU: number;
+  sunV: number;
+  /** @SUN_LIGHT when the photo was taken (night + headlight: lit foreground only). */
+  light: number;
+}
+
+export const HORIZON_COLUMNS = 16;
+/** Horizon row (Q10 from the top): a little more ground than sky. */
+export const HORIZON_V = 448;
+const SKY = hex(0xd9b38c);
+const NIGHT_SKY = hex(0x0b0d16);
+const OBSTACLE_COLOR: Record<number, number> = { [T.CLIFF_WALL]: 0xd08a52, [T.IRON_ORE]: 0x9a4a36, [T.SILICON_ORE]: 0x6fb8d8 };
+
+function horizonScene(view: HorizonView): Scene {
+  const H = HORIZON_V;
+  const day = Math.floor((Math.min(100, view.light) * 256) / 100);
+  const bright = 90 + ((166 * day) >> 8); // sky, ridges and far ground
+  const headlight = view.light < 20;
+  const col = (u: number, arr: number[]): [number, number, number] => {
+    const x = Math.max(0, Math.min(15 * ONE, u * 16 - 512));
+    const c0 = x >> 10;
+    const c1 = Math.min(15, c0 + 1);
+    return [arr[c0], arr[c1], x & 1023];
+  };
+  return (u, v, s) => {
+    // sky with the sun
+    const sky = (): RGB => {
+      let c = mix(NIGHT_SKY, scale(SKY, 110 + ((v * 70) / H | 0)), day);
+      if (day < 64 && (hash3(s, u >> 4, v >> 4, 51) & 255) < 3) c = [200, 200, 210]; // stars
+      if (view.sunU >= 0) {
+        const r = dist(u - view.sunU, v - view.sunV);
+        if (r < 36) return [255, 250, 236];
+        c = mix(c, [255, 240, 210], Math.max(0, 180 - ((r * 180) / 220 | 0)));
+      }
+      return c;
+    };
+    if (v < H) {
+      // ridges: the far range (always there, hazy) and the real obstacles in view
+      const [h0, h1, t] = col(u, view.h);
+      const hNear = h0 + (((h1 - h0) * t) >> 10);
+      const jag = ((vnoise(s, u, 0, 24, 52) - 128) * hNear) >> 9;
+      const nearTop = hNear > 0 ? H - (((hNear + jag) * H) >> 8) : H;
+      const farTop = H - ((14 + ((vnoise(s, u, 0, 5, 53) * 22) >> 8)) * H >> 8);
+      if (v >= nearTop) {
+        const [d0, d1] = col(u, view.d);
+        const [k0, k1] = col(u, view.t);
+        const near = t < 512 ? (d0 || d1) : (d1 || d0);
+        const tile = t < 512 ? (k0 || k1) : (k1 || k0);
+        const band = hash3(s, (v * 12) >> 10, tile, 54) & 31; // strata
+        const depth = ((v - nearTop) * 60) / Math.max(1, H - nearTop) | 0; // shadowed toward the foot
+        const shade = 175 + band - depth + ((vnoise(s, u, v, 12, 55) - 128) >> 3);
+        const rock = scale(hex(OBSTACLE_COLOR[tile] ?? 0xd08a52), (shade * bright) >> 8);
+        return mix(scale(rock, 200), scale(SKY, (150 * bright) >> 8), Math.min(140, near * 8)); // haze with distance
+      }
+      if (v >= farTop) return mix(scale(hex(0xb07850), (150 * bright) >> 8), sky(), 110);
+      return sky();
+    }
+    // ground in perspective: z grows toward the horizon
+    const z = ((64 * ONE) / (v - H + 16)) | 0;
+    const gx = ((u - 512) * z) >> 9;
+    let k = 205 + ((14 * wave(z * 3 + (gx >> 3))) >> 8) + ((vnoise(s, gx & 0xffff, z, 2, 56) - 128) >> 3);
+    let c: RGB;
+    if (view.ground === T.ROUGH_GRAVEL) {
+      const spot = hash3(s, gx >> 5, z >> 5, 57) & 255;
+      c = scale(hex(0x9a8f82), spot < 50 ? 150 : 210 + (spot >> 3));
+    } else c = SAND;
+    if (view.ground === T.ACID_VENT) {
+      // a few glowing vent patches on the ground ahead
+      const cx = gx >> 8;
+      const cz = z >> 8;
+      const hv = hash3(s, cx, cz, 58);
+      if ((hv & 255) < 60) {
+        const px = (cx << 8) + ((hv >>> 8) & 255);
+        const pz = (cz << 8) + ((hv >>> 16) & 255);
+        const r = dist(gx - px, (z - pz) * 2);
+        if (r < 70) c = mix(c, hex(0xc8ff5a), 256 - r * 3);
+      }
+    }
+    k = (k * (210 + ((v - H) >> 4))) >> 8; // nearer = brighter
+    const lamp = headlight ? Math.max(0, 300 - ((Math.abs(u - 512) * 300) / Math.max(1, v - H) | 0) - ((ONE - v) >> 1)) : 0;
+    c = scale(c, (k * Math.max(bright, Math.min(256, lamp))) >> 8);
+    return mix(c, sky(), Math.max(0, 200 - (v - H) * 6)); // far ground fades into the haze
+  };
+}
+
 // ---------------------------------------------------------------- the camera
 
 export interface PhotoShot {
@@ -201,13 +303,15 @@ export interface PhotoShot {
   lit: boolean;
   tick: number;
   seq: number;
+  /** Landscape photo (no subject within reach). */
+  horizon?: HorizonView;
 }
 
 const luma = (c: RGB): number => (77 * c[0] + 151 * c[1] + 28 * c[2]) >> 8;
 
 /** Box-filtered frame with sensor noise (dark: dim + strong noise), then auto-exposed. */
 function capture(seed: number, p: PhotoShot, w: number, h: number): RGB[] {
-  const scene = SCENES[p.subject] ?? sand;
+  const scene = p.horizon ? horizonScene(p.horizon) : (SCENES[p.subject] ?? sand);
   const s = hash3(seed, p.sx, p.sy, p.subject);
   const N = 2;
   const px: RGB[] = [];
@@ -233,13 +337,16 @@ function capture(seed: number, p: PhotoShot, w: number, h: number): RGB[] {
       }
     }
   // Auto-exposure: stretch darkest..brightest luma to the full range, keep hue.
+  // The brightest 3 % (the sun, glints) clip instead of darkening the whole frame.
   const l = px.map(luma);
+  const hist = new Array<number>(256).fill(0);
   let lo = 255;
-  let hi = 0;
   for (const v of l) {
+    hist[v]++;
     if (v < lo) lo = v;
-    if (v > hi) hi = v;
   }
+  let hi = 255;
+  for (let above = 0; hi > 0 && (above += hist[hi]) <= (l.length * 3) / 100; ) hi--;
   const range = Math.max(31, hi - lo); // limited gain: a flat scene stays flat-ish
   return px.map((c, i) => {
     const li = Math.max(1, l[i]);

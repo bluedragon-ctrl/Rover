@@ -217,7 +217,11 @@ Slices, one PR each, in order. Every slice: tests green, build, SPEC markers upd
 5. [x] **Camera + photos.** `SNAP dir [mode]` (hardware op, blocks `snapTicks` 10,
        `snapEnergy` 200; internal `CAMERA` tool with `keepsHeading`: the mast camera does
        not turn the rover); `chassis.cameraModes` (Mk-I `[1, 2]`). Subject (first rover /
-       obstacle / item within `snapReach` 2, else the ground in front) and light
+       obstacle / item within `snapReach` 2, else a **landscape**, owner request: skyline of
+       16 columns over 90° from cliffs/ore up to `horizonRange` 16 tiles, ground from the
+       first 4 tiles, sun position, light; `engine.horizonView`, stored as
+       `ProductDesc.horizon`, drawn by `horizonScene`; auto-exposure clips the brightest 3 %
+       so the sun does not black out the frame) and light
        (`@SUN_LIGHT ≥ 20` or headlight aimed at `dir`) taken when the exposure ends;
        descriptor gains `sx`, `sy`, `lit`. `src/core/photos.ts`: integer-only generator,
        POC scenes ported to Q10 fixed point (waves from `SIN1000`, `Math.sqrt` only via
@@ -348,3 +352,4 @@ window with a fixed dish?
 | 2026-11-12 | `ccr-a25966c0-1wr43t` (6b) | Design: firmware + program slot agreed as M10 (SPEC §3.9), UI review as M11, multiple rovers renumbered to M12. |
 | 2026-11-12 | `ccr-a25966c0-1wr43t` (7) | M9 slice 4: `@POST` two-digit hex display (preview reviewed, then game), port, save v7; M10/M11 design docs from PR #12 that missed the merge. |
 | 2026-11-13 | `ccr-2c7af876-8dzljn` | M9 slice 5: mast camera `SNAP dir [mode]`, integer-only photo generator (all 5 formats), light and subject rules, partial photos in the gallery, first-of-a-kind credits, goal *Photographer*, save v8. |
+| 2026-11-13 | `ccr-2c7af876-8dzljn` (2) | M9 slice 5: landscape photos when nothing is within reach (ridges from real cliffs and ore, ground, sun, night sky with headlight foreground). |

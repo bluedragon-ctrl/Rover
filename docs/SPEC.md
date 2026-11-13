@@ -429,7 +429,14 @@ range, keeping hue) before quantizing. Reference renders: `preview.html?photos=1
 * **Camera** (mast, not a hardpoint): `SNAP dir [mode=1]`, blocks 10 ticks,
   200 energy, writes `@STATUS`: `ERR_FULL` (not enough recorder space),
   `ERR_INVALID` (bad direction or mode not installed), `ERR_LOW_POWER`. Subject: the first
-  rover, obstacle or item within 2 tiles in `dir`, else the ground tile in front. **Light:**
+  rover, obstacle or item within 2 tiles in `dir`; with nothing that close, a **landscape**
+  (subject `NONE`): a loose view of what really lies ahead over a 90° field of view. Cliff
+  walls up to 16 tiles away rise as ridges (about 3 tiles tall, so nearer ones stand taller,
+  hazier with distance), ore veins as low coloured hills, a far range always on the horizon;
+  the ground shows sand, gravel or glowing vents from the first 4 tiles ahead; the sun appears
+  when it is above the horizon within 50° of the view; at night the sky is dark with stars
+  and the headlight lights the foreground. The view is sampled when the photo is taken and
+  kept in the descriptor (skyline of 16 columns, ground, sun, light). **Light:**
   `@SUN_LIGHT ≥ 20`, or the headlight on and `@HEADING = dir`; otherwise the photo is dark
   and noisy (auto-exposure amplifies sensor noise) and worth nothing. The camera sits on the
   mast: `SNAP` does **not** turn the rover. Subject and light are taken when the exposure
@@ -445,7 +452,7 @@ range, keeping hue) before quantizing. Reference renders: `preview.html?photos=1
 **Credits on delivery** (tunable, `BALANCE`): spectrum = the item's `science` value
 (sample 3, ore 1, as today); lit photo = 1, +5 the first time a subject type is
 delivered (decided on delivery; the list of subject types already delivered is saved);
-dark photo = 0. Goal *Photographer*: deliver 3 lit photos. **Anomalies:** rare tiles (seeded, e.g. 1 in 40 cliff walls
+dark photo = 0 (a landscape counts as its own subject type). Goal *Photographer*: deliver 3 lit photos. **Anomalies:** rare tiles (seeded, e.g. 1 in 40 cliff walls
 and samples) show a pattern only a photo reveals; flagging a delivered anomaly photo in
 the gallery pays +20, a wrong flag −5, one flag per photo.
 
