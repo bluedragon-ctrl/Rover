@@ -56,7 +56,7 @@ Each rover owns a copy of its chassis stats; upgrades (§3.7) modify that copy.
 
 | Stat | Mk-I | Notes |
 | :--- | :--- | :--- |
-| Flash | 128 bytes | Machine-code size (§5.7). Comments, blank lines, label definitions, `ALIAS`, `CONST` are free. |
+| Flash | 256 bytes (128 before M10) | Machine-code size (§5.7), shared by firmware and program (§3.9). Comments, blank lines, label definitions, `ALIAS`, `CONST` are free. |
 | Registers | 4 (`r0`–`r3`) | Signed 32-bit, wrap on overflow. |
 | Data stack | 8 entries | `PUSH`/`POP`, `CALL` arguments. |
 | Call stack | 8 frames | Return addresses only. |
@@ -271,7 +271,7 @@ Built in slice 6 (`src/core/upgrades.ts`, ids in brackets). The chassis carries
 
 | Upgrade | Cost | Effect | Requires |
 | :--- | :--- | :--- | :--- |
-| Flash 192 B / Flash 256 B | 40 / 90 | Program memory 192 / 256 bytes | – / Flash 192 B |
+| Flash 384 B / Flash 512 B | 40 / 90 | Flash 384 / 512 bytes (192 / 256 before M10) | – / Flash 384 B |
 | Register file r0–r5 / r0–r7 | 40 / 80 | 6 / 8 registers (values kept) | – / r0–r5 |
 | CPU overclock I / II | 50 / 100 | 6 / 8 cycles per tick | – / I |
 | Cargo racks | 35 | 6 cargo slots | – |
@@ -489,42 +489,90 @@ gallery keeps the last 100 products (saved). Old saves: science points still wai
 
 ## 3.9 Firmware and programs **[M10, planned]**
 
-Design agreed with the owner (2026-11-12); details are settled while building M10.
+Design agreed with the owner (2026-11-12, details 2026-11-13). Built in slices (ROADMAP).
 
 The rover runs two pieces of code on its one CPU, like a spacecraft's flight software
 running uplinked command sequences, or a small OS starting user programs:
 
-* **Firmware** keeps the rover alive (sun, dish, squalls, low battery) and decides when
-  the program runs. The factory firmware ships with every rover. Advanced players may
-  edit and upload it (full upload cost, hard reboot), as today.
+* **Firmware** keeps the rover alive (sun, dish, squalls, low battery, lights) and decides
+  when the program runs. The factory firmware ships with every rover. Advanced players
+  edit and upload it (full upload cost, hard reboot), as before M10.
 * **Program**: the player's task (Explorer, Prospector, Fetch, ...). Beginners only write
   programs. *Upload program* pays only for the program's bytes and does **not** reboot.
 
-Rules:
+### 3.9.1 Slots, flash and contexts
 
-* **Shared flash, separate contexts.** Firmware + program together must fit the chassis
-  flash (Mk-I 128 B): a lean firmware leaves room for bigger programs. Each has its own
-  IP, registers and stacks, so a program cannot clobber the firmware's variables.
-* **One CPU, one thread of control.** The program runs only inside the firmware's
-  `RUN ticks`: it runs until it ends, faults or the slice is used up, then control returns
-  to the firmware; the next `RUN` resumes it. The slice is checked between instructions,
-  so a long `SLEEP` or `STEP` in the program runs to completion first (as in any
-  cooperative system). No actuator ownership rules are needed: the firmware tidies up
-  between slices.
-* **Registry ports:** `@PROG_STATE` (`PROG_NONE`, `PROG_READY`, `PROG_RUNNING`,
-  `PROG_DONE`, `PROG_FAULT`, `PROG_HALTED`) and `@PROG_RESULT` (the value of `END value`).
-* **Program faults** return to the firmware with `PROG_FAULT` instead of a watchdog
-  reboot. `BRK` in a program halts only the program; *Continue* resumes it.
-* **Default firmware = a small core + optional comfort features.** The core: housekeeping,
-  give the program time slices (none while charging), log the outcome (`PROG done = 3`),
-  acknowledge. On top, beginner-friendly features in clearly marked, removable blocks,
-  e.g. indicator lamps showing the program state (running / done / fault / charging),
-  `@POST` codes, a battery heartbeat. Each block is commented with its flash cost
-  (the editor's byte gutter shows it), so an experienced player can delete what they do
-  not need and give the bytes to their program. Anything smarter is the player's to add.
-* **Console:** *Run again* restarts the program without re-uploading it.
-* **Editor:** the Code tab edits the program by default; the firmware editor is marked
-  advanced. Templates become programs.
+* **Two separate sources**, compiled separately: each has its own labels, `ALIAS` and
+  `CONST` names. Firmware bytes + program bytes must fit the chassis flash (**Mk-I 256 B**
+  since M10); each slot is compiled against the space the other leaves, and the overflow
+  error names both sizes.
+* **Separate contexts**: each slot has its own IP, registers (the chassis count each), data
+  and call stack, and `@STATUS`. Everything physical is shared: ports, actuators, cargo,
+  lights, the downlink.
+* Slot rules (compile errors): `RUN` and writes to `@PROG_STATE` only in the firmware;
+  `END` only in a program.
+* A firmware without `RUN` never runs the program (every pre-M10 firmware is like that).
+
+### 3.9.2 `RUN`, `END` and the program state
+
+| Instruction | Cycles / ticks | Bytes | Semantics |
+| :--- | :--- | :--- | :--- |
+| `RUN ticks` | hardware | 1 + v | Firmware only. If `@PROG_STATE` is `PROG_READY`: `@STATUS = OK` and the program runs for the next `max(1, ticks)` ticks with the full cycle budget each tick, while the firmware waits. Otherwise nothing runs and `@STATUS = ERR_INVALID`. Ends the tick either way. |
+| `END [value]` | 1 cycle | 1 (+ v) | Program only. `@PROG_STATE = PROG_DONE`, `@PROG_RESULT = value` (default 0); the slice ends. |
+
+* **The slice ends** when its ticks are used up *and* the program is between instructions
+  (a `SLEEP`, `STEP` or tool action started in the slice runs to completion first: a
+  cooperative system), or on `END`, a fault, or `BRK`. The firmware continues with the
+  instruction after `RUN` at the start of the next tick. Running off the end of a program
+  still wraps to its first line: a program loops until it `END`s.
+* **`@PROG_STATE`** (RW): `PROG_NONE` 0 (nothing to run), `PROG_READY` 1 (the next `RUN` starts
+  or resumes it), `PROG_RUNNING` 2 (only the program itself and dumps see this),
+  `PROG_DONE` 3, `PROG_FAULT` 4, `PROG_HALTED` 5. The firmware writes `PROG_NONE` to
+  **acknowledge** a finished or faulted program (it stays in flash but is not run), or
+  `PROG_READY` to **restart** it from the top (fresh context). Other values, and writes
+  while no program is in flash, are ignored.
+* **`@PROG_RESULT`** (R): the value of the last `END`; 0 after a restart.
+* **Program faults** (stack overflow/underflow) set `PROG_FAULT` and end the slice. No
+  watchdog: the firmware keeps running and decides what to do. A firmware fault still
+  watchdog-reboots the whole CPU.
+* **`BRK` in a program** sets `PROG_HALTED` and ends the slice; the firmware runs on.
+  *Continue* (Program slot) sets `PROG_READY`, so the next `RUN` resumes after the `BRK`.
+  `BRK` in the firmware halts the whole CPU as before (§3.8.4).
+* **Hard reboots** (firmware upload, watchdog, solar cold boot, admin) reset both contexts.
+  `@PROG_STATE` becomes `PROG_READY` if a program is in flash (the task restarts from the
+  top, as before M10), else `PROG_NONE`.
+
+### 3.9.3 Uploads and mission-control commands
+
+* **Upload program**: `ceil((200 + 12 × program bytes) × 100 / max(10, @SIGNAL_STR))`
+  energy (`programUploadBase`). No reboot, the firmware context is untouched. A running
+  slice ends (the program's in-flight action is aborted); the new program starts fresh as
+  `PROG_READY`. Uploading an empty program erases it (`PROG_NONE`).
+* **Upload firmware**: as §3.3 (base 500 + 12 × firmware bytes, hard reboot); rejected if
+  firmware + program would not fit the flash.
+* **Console**: a **Firmware / Program** switch selects the slot for *Dump*, *Dump stacks*
+  and *Continue*. Program dumps are kinds 3 and 4, laid out like kinds 1 and 2 (§3.8.4)
+  with `@PROG_STATE` in the CPU-state byte. *Run again* (an uplinked command, paid like a
+  dump) restarts the program from the top, like the firmware writing `PROG_READY`;
+  rejected if there is no program.
+* The Console decodes log tags with both slots' `CONST` names; a tag both slots name
+  differently shows both (`T_BAT|T_X`).
+
+### 3.9.4 Default firmware
+
+A **core** plus **comfort blocks**, each between marker comments with its byte cost, so
+experienced players can delete what they do not need and give the bytes to their program.
+Target: the full default firmware leaves at least half of Mk-I flash (128 B) to programs.
+
+* Core: keep the dish on the orbiter; stow the array on a squall warning; charge below a
+  threshold (`CONST LOW_BAT`, `FULL_BAT`) and give the program no slices while charging;
+  give time slices (`CONST SLICE`); log the outcome (Console: `T_DONE = 3` with the result, or `T_FAULT`) and
+  acknowledge it.
+* Comfort: program-state lamp (`@IND1`), battery/charging lamp (`@IND2`), automatic
+  headlight at night, `@POST` shows the last program result, battery heartbeat frame.
+
+Templates (Explorer, Prospector, Fetch) become programs: their charging and dish code
+moves to the firmware.
 
 ## 4. World
 

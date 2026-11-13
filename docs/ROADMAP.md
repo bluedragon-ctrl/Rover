@@ -20,8 +20,8 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | **M8** | **Visual overhaul (SPEC §7)** | 🚧 in progress: asset preview, indicator lamps, **game renderer switched to v2**, frame-time HUD + geometry baseline, pan leash; performance fine on PC, remaining items (LOD, fat lines, zoom range, atmosphere) deferred to the next visual pass |
 | M8.1 | Radar `SCAN` vs. light-limited operator view; headlight cone; `@HEADING` | ✅ done |
 | Flash bytes | Program size in machine-code bytes instead of lines (SPEC §5.7) | ✅ core done; editor byte gutter awaiting preview approval |
-| **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | ✅ slices 1–6 done (link layer, `LOG`, Console tab; recorder, spectra, Gallery tab; dumps, `BRK`, admin-only debugger; `@POST` display; camera + photos; upgrades, camera modes 3–5, fossil anomalies; save v9); ⏭ next: M10 detailed plan |
-| M10 | Firmware + program slot (SPEC §3.9) | planned: design agreed, plan below |
+| **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | ✅ slices 1–6 done (link layer, `LOG`, Console tab; recorder, spectra, Gallery tab; dumps, `BRK`, admin-only debugger; `@POST` display; camera + photos; upgrades, camera modes 3–5, fossil anomalies; save v9) |
+| **M10** | **Firmware + program slot (SPEC §3.9)** | 🚧 detailed plan below; slice 1 (core) in progress |
 | M11 | User interface review (after M10) | planned |
 | M12 | Multiple rovers (after single-rover tuning) | planned |
 
@@ -255,25 +255,57 @@ Later (backlog): `@REC_PEEK` so firmware can inspect recorder bytes (on-board tr
 compression); bit errors at low signal and a checksum lesson; panorama `SNAP` of the
 horizon; unknown minerals identified only by spectrum. Rare local fauna and flora (see Backlog) reuse this pipeline.
 
-## M10 — Firmware + program slot (outline)
+## M10 — Firmware + program slot (detailed plan)
 
-Spec: [SPEC §3.9](SPEC.md). Decided with the owner (2026-11-12), after M9:
+Spec: [SPEC §3.9](SPEC.md). Outline decided with the owner on 2026-11-12, details on
+2026-11-13:
 
-- Two pieces of code on one CPU: **firmware** (housekeeping, advanced players edit it)
-  and a **program** (the player's task; beginners only write programs).
-- **Shared flash, separate registers / stacks / IP** per slot.
-- **`RUN ticks`** gives the program a time slice and resumes it next time; program ends
-  with `END value`; `@PROG_STATE` / `@PROG_RESULT`; program faults return to the
-  firmware instead of a watchdog reboot; `BRK` halts only the program.
-- **Default firmware = small core + optional comfort blocks** (status lamps for the
-  program state, `@POST` codes, heartbeat), each marked with its flash cost so
-  experienced players can strip them to free memory for programs.
-- Program upload is cheap (program bytes only) and does not reboot; Console *Run again*.
+- **Mk-I flash 256 B** (owner: a nice number, room for player programs *and* a standard
+  firmware with comfort features). Flash upgrades become 384 / 512 B (ids `FLASH_48` /
+  `FLASH_64` kept, prices unchanged). Measured before the change: firmware core + squall
+  guard 61 B, comfort blocks 18 B, programs Explorer 57 / Fetch 72 / Prospector 79 B.
+  None of them fit in 128 B with the comfort blocks.
+- **Two separate sources**, compiled separately (own labels / `ALIAS` / `CONST`); flash
+  check on the sum; slot rules: `RUN` and `@PROG_STATE` writes firmware-only, `END`
+  program-only.
+- **Writable `@PROG_STATE`**: firmware writes `PROG_NONE` to acknowledge, `PROG_READY` to
+  restart. No extra states.
+- **Dumps per slot**: Console Firmware / Program switch; program dumps are kinds 3/4 with
+  `@PROG_STATE` in the state byte; *Continue* follows the switch.
+- Proposed and adopted for the slices below (owner may still veto): `RUN` is a hardware
+  instruction (ends the tick; `ERR_INVALID` when nothing is ready), control changes hands
+  only at tick boundaries (deterministic, simple to save); a hard reboot leaves the program
+  `PROG_READY` (task restarts as before M10); program upload base 200 instead of 500;
+  merged Console tag dictionary.
 
-To settle when the detailed plan is written: compiler/flash layout of the two slots, which comfort blocks ship and their byte cost
-(the core must leave a useful program budget on Mk-I 128 B),
-dumps per slot, save format, how shipped templates split, migration of old saves (old
-firmware becomes the firmware slot, no program).
+### Slice 1 — core (this PR)
+- [ ] `balance.ts`: Mk-I 256 B, upgrades 384 / 512 B, `programUploadBase`.
+- [ ] Compiler: `RUN v`, `END [v]`, `slot` option and flash budget (other slot's bytes),
+      slot rules, `PROG_*` constants, ports `@PROG_STATE` (RW) / `@PROG_RESULT` (R).
+- [ ] VM/engine: second context (`unit.prog`), `unit.cpu` = the context that runs now,
+      slices, `END`, program faults and `BRK` without watchdog, hard reboots reset both,
+      `uploadProgram`, `RUN_AGAIN` command, dumps and *Continue* per slot (kinds 3/4).
+- [ ] Default firmware (core + comfort blocks with byte costs) and the three templates as
+      programs (`PROGRAM_TEMPLATES`); old firmware templates kept until slice 2.
+- [ ] Save v10 (program source + context, `@PROG_STATE`, result, slice) + migration
+      (old firmware stays the firmware, no program).
+- [ ] Tests: slices and tick boundaries, `END`, fault/`BRK` isolation, uploads, reboots,
+      dumps, save round-trip with a program mid-slice, every shipped program fits next to
+      the default firmware on Mk-I.
+
+### Slice 2 — UI
+- [ ] Code tab: Program (default) / Firmware (advanced) switch, *Upload program*,
+      flash counter `firmware + program / 256 B`, templates split into programs and
+      firmware, warning when the firmware has no `RUN`.
+- [ ] Console: slot switch for Dump / Dump stacks / Continue, *Run again*, merged tag
+      dictionary, program dump decoding.
+- [ ] Reference tab: `RUN`, `END`, `@PROG_*`.
+- [ ] Editor byte gutter (still awaiting preview approval) would show the comfort blocks'
+      cost; decide with the owner whether it ships with this slice.
+
+### Later / open
+- Tune `SLICE` and charge thresholds in playtests.
+- Goals that teach the split (first program `END`, first stripped firmware block?).
 
 ## M11 — User interface review (after M10)
 
