@@ -12,7 +12,7 @@ import { AdaptiveResolution } from './AdaptiveResolution';
 import { PostFx } from './PostFx';
 import { RoverAnimator, type RoverPose } from './RoverRig';
 import { MAX_LIGHTS, radarFront, TileLighting } from './TileLighting';
-import { buildCapsuleMesh, buildRoverRig, indicatorHex, LIGHT_HEX, type RoverRigMesh } from './VectorFactory';
+import { buildCapsuleMesh, buildRoverRig, indicatorHex, type RoverRigMesh } from './VectorFactory';
 
 interface RoverView {
   mesh: RoverRigMesh;
@@ -296,7 +296,6 @@ export class ThreeScene {
       const view = this.engine.viewShape(u);
       const dead = u.vm.state === CpuState.POWER_OFF || u.vm.state === CpuState.DESTROYED;
       const fault = u.vm.state === CpuState.FAULT;
-      const blinkOff = u.lightBlink && Math.floor(now / 300) % 2 === 1;
       // Turntables use compass bearings (0 = north = -Z), relative to the body.
       const bearing = (deg: number) => (-deg * Math.PI) / 180 - v!.angle;
       const pose: RoverPose = {
@@ -308,7 +307,6 @@ export class ThreeScene {
         solarHealth: u.solarHealth,
         dishHealth: u.antennaHealth,
         cpu: dead ? 'off' : fault ? 'fault' : u.action?.kind === 'WAIT' ? 'idle' : 'run',
-        beaconHex: dead || blinkOff ? 0x222222 : LIGHT_HEX[u.lightColor] ?? 0xffffff,
         indicators: fillIndicators(v.indicators, u.indicators, dead),
         // Dark while powered off. The operator's view is centred on the rover, so its own
         // display is always in view; other rovers (M12) will need the view check.

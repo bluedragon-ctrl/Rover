@@ -63,7 +63,7 @@ describe('compiler slots (SPEC §3.9.1)', () => {
   it('the default firmware leaves room for every shipped program; comfort blocks state their real cost', () => {
     const fw = c(DEFAULT_FIRMWARE, 'firmware');
     expect(fw.errors).toEqual([]);
-    expect(fw.flashUsed).toBeLessThanOrEqual(136);
+    expect(fw.flashUsed).toBeLessThanOrEqual(148);
     for (const [name, src] of Object.entries(PROGRAM_TEMPLATES)) expect(c(src, 'program', fw.flashUsed).errors, name).toEqual([]);
     const lines = DEFAULT_FIRMWARE.split('\n');
     let block: { cost: number; sum: number; title: string } | null = null;

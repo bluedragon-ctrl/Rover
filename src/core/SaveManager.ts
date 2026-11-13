@@ -8,7 +8,7 @@ import { CpuState, ProgState, type Status } from './types';
 import type { RoverVM } from './vm/RoverVM';
 import type { Unit, UnitAction, UnitMotion } from './Unit';
 
-export const SAVE_VERSION = 11;
+export const SAVE_VERSION = 12;
 
 interface UnitSave {
   id: number;
@@ -22,7 +22,8 @@ interface UnitSave {
   solarHealth: number;
   antennaHealth: number;
   cargo: number[];
-  lights: [number, number, number];
+  /** v12 (before: `lights` = [beacon colour, beacon blink, headlight]) */
+  headlight: number;
   solar: [open: number, deploy: number, angle: number, target: number];
   antenna: [angle: number, target: number];
   sourceCode: string;
@@ -194,7 +195,7 @@ function saveUnit(u: Unit): UnitSave {
     solarHealth: u.solarHealth,
     antennaHealth: u.antennaHealth,
     cargo: [...u.cargo],
-    lights: [u.lightColor, u.lightBlink, u.headlight],
+    headlight: u.headlight,
     indicators: [...u.indicators],
     post: u.post,
     link: {
@@ -223,6 +224,9 @@ function saveUnit(u: Unit): UnitSave {
 }
 
 export class SaveError extends Error {}
+
+/** v11 -> v12: rewrite the retired beacon ports onto the status lamps. */
+const retireBeacon = (src: string): string => src.replace(/@LIGHT_COLOR\b/gi, '@IND1').replace(/@LIGHT_BLINK\b/gi, '@IND3');
 
 /** Upgrade older snapshots step by step to the current version. */
 export function migrate(raw: unknown): SaveSnapshot {
@@ -311,6 +315,25 @@ export function migrate(raw: unknown): SaveSnapshot {
     }
     v = 11;
   }
+  if (v === 11) {
+    // v11 -> v12: the status beacon is gone; the three roof lamps are the status lights.
+    // Old code keeps working: @LIGHT_COLOR becomes @IND1, @LIGHT_BLINK becomes @IND3
+    // (same size: one port byte, so saved byte addresses stay valid), and the lamps
+    // take over what the beacon showed.
+    const units = out.units as (UnitSave & { lights?: [number, number, number] })[];
+    for (const u of units) {
+      const [color, blink, headlight] = u.lights ?? [0, 0, u.headlight ?? 0];
+      delete u.lights;
+      u.headlight = headlight;
+      const usedColor = /@LIGHT_COLOR\b/i.test(u.sourceCode) || /@LIGHT_COLOR\b/i.test(u.program.source);
+      const usedBlink = /@LIGHT_BLINK\b/i.test(u.sourceCode) || /@LIGHT_BLINK\b/i.test(u.program.source);
+      u.sourceCode = retireBeacon(u.sourceCode);
+      u.program.source = retireBeacon(u.program.source);
+      if (usedColor) u.indicators[0] = color;
+      if (usedBlink) u.indicators[2] = blink;
+    }
+    v = 12;
+  }
   if (v !== SAVE_VERSION) throw new SaveError(`Unsupported save version ${s.version}.`);
   out.version = v;
   return out;
@@ -377,9 +400,7 @@ export function deserialize(raw: unknown): SimulationEngine {
       solarHealth: us.solarHealth,
       antennaHealth: us.antennaHealth,
       cargo: [...us.cargo],
-      lightColor: us.lights[0],
-      lightBlink: us.lights[1],
-      headlight: us.lights[2],
+      headlight: us.headlight,
       indicators: [...us.indicators],
       post: us.post,
       solarOpen: us.solar[0],

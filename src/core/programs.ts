@@ -14,13 +14,13 @@ loop:   MOV @SOLAR_OPEN 1
         MOV @SOLAR_OPEN 0                  ; squall: micrometeorites wreck open panels
 aim:    MOV @SOLAR_ANGLE @SUN_AZIMUTH      ; motors slew toward targets
         MOV @ANTENNA_ANGLE @ORBIT_AZIMUTH
-        MOV @LIGHT_COLOR GREEN             ; green: day
+        MOV @IND1 GREEN                    ; lamp 1 green: day
         JGT @SUN_ELEV 0 beat
-        MOV @LIGHT_COLOR BLUE              ; blue: night, waiting for dawn
-beat:   MOV @LIGHT_BLINK 0
+        MOV @IND1 BLUE                     ; blue: night, waiting for dawn
+beat:   MOV @IND3 OFF                      ; lamp 3: uplink
         JLT @SIGNAL_STR 20 wait            ; dish not on the orbiter yet
         LOG T_BAT @BAT                     ; heartbeat frame
-        MOV @LIGHT_BLINK 1
+        MOV @IND3 BLUE
 wait:   SLEEP BEAT_TICKS
 `;
 
@@ -48,13 +48,15 @@ look:   SCAN dir -> seen dist
 turn:   ADD dir 1                 ; turn right: dir = (dir + 1) mod 4
         MOD dir 4
         JMP loop
-go:     MOV @LIGHT_COLOR GREEN
+go:     MOV @IND2 OFF             ; lamp 2: charging
+        MOV @IND1 GREEN           ; lamp 1: exploring
         STEP dir 1
         JEQ @STATUS OK loop
         JMP turn                  ; blocked, hazard, deployed...: turn
 
 charge: MOV @HEADLIGHT 0
-        MOV @LIGHT_COLOR AMBER
+        MOV @IND1 OFF
+        MOV @IND2 AMBER
 chg:    MOV @SOLAR_OPEN 1
         JNE @ALERT ALERT_SQUALL aim
         MOV @SOLAR_OPEN 0         ; squall warning: keep the array stowed
@@ -115,6 +117,7 @@ ALIAS r1 dy
 boot:   MOV @SOLAR_OPEN 0
         SLEEP 20
 loop:   JEQ @DROPS 0 idle
+        MOV @IND1 GREEN             ; lamp 1 green: on the way
         MOV dx @DROP_X
         SUB dx @X
         MOV dy @DROP_Y
@@ -134,7 +137,7 @@ go_n:   STEP NORTH
         JMP loop
 go_s:   STEP SOUTH
         JMP loop
-idle:   MOV @LIGHT_COLOR BLUE
+idle:   MOV @IND1 BLUE              ; lamp 1 blue: no crate to fetch
         SLEEP 50
 `;
 
@@ -165,6 +168,12 @@ CONST T_RESULT 13
 CONST T_END 14              ; T_END = 3: program done, 4: fault
 
 fw:     MOV @ANTENNA_ANGLE @ORBIT_AZIMUTH ; keep the dish on the orbiter
+;--- comfort: lamp 3 blue while the dish is on the orbiter (12 B) ---
+        MOV @IND3 OFF
+        JLT @SIGNAL_STR 20 link
+        MOV @IND3 BLUE
+link:
+;--- end ---
         JNE @ALERT ALERT_SQUALL power
         MOV @SOLAR_OPEN 0                  ; squall warning: stow the array
 power:  JLT @BAT LOW_BAT charge

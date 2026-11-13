@@ -1,5 +1,5 @@
 import { BALANCE, cloneChassis, type ChassisDef } from './balance';
-import { CpuState, LightColor, ProgState } from './types';
+import { CpuState, ProgState } from './types';
 import type { ToolId } from './tools';
 import { RoverVM } from './vm/RoverVM';
 import { Downlink } from './downlink';
@@ -29,9 +29,7 @@ export class Unit {
   solarHealth = 100;
   antennaHealth = 100;
   cargo: number[];
-  lightColor: number = LightColor.GREEN;
-  lightBlink = 0;
-  /** Three programmable indicator lamps on the cabin roof (LightColor each). Purely visual. */
+  /** The rover's three status lamps on the cabin roof (@IND1..3, a LightColor each). Purely visual. */
   indicators: number[] = [0, 0, 0];
   /** @POST: two-digit hex display on the back of the cabin (0–255). Visual only, survives reboots. */
   post = 0;

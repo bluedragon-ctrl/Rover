@@ -68,7 +68,6 @@ export class CodeWorkspace {
       <p class="cw-hint small dim" id="cw-hint"></p>
       <div class="toolbar">
         <button id="cw-upload" class="primary" title="Ctrl+Enter / Ctrl+S"></button>
-        <button id="cw-compile" title="Assemble on the ground (free): machine code, addresses and the byte count">Compile</button>
         <button id="cw-revert" title="Load the code that is on the rover">Revert</button>
         <select id="cw-template"></select>
       </div>
@@ -109,7 +108,6 @@ export class CodeWorkspace {
 
     el.querySelectorAll<HTMLButtonElement>('#cw-slots button').forEach((b) => b.addEventListener('click', () => this.setSlot(b.dataset.slot as Slot)));
     this.q('#cw-upload').addEventListener('click', () => this.upload());
-    this.q('#cw-compile').addEventListener('click', () => this.compileNow());
     this.q('#cw-revert').addEventListener('click', () => {
       const r = opts.rover();
       this.current.editor.setSource(this.slot === 'program' ? r.programSource : r.sourceCode);
@@ -163,22 +161,6 @@ export class CodeWorkspace {
     this.refresh();
   }
 
-  /** Compile (free, on the ground): report the slot's size and address range. */
-  compileNow(): void {
-    const { engine, rover, log } = this.opts;
-    const res = engine.compileFor(rover(), this.current.editor.source, this.slot);
-    this.current.result = res;
-    this.refresh();
-    const name = this.slot === 'program' ? 'Program' : 'Firmware';
-    if (!res.program) log('warn', `Compile: ${name} has ${res.errors.length} error(s). First: line ${res.errors[0].line}: ${res.errors[0].message}`);
-    else {
-      const range = res.flashUsed ? ` at ${formatAddr(0, this.slot)}–${formatAddr(res.flashUsed - 1, this.slot)}` : '';
-      log('info', `Compiled ${name.toLowerCase()}: ${res.flashUsed} B${range} · ${this.totalsText()}.`);
-    }
-    this.listingEl?.classList.add('flash');
-    setTimeout(() => this.listingEl?.classList.remove('flash'), 400);
-  }
-
   private sizes(): { fw: number; prog: number; cap: number } {
     const u = this.opts.rover();
     const draft = this.current.result?.flashUsed ?? 0;
@@ -187,11 +169,6 @@ export class CodeWorkspace {
       prog: this.slot === 'program' ? draft : u.programBytes,
       cap: u.chassis.flashBytes,
     };
-  }
-
-  private totalsText(): string {
-    const s = this.sizes();
-    return `firmware ${s.fw} + program ${s.prog} = ${s.fw + s.prog} / ${s.cap} B`;
   }
 
   private totalsHtml(): string {

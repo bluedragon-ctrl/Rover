@@ -42,7 +42,7 @@ Each tick, every powered rover's CPU receives `cyclesPerTick` cycles.
   **1 cycle** each. Several run per tick.
 * **Hardware instructions** (`SCAN`, `STEP`, `ACT`, `USE`, `SLEEP`) **end the current
   tick** and may block the CPU for a number of ticks while the physical action happens.
-* Port writes (e.g. `MOV @LIGHT_COLOR 2`) are compute instructions: instant.
+* Port writes (e.g. `MOV @IND1 2`) are compute instructions: instant.
 
 This keeps logic snappy, makes physical actions cost real time, and naturally caps
 runaway loops (an infinite `JMP` loop just burns cycles; it cannot freeze the game).
@@ -142,11 +142,15 @@ old program keeps running. New rovers ship with factory firmware installed for f
   20-tick deploy/stow. Actuator state is physical: it survives reboots.
 * **Movement lock:** `STEP` fails with `ERR_DEPLOYED` while the array is commanded open
   or not fully stowed.
-* **Indicator lamps [M8]:** three lamps on the cabin roof, `@IND1`, `@IND2`, `@IND3`
-  (left to right), each takes a light colour constant (`OFF`, `RED`, `GREEN`, `BLUE`,
-  `AMBER`, 0–4). They are purely a visual channel for the player: free, no gameplay
-  effect, no `@STATUS`. Like the beacon they are physical and survive reboots; they go
-  dark while the rover is powered off.
+* **Status lamps [M8]:** the rover's only status lights: three lamps on the cabin roof,
+  `@IND1`, `@IND2`, `@IND3` (left to right), each takes a light colour constant (`OFF`,
+  `RED`, `GREEN`, `BLUE`, `AMBER`, 0–4). They are purely a visual channel for the player:
+  free, no gameplay effect, no `@STATUS`. They are physical and survive reboots; they go
+  dark while the rover is powered off. Shipped firmware uses them the same way: lamp 1 =
+  what the rover is doing (green running, blue done / idle, red fault), lamp 2 = power
+  (amber charging), lamp 3 = uplink (blue while the dish is on the orbiter). The separate
+  status beacon (`@LIGHT_COLOR`, `@LIGHT_BLINK`, M1–M8) was removed in save v12: old
+  saves have those ports rewritten to `@IND1` / `@IND3`.
 * **TX [M9]:** the byte-based downlink (§3.8) sends everything. Writing `@TX_DATA` is
   old shorthand for `LOG 0 value` that also sets `@STATUS` (`OK`, or `ERR_FULL` when the
   log FIFO had no room); it is the one port write that touches `@STATUS`. Before M9 it
@@ -556,7 +560,7 @@ running uplinked command sequences, or a small OS starting user programs:
 * **Code tab**: a **Program** (default) / **Firmware** (advanced) switch, each slot with its
   own editor and templates (programs: First steps, Explorer, Prospector, Fetch; firmware:
   Default firmware and the pre-M10 all-in-one examples), *Upload program* or *Upload
-  firmware & reboot*, *Compile*, a flash bar `firmware 136 + program 46 = 182 / 256 B` (the
+  firmware & reboot*, a flash bar `firmware 148 + program 46 = 194 / 256 B` (the
   edited slot counts its draft, the other slot what is on the rover), and a warning when
   the firmware has no `RUN`. New rovers ship the default firmware and no program (the
   Program slot shows *First steps* as an unsent draft).
@@ -568,19 +572,28 @@ running uplinked command sequences, or a small OS starting user programs:
 * The Console decodes log tags with both slots' `CONST` names; a tag both slots name
   differently shows both (`T_BAT|T_X`), with lines per slot (`(fw L12, prog L3)`). Dumps
   show their slot: `PROGRAM DUMP (snapshot t254): next prog:0x02A (L13) · PROG_HALTED · …`.
+* **Console redesign [M11, in owner review]** (game `?console=2`, `preview.html?editor=1`):
+  sections *Send to rover* and *Received from rover*, each with a **?** help hint; a
+  *Talk to Program / Firmware* switch; one row per message (time, LOG / PROG / FW / SYS
+  chip, text, `fw L55` source with a tooltip); runs of identical messages merged (`×39`,
+  `t301–1137`); dumps as small cards (next address and line, state, `@STATUS`, registers;
+  stacks); raw bytes only with *Bytes*; follows the newest message unless scrolled up
+  (*↓ Newest*). The game's message strip under the side panel is labelled **Mission log**
+  with its own hint, to tell it apart from what the rover sends.
 
 ### 3.9.4 Default firmware
 
 A **core** plus **comfort blocks**, each between marker comments with its byte cost, so
 experienced players can delete what they do not need and give the bytes to their program.
-The full default firmware is 136 B (comfort 43 B of it), leaving 120 B on Mk-I: the
+The full default firmware is 148 B (comfort 55 B of it), leaving 108 B on Mk-I: the
 shipped programs need 20–79 B (First steps 20, Explorer 46, Fetch 72, Prospector 79).
 
 * Core: keep the dish on the orbiter; stow the array on a squall warning; charge below a
   threshold (`CONST LOW_BAT`, `FULL_BAT`) and give the program no slices while charging;
   give time slices (`CONST SLICE`); log the outcome (Console: `T_DONE = 3` with the result, or `T_FAULT`) and
   acknowledge it.
-* Comfort: program-state lamp (`@IND1`), battery/charging lamp (`@IND2`), automatic
+* Comfort: program-state lamp (`@IND1`), battery/charging lamp (`@IND2`), uplink lamp
+  (`@IND3`), automatic
   headlight at night, `@POST` shows the last program result, battery heartbeat frame.
 
 Templates (Explorer, Prospector, Fetch) become programs: their charging and dish code
@@ -629,7 +642,7 @@ moves to the firmware.
 | Alias | any name bound with `ALIAS` | Compile-time only. |
 | Immediate | `42`, `-7`, `0xFF` | |
 | Constant | `NORTH`, `IRON_ORE`, `ERR_BLOCKED`, any `CONST` name | Resolved at compile time. |
-| Port | `@BAT`, `@LIGHT_COLOR`, ... | Writing a read-only port is a compile error. |
+| Port | `@BAT`, `@IND1`, ... | Writing a read-only port is a compile error. |
 | Label | `loop` | Jump/call targets only. |
 
 **Every value operand accepts a register, port, immediate or constant**, including
@@ -698,11 +711,9 @@ compute instructions leave it alone.
 | `@TICK` | R | ticks since world start | M1–M3 |
 | `@GROUND` | R | layer 0 tile ID under the rover | M1–M3 |
 | `@GROUND_HAZARD` | R | 0–2 | M1–M3 |
-| `@LIGHT_COLOR` | RW | 0–4 | M1–M3 |
-| `@LIGHT_BLINK` | RW | 0/1 | M1–M3 |
 | `@HEADLIGHT` | RW | 0/1 | M4 (costs energy; M8.1: lights a forward cone for the operator at night) |
 | `@HEADING` | RW | 0–3 (`NORTH`…`WEST`); write turns in place, wraps mod 4 | M8.1 |
-| `@IND1`, `@IND2`, `@IND3` | RW | 0–4 (`OFF`…`AMBER`) | M8 (indicator lamps, visual only) |
+| `@IND1`, `@IND2`, `@IND3` | RW | 0–4 (`OFF`…`AMBER`) | M8 (status lamps, visual only; replace the removed `@LIGHT_COLOR` / `@LIGHT_BLINK` beacon) |
 | `@SENSOR_RANGE` | R | SCAN (radar) range, any direction, day and night | M4, M8.1 |
 | `@SUN_AZIMUTH`, `@SUN_ELEV`, `@SUN_LIGHT` | R | 0–359, −70..70, 0–100 | M4 |
 | `@SOLAR_OPEN` | RW | 0/1 | M4 |
@@ -752,9 +763,9 @@ first line that no longer fits.
 
 #### 5.7.1 Machine code and the listing **[M10]**
 
-Decided with the owner (2026-11-13): the compiler emits real bytes, and the player can
-**Compile** (free, on the ground) to see an assembler listing (address, hex bytes,
-source line) and the final byte count of each slot.
+Decided with the owner (2026-11-13): the compiler emits real bytes, and the player sees
+an assembler listing (address, hex bytes, source line) and the final byte count of each
+slot, assembled on the ground (free) while typing.
 
 * **Opcode byte** `kkknnnnn`: `nnnnn` is the instruction from a fixed table (`MOV` 01,
   `PUSH` 02, … `BRK` 1A, `RUN` 1B, `END` 1C, in §5.4 order; the Reference tab lists them);
@@ -764,7 +775,7 @@ source line) and the final byte count of each slot.
   `STEP 1 2` = `34 01 02`, `END 1` = `3C 01`. Hence `CALL` passes at most 7 arguments.
 * **Operand byte**: `0000vvvv` short immediate 0–15 · `00010rrr` register r0–r7 ·
   `01pppppp` port (fixed port numbers 0–63, `PORT_CODES` in `ports.ts`: `@BAT` = 0 → `40`;
-  the Reference tab lists them) · `00011000` / `00011001` / `00011010` followed by an
+  the Reference tab lists them; numbers of removed ports, 33–34, stay unused) · `00011000` / `00011001` / `00011010` followed by an
   8 / 16 / 32-bit big-endian two's-complement immediate. Other values are invalid.
 * **Label reference**: 2 raw bytes, the big-endian byte address of the target (no operand
   byte; the instruction says where a label goes).
@@ -783,7 +794,8 @@ source line) and the final byte count of each slot.
   instructions continue on the next row) | source. Kept in sync while typing (a slot with
   errors still lists, with estimated sizes and `??` bytes); clicking a row jumps to its
   line, the cursor's line is highlighted, and so is the admin debugger's next line.
-  *Compile* (free) logs the slot's size and address range and the flash total.
+  There is no separate *Compile* button (removed 2026-11-13): the listing and the flash
+  bar already show the result live.
 
 ## 6. Milestones
 
@@ -798,7 +810,7 @@ The renderer is a read-only consumer of the simulation, and every shape is drawn
 gameplay, saves or tests.
 
 * **Bloom / glow:** `EffectComposer` + `UnrealBloomPass` on emissive lines (ore crystals,
-  scan rays, beacon, headlight, acid vents). Selective bloom so the grid stays crisp.
+  scan rays, status lamps, headlight, acid vents). Selective bloom so the grid stays crisp.
 * **Fat lines:** `Line2` / `LineSegments2` + `LineMaterial` for real pixel widths
   (WebGL lines are 1 px). Width can scale with zoom and importance.
 * **Symbolic ground:** the map is an orbital scan read through a legend, not scenery: low
