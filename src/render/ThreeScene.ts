@@ -308,8 +308,8 @@ export class ThreeScene {
         dishHealth: u.antennaHealth,
         cpu: dead ? 'off' : fault ? 'fault' : u.action?.kind === 'WAIT' ? 'idle' : 'run',
         indicators: fillIndicators(v.indicators, u.indicators, dead),
-        // Dark while powered off. The operator's view is centred on the rover, so its own
-        // display is always in view; other rovers (M12) will need the view check.
+        // Dark while powered off. The operator's view is centred on the rover, so its
+        // display is always in view.
         post: dead ? null : u.post,
         headlight: !!u.headlight && !dead,
         drilling: u.action?.kind === 'TOOL' && u.action.tool === 'DRILL',

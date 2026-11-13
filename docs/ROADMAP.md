@@ -23,7 +23,7 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | ✅ slices 1–6 done (link layer, `LOG`, Console tab; recorder, spectra, Gallery tab; dumps, `BRK`, admin-only debugger; `@POST` display; camera + photos; upgrades, camera modes 3–5, fossil anomalies; save v9) |
 | **M10** | **Firmware + program slot (SPEC §3.9)** | 🚧 slice 1 (core, save v10) done; slice 2 (machine code + byte addresses, save v11, Code tab / Console redesign, listing pane) in review |
 | M11 | User interface review (after M10) | 🚧 Comms tab, Code tab dump box, Reference → Radio, Mission events: default since 2026-11-13 (save v13); `BRK` reports itself |
-| M12 | Multiple rovers (after single-rover tuning) | planned |
+| M12 | Image memory: `SNAP` → `LDB` / `STB` → `SEND` (SPEC §3.8.7, guide [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md)) | planned (design + verified examples) |
 
 ## Done: Flash measured in bytes
 
@@ -424,11 +424,61 @@ what the top bar shows, discoverability for beginners. Proposals with screenshot
       teaching event first.
 - [ ] Known: the tab bar is wider than the default side panel (the Admin tab is cut off).
 
+## M12 — Image memory (planned)
+
+Owner idea (2026-11-13): let advanced players work with picture memory themselves (their own
+pictures, changed photos), reflecting real techniques, but keep the model simple:
+**take a picture → change it → send it**, every byte addressable. Rules in SPEC §3.8.7; the
+player guide [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md) explains the memory layout and has six
+worked examples (line, test pattern, negative, stamp, plot, memory map). The examples were
+run against a prototype of the rules: pictures, cycle counts and Flash sizes are measured
+(all fit beside the default firmware; `plot` is the largest at 103 of 108 B).
+
+Decided in the design:
+- **One image memory, four instructions** (`SNAP`, `LDB`, `STB`, `SEND`), no control
+  registers: the instructions are the control. `PEEK` stays the cargo instruction
+  (names are case-insensitive), so the memory ops are `LDB` / `STB`.
+- The **recorder (mass memory) is not addressable**: a product changed while the
+  transmitter is half-way through it would arrive mixed. Editing happens before `SEND`.
+- **Credits come from the capture, not from the bytes** (first `SEND` after a `SNAP`,
+  same type); a provenance level (raw / edited / drawn) travels in the frame header.
+- Image memory is **usable as RAM** (example 6): a deliberate power step for advanced
+  players; `SNAP` overwrites it.
+- `SNAP` without `SEND` no longer delivers anything: a break for players' own programs
+  (no shipped program uses `SNAP`). The compiler warns about it.
+
+Slices:
+1. [ ] **Core.** `chassis.imageBytes` (from the installed camera modes, upgrades grow it);
+       `SNAP` writes `photoPayload` into image memory at the end of the exposure and keeps
+       the capture; `LDB` / `STB` / `SEND` in `isa.ts`, `Compiler.ts`, `RoverVM.ts`;
+       provenance bits in the science header (encoder, decoder, Comms *Decode bytes*);
+       credits per capture; edited / drawn products store their bytes; **save v14** +
+       migration. Tests: wrap and `& 255`, `SEND` errors, credits once per capture (no
+       farming with repeated `SEND`s), anomaly flags only on captured photos, save
+       mid-processing == uninterrupted, determinism.
+2. [ ] **Examples and teaching.** The six examples from the guide as program templates
+       (compiled and run in tests: assert the pictures); Reference → **Image** sub-tab
+       (from the guide: diagram, rows and addresses, bits in a byte, modes table); Gallery
+       labels *raw / edited / drawn* and a hex view per photo; compiler warning "`SNAP`
+       without `SEND`"; Reference `SNAP` note updated.
+3. [ ] **Goals.** A teaching goal (*Darkroom*: deliver an edited photo) and maybe
+       *Postcard home* (a drawn picture). Rewards to decide.
+
+Open (decide during slice 1 or in playtests):
+- `plot` needs 103 B on Mk-I. If players find pixels too costly, add `AND` / `OR` / `SHL` /
+  `SHR` (shorter, and needed for compression later), or pixel instructions.
+- `SEND` energy (0 now: the transmitter pays per byte) and whether drawn pictures earn
+  anything beyond goals.
+- Later techniques on top: deleting products from the recorder (triage), holding the
+  transmitter, hardware crop / thumbnails, compressed formats (`SEND type len`), stacking
+  night photos.
+
 ## Resolved decisions (M7)
 
 1. Upgrades are **picked up**: a supply crate lands near the rover; the grabber installs it.
 2. Installed **immediately** on pickup (including Flash/register limits).
-3. **More rovers later**, once the single-rover game is tuned (now M12).
+3. ~~More rovers later~~ → **dropped** (owner, 2026-11-13): one rover is plenty of work. The
+   engine keeps its unit registry, but no multi-rover milestone or UI is planned.
 4. Prospector stays at 31/32 lines without squall handling: **a lesson** (Flash 48 fixes it).
    Now 120/128 bytes; the Flash 192 B upgrade fixes it.
 
@@ -500,7 +550,6 @@ window with a fixed dish?
 - Crafting: combine ores into a `REPAIR_KIT` (needs a fabricator module, M7 `TOOL_3`?).
 
 - Breakpoints in the editor gutter; "run to cursor".
-- Multiple rovers (engine already supports units; UI is single-rover).
 - Autosave in `localStorage` (M6).
 - Minimap of explored area.
 - Mobile layout.
@@ -544,3 +593,4 @@ window with a fixed dish?
 | 2026-11-13 | `ccr-2a541ea4-pbkrmo` (2) | M11 review feedback: "dump" wording kept (*Dump program state*, *▲ Dump registers / stacks*, one slot's CPU, not the whole rover); dumps in Comms byte by byte with a comment per field and `ALIAS` register names; *Decode bytes* for LOG / system messages; new **Reference → Radio** sub-tab (header byte, numbers, every frame type as a decoded example). |
 | 2026-11-13 | `ccr-2a541ea4-pbkrmo` (3) | M11 clarity pass: `BRK` sends a register dump by itself (*sent by BRK*, "stopped at the BRK on line 5"); not-running program dumps marked; value comments for state / `@STATUS`; `fw L55` and dump addresses link to the Code tab; waiting estimate; foldable dump box; rejected sends listed in Comms (`engine.sent` `rejected`). |
 | 2026-11-13 | `ccr-2a541ea4-pbkrmo` (4) | Comms is the default: Console tab, `ConsolePanel.ts`, its CSS and the `?comms=1` flag removed; "Console" wording replaced (Reference, shipped firmware comments, admin banner, SPEC). |
+| 2026-11-13 | `claude/gallant-bell-hb1kyd` | M12 designed with the owner: image memory (`SNAP` → `LDB` / `STB` → `SEND`, SPEC §3.8.7) and player guide `docs/IMAGE_MEMORY.md` with six examples checked on a prototype interpreter; multiple rovers dropped from the plan (one rover is plenty of work). |
