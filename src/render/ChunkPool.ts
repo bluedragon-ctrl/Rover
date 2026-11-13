@@ -33,6 +33,8 @@ interface Entry {
   layers: Uint16Array[];
   /** Force a full rebuild (reveal-all toggled). */
   rebuild: boolean;
+  /** Built with full detail (near zoom) or the far LOD. */
+  detail: boolean;
 }
 
 /**
@@ -51,6 +53,8 @@ export class ChunkPool {
   private entries = new Map<string, Entry>();
   /** Debug/admin: ignore fog of war. */
   private revealAll = false;
+  /** Level of detail for new builds (false = far zoom: no pebbles, strata, ripples...). */
+  private detail = true;
   /**
    * CPU budget for chunk rebuilds per frame (ms), to avoid hitches when panning fast.
    * At least one chunk is built per frame; a chunk takes ~4 ms (render-budget test).
@@ -94,8 +98,8 @@ export class ChunkPool {
       if (near > maxDist + (e ? CHUNK / 2 : 0)) continue;
       wanted.add(key);
       const loaded = this.engine.world.hasChunk(cx, cy);
-      let stale = !e || !loaded || e.version !== e.chunk.version;
-      if (e && stale && loaded && !e.rebuild && this.engine.world.getChunk(cx, cy) === e.chunk && this.patch(e)) {
+      let stale = !e || !loaded || e.version !== e.chunk.version || e.detail !== this.detail;
+      if (e && stale && loaded && !e.rebuild && e.detail === this.detail && this.engine.world.getChunk(cx, cy) === e.chunk && this.patch(e)) {
         patches++;
         stale = false;
       }
@@ -121,7 +125,7 @@ export class ChunkPool {
           // floating origin (the group moves, the geometry does not).
           group.add(f, l);
           this.root.add(group);
-          e = { group, lines: l, fills: f, chunk, version: 0, ranges, fog: new Uint8Array(CHUNK_AREA), layers: [], rebuild: false };
+          e = { group, lines: l, fills: f, chunk, version: 0, ranges, fog: new Uint8Array(CHUNK_AREA), layers: [], rebuild: false, detail: this.detail };
           this.entries.set(key, e);
         }
         this.snapshot(e);
@@ -164,6 +168,7 @@ export class ChunkPool {
     const c = e.chunk;
     e.version = c.version;
     e.rebuild = false;
+    e.detail = this.detail;
     e.fog.set(c.fog);
     e.layers = [0, 1, 2].map((l) => c.layers[l].slice());
   }
@@ -214,6 +219,14 @@ export class ChunkPool {
     this.fillTriangles += (sign * e.fills.geometry.getAttribute('position').count) / 3;
   }
 
+  /**
+   * Switch the level of detail. Chunks are rebuilt lazily within the per-frame budget,
+   * nearest first, so a zoom across the threshold never hitches.
+   */
+  setDetail(detail: boolean): void {
+    this.detail = detail;
+  }
+
   setRevealAll(v: boolean): void {
     if (v === this.revealAll) return;
     this.revealAll = v;
@@ -252,7 +265,7 @@ export class ChunkPool {
           const id = c.layers[layer][i];
           if (!id) continue;
           const def = reg.get(id);
-          if (def) drawTileVec(b, f, def.shape, def.color, lx, ly, variant);
+          if (def) drawTileVec(b, f, def.shape, def.color, lx, ly, variant, this.detail);
         }
         b.hide(false);
         f.hide(false);

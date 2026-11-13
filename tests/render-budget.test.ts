@@ -137,3 +137,23 @@ describe('rover rig draw calls', () => {
     expect(rig.lamps.get(LAMP.HEAD)).toBe(0x1e293b);
   });
 });
+
+describe('far zoom LOD', () => {
+  it('drops small detail and rebuilds within the frame budget', () => {
+    const eng = new SimulationEngine({ seed: 1 });
+    const pool = new ChunkPool(eng, new THREE.Group(), new TileLighting());
+    pool.setRevealAll(true);
+    pool.maxBuildsPerFrame = 1000;
+    pool.buildBudgetMs = Infinity;
+    pool.update(CHUNK * 4 + 8, CHUNK * 4 + 8, 2);
+    const near = pool.lineVertices;
+    pool.setDetail(false);
+    pool.update(CHUNK * 4 + 8, CHUNK * 4 + 8, 2);
+    const far = pool.lineVertices;
+    // Seed 1: ~40% fewer line vertices.
+    expect(far).toBeLessThan(near * 0.75);
+    pool.setDetail(true);
+    pool.update(CHUNK * 4 + 8, CHUNK * 4 + 8, 2);
+    expect(pool.lineVertices).toBe(near);
+  });
+});

@@ -28,6 +28,10 @@ interface RoverView {
 /** How far (tiles) the camera focus may be panned away from the rover. */
 export const PAN_LEASH = 24;
 
+/** Camera distance (tiles) beyond which chunks use the far LOD; hysteresis band below. */
+export const LOD_FAR_DIST = 36;
+export const LOD_NEAR_DIST = 30;
+
 export interface PerfSnapshot {
   fps: number;
   avgMs: number;
@@ -258,6 +262,8 @@ export class ThreeScene {
     const fogNear = rig.dist * 1.3;
     const fogFar = rig.dist * 3.2 + 10;
     const radius = Math.min(6, Math.ceil(Math.min(rig.viewRadius, fogFar) / 16) + 1);
+    if (rig.dist > LOD_FAR_DIST) this.chunks.setDetail(false);
+    else if (rig.dist < LOD_NEAR_DIST) this.chunks.setDetail(true);
     this.chunks.update(fx, fy, radius, fogFar);
 
     const light = this.engine.sun.light / 100;

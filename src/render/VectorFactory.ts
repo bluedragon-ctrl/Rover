@@ -303,8 +303,11 @@ export function drawFogTile(b: LineBatch, lx: number, ly: number): void {
 /**
  * v2 tile: lines into `b`, dark fills into `f`. Chunk-local coordinates:
  * tile (lx, ly) covers x∈[lx, lx+1], z∈[-ly-1, -ly].
+ *
+ * `detail` false (far zoom LOD) leaves out the small stuff that is sub-pixel from far away:
+ * corner ticks, sand ripples, pebbles, rock strata, vent smoke.
  */
-export function drawTileVec(b: LineBatch, f: FillBatch, shape: TileShape, color: number, lx: number, ly: number, variant: number): void {
+export function drawTileVec(b: LineBatch, f: FillBatch, shape: TileShape, color: number, lx: number, ly: number, variant: number, detail = true): void {
   const x0 = lx;
   const z0 = -ly - 1;
   const cx = lx + 0.5;
@@ -314,14 +317,14 @@ export function drawTileVec(b: LineBatch, f: FillBatch, shape: TileShape, color:
   const ground = (hex: number, fill = 0.09) => {
     b.color(hex, 0.42).seg(x0, 0, z0 + 1, x0 + 1, 0, z0 + 1).seg(x0, 0, z0, x0, 0, z0 + 1);
     // Tiny corner tick so lit cells read as cells even without neighbours.
-    b.color(hex, 0.6).seg(x0 + 1, 0, z0 + 1, x0 + 0.9, 0, z0 + 1).seg(x0 + 1, 0, z0 + 1, x0 + 1, 0, z0 + 0.9);
+    if (detail) b.color(hex, 0.6).seg(x0 + 1, 0, z0 + 1, x0 + 0.9, 0, z0 + 1).seg(x0 + 1, 0, z0 + 1, x0 + 1, 0, z0 + 0.9);
     f.color(hex, fill).quad([x0, 0, z0], [x0 + 1, 0, z0], [x0 + 1, 0, z0 + 1], [x0, 0, z0 + 1]);
   };
   switch (shape) {
     case 'floor':
       ground(color);
       // Occasional ripple line in the sand.
-      if ((variant & 3) === 0) {
+      if (detail && (variant & 3) === 0) {
         const o = jit(variant, 1) * 0.5 + 0.25;
         b.color(color, 0.3).seg(x0 + 0.2, 0, z0 + o, x0 + 0.5, 0, z0 + o - 0.06).seg(x0 + 0.5, 0, z0 + o - 0.06, x0 + 0.8, 0, z0 + o);
       }
@@ -329,7 +332,7 @@ export function drawTileVec(b: LineBatch, f: FillBatch, shape: TileShape, color:
     case 'rough': {
       ground(color, 0.1);
       // Three flat stones lying on the ground: low, dim, same hue as the ground.
-      for (let k = 0; k < 3; k++) {
+      for (let k = 0; k < (detail ? 3 : 0); k++) {
         const px = x0 + 0.18 + jit(variant, k * 2 + 3) * 0.64;
         const pz = z0 + 0.18 + jit(variant, k * 2 + 4) * 0.64;
         const r = 0.05 + jit(variant, k + 9) * 0.05;
@@ -381,7 +384,7 @@ export function drawTileVec(b: LineBatch, f: FillBatch, shape: TileShape, color:
       const lb: V3 = [(base[k][0] + base[kk][0]) / 2, 0.005, (base[k][2] + base[kk][2]) / 2];
       b.color(color, 0.85).seg(...rim[k], ...lm).seg(...lm, ...lb);
       // Fume wisp above the crater.
-      b.color(color, 0.35).seg(cx, h, cz, cx + 0.04, h + 0.18, cz - 0.03).seg(cx + 0.04, h + 0.18, cz - 0.03, cx - 0.02, h + 0.34, cz - 0.06);
+      if (detail) b.color(color, 0.35).seg(cx, h, cz, cx + 0.04, h + 0.18, cz - 0.03).seg(cx + 0.04, h + 0.18, cz - 0.03, cx - 0.02, h + 0.34, cz - 0.06);
       break;
     }
     case 'wall': {
@@ -402,7 +405,7 @@ export function drawTileVec(b: LineBatch, f: FillBatch, shape: TileShape, color:
       b.color(color, 0.95).loop(lo).loop(hi);
       for (let i = 0; i < 6; i++) b.seg(lo[i][0], lo[i][1], lo[i][2], hi[i][0], hi[i][1], hi[i][2]);
       // Strata: rings between bottom and top.
-      for (const s of [0.33, 0.62]) {
+      for (const s of detail ? [0.33, 0.62] : []) {
         const ring = lo.map((p, i): V3 => [p[0] + (hi[i][0] - p[0]) * s, hi[i][1] * s, p[2] + (hi[i][2] - p[2]) * s]);
         b.color(color, 0.4).loop(ring);
       }
