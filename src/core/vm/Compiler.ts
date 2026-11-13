@@ -1,7 +1,7 @@
 import { ENCODING, type ChassisDef } from '../balance';
 import { MAX_LOG_TAG, SYSTEM_TAG } from '../downlink';
 import { getPort } from '../ports';
-import { Alert, Dir, LightColor, Status, SystemId } from '../types';
+import { Alert, Dir, LightColor, ProgState, Status, SystemId } from '../types';
 
 export type Op =
   | 'MOV' | 'PUSH' | 'POP'
@@ -9,7 +9,8 @@ export type Op =
   | 'JMP' | 'JEQ' | 'JNE' | 'JLT' | 'JGT' | 'JLE' | 'JGE'
   | 'CALL' | 'RET'
   | 'SLEEP' | 'SCAN' | 'STEP' | 'ACT' | 'PEEK' | 'USE' | 'SNAP'
-  | 'LOG' | 'BRK';
+  | 'LOG' | 'BRK'
+  | 'RUN' | 'END';
 
 export type Operand =
   | { k: 'imm'; v: number }
@@ -111,10 +112,22 @@ const SIGNATURES: Record<Op, string[]> = {
   SNAP: ['v', 'v?'],
   LOG: ['k', 'v?'],
   BRK: [],
+  RUN: ['v'],
+  END: ['v?'],
 };
 
 export const OPCODES = Object.keys(SIGNATURES) as Op[];
-export const HARDWARE_OPS: ReadonlySet<Op> = new Set(['SLEEP', 'SCAN', 'STEP', 'ACT', 'USE', 'SNAP']);
+export const HARDWARE_OPS: ReadonlySet<Op> = new Set(['SLEEP', 'SCAN', 'STEP', 'ACT', 'USE', 'SNAP', 'RUN']);
+
+/** Code slot (M10, SPEC §3.9): the firmware runs the program inside `RUN` time slices. */
+export type Slot = 'firmware' | 'program';
+
+export interface CompileOptions {
+  /** Default 'firmware'. */
+  slot?: Slot;
+  /** Flash bytes taken by the other slot (firmware + program share the chassis flash). */
+  otherBytes?: number;
+}
 
 export function builtinConstants(): Record<string, number> {
   const c: Record<string, number> = {};
@@ -123,6 +136,7 @@ export function builtinConstants(): Record<string, number> {
   for (const [k, v] of Object.entries(LightColor)) if (typeof v === 'number') c[k] = v;
   for (const [k, v] of Object.entries(SystemId)) if (typeof v === 'number') c[k] = v;
   for (const [k, v] of Object.entries(Alert)) if (typeof v === 'number') c[k] = v;
+  for (const [k, v] of Object.entries(ProgState)) if (typeof v === 'number') c[k] = v;
   for (let i = 0; i < 4; i++) c[`TOOL_${i}`] = i;
   return c;
 }
@@ -168,7 +182,9 @@ function tokenize(source: string): RawLine[] {
  * Compile Rover-ASM source to a Program.
  * @param extraConstants e.g. tile constNames from WorldRegistry.
  */
-export function compile(source: string, chassis: ChassisDef, extraConstants: Record<string, number> = {}): CompileResult {
+export function compile(source: string, chassis: ChassisDef, extraConstants: Record<string, number> = {}, opts: CompileOptions = {}): CompileResult {
+  const slot = opts.slot ?? 'firmware';
+  const otherBytes = opts.otherBytes ?? 0;
   const errors: CompileError[] = [];
   const err = (line: number, message: string) => errors.push({ line, message });
 
@@ -322,6 +338,18 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
       if (o) args.push(o);
       else ok = false;
     });
+    if (op === 'RUN' && slot === 'program') {
+      err(l.line, 'RUN is a firmware instruction: a program cannot start itself');
+      ok = false;
+    }
+    if (op === 'END' && slot === 'firmware') {
+      err(l.line, 'END is a program instruction: firmware never ends (it runs the program with RUN)');
+      ok = false;
+    }
+    if (slot === 'program' && ok && args.some((o, i) => o.k === 'port' && o.name === 'PROG_STATE' && /^[dm]/.test(sig[Math.min(i, sig.length - 1)]))) {
+      err(l.line, 'Only the firmware may write @PROG_STATE');
+      ok = false;
+    }
     if (op === 'CALL' && args.length - 1 > chassis.dataStack) {
       err(l.line, `CALL passes ${args.length - 1} args but the data stack holds ${chassis.dataStack}`);
       ok = false;
@@ -348,11 +376,21 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
 
   let flashUsed = 0;
   let overLine = 0;
+  const budget = chassis.flashBytes - otherBytes;
   for (const l of code) {
     flashUsed += lineBytes[l.line];
-    if (!overLine && flashUsed > chassis.flashBytes) overLine = l.line;
+    if (!overLine && flashUsed > budget) overLine = l.line;
   }
-  if (overLine) err(overLine, `Program is ${flashUsed} bytes; ${chassis.name} has ${chassis.flashBytes} bytes of Flash`);
+  if (overLine) {
+    const what = slot === 'program' ? 'Program' : 'Firmware';
+    const other = slot === 'program' ? 'firmware' : 'program';
+    err(
+      overLine,
+      otherBytes > 0
+        ? `${what} is ${flashUsed} bytes + ${other} ${otherBytes} bytes; ${chassis.name} has ${chassis.flashBytes} bytes of Flash`
+        : `${what} is ${flashUsed} bytes; ${chassis.name} has ${chassis.flashBytes} bytes of Flash`,
+    );
+  }
 
   return {
     program: errors.length ? null : { instrs, labels, lineToIp },

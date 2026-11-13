@@ -26,9 +26,9 @@ const addMode = (c: ChassisDef, mode: number) => {
 };
 
 export const UPGRADES: UpgradeDef[] = [
-  // Ids kept from the line-based Flash (saves store them): FLASH_48 = 192 B, FLASH_64 = 256 B.
-  { id: 'FLASH_48', title: 'Flash 192 B', description: 'Program memory 128 → 192 bytes.', cost: 40, apply: (c) => (c.flashBytes = 192) },
-  { id: 'FLASH_64', title: 'Flash 256 B', description: 'Program memory 192 → 256 bytes.', cost: 90, requires: ['FLASH_48'], apply: (c) => (c.flashBytes = 256) },
+  // Ids kept from the line-based Flash (saves store them): FLASH_48 = 384 B, FLASH_64 = 512 B (M10).
+  { id: 'FLASH_48', title: 'Flash 384 B', description: 'Flash (firmware + program) 256 → 384 bytes.', cost: 40, apply: (c) => (c.flashBytes = 384) },
+  { id: 'FLASH_64', title: 'Flash 512 B', description: 'Flash (firmware + program) 384 → 512 bytes.', cost: 90, requires: ['FLASH_48'], apply: (c) => (c.flashBytes = 512) },
   {
     id: 'REGS_6',
     title: 'Register file r0–r5',
@@ -37,6 +37,7 @@ export const UPGRADES: UpgradeDef[] = [
     apply: (c, u) => {
       c.registers = 6;
       u.vm.resizeRegisters(6);
+      u.prog.resizeRegisters(6);
     },
   },
   {
@@ -48,6 +49,7 @@ export const UPGRADES: UpgradeDef[] = [
     apply: (c, u) => {
       c.registers = 8;
       u.vm.resizeRegisters(8);
+      u.prog.resizeRegisters(8);
     },
   },
   { id: 'CPU_6', title: 'CPU overclock I', description: 'Compute cycles per tick 4 → 6.', cost: 50, apply: (c) => (c.cyclesPerTick = 6) },

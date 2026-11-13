@@ -53,6 +53,16 @@ export enum Layer {
   ACTOR = 3,
 }
 
+/** @PROG_STATE (M10, SPEC §3.9.2). */
+export enum ProgState {
+  PROG_NONE = 0,
+  PROG_READY = 1,
+  PROG_RUNNING = 2,
+  PROG_DONE = 3,
+  PROG_FAULT = 4,
+  PROG_HALTED = 5,
+}
+
 export enum CpuState {
   RUNNING = 'RUNNING',
   BLOCKED = 'BLOCKED',

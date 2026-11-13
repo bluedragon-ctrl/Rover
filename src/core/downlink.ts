@@ -268,7 +268,10 @@ export class Downlink {
 
 /** Dump frame header: kind 1 (sized frame), tag 15 (system). Followed by dump kind, length, payload. */
 export const DUMP_HEADER = 0x80 | (SYSTEM_TAG << 3);
-export const DumpKind = { CPU: 1, STACKS: 2 } as const;
+/** Kinds 1/2: firmware context; 3/4: program context, same layouts (M10, SPEC §3.9.3). */
+export const DumpKind = { CPU: 1, STACKS: 2, PROG_CPU: 3, PROG_STACKS: 4 } as const;
+/** State byte of a program dump: @PROG_STATE. */
+export const PROG_STATE_NAMES: readonly string[] = ['PROG_NONE', 'PROG_READY', 'PROG_RUNNING', 'PROG_DONE', 'PROG_FAULT', 'PROG_HALTED'];
 /** CPU state byte in a dump. */
 export const CPU_STATE_CODES: readonly string[] = ['RUNNING', 'BLOCKED', 'HALTED', 'FAULT'];
 
@@ -292,38 +295,45 @@ const rd = (b: readonly number[], at: number, n: number, signed: boolean): numbe
 };
 const dumpFrame = (kind: number, payload: number[]): number[] => [DUMP_HEADER, kind, payload.length, ...payload];
 
-/** CPU dump: IP 2 B, @STATUS 1 B, state 1 B, each register 4 B, data/call stack depth 1 B each. */
-export function encodeCpuDump(d: { ip: number; status: number; state: string; regs: ArrayLike<number>; dsDepth: number; csDepth: number }): number[] {
-  const code = CPU_STATE_CODES.indexOf(d.state);
+/**
+ * CPU dump: IP 2 B, @STATUS 1 B, state 1 B, each register 4 B, data/call stack depth 1 B each.
+ * A firmware dump's state is a CpuState name; a program dump's (kind 3) is @PROG_STATE.
+ */
+export function encodeCpuDump(d: { ip: number; status: number; state: string | number; regs: ArrayLike<number>; dsDepth: number; csDepth: number }, kind: number = DumpKind.CPU): number[] {
+  const code = typeof d.state === 'number' ? d.state : CPU_STATE_CODES.indexOf(d.state);
   const p = [...be(d.ip, 2), d.status & 255, code < 0 ? 255 : code];
   for (let i = 0; i < d.regs.length; i++) p.push(...be(d.regs[i], 4));
   p.push(d.dsDepth & 255, d.csDepth & 255);
-  return dumpFrame(DumpKind.CPU, p);
+  return dumpFrame(kind, p);
 }
 
 /** Stack dump: data depth 1 B + 4 B per entry, call depth 1 B + 2 B (return IP) per entry. */
-export function encodeStackDump(ds: readonly number[], cs: readonly number[]): number[] {
+export function encodeStackDump(ds: readonly number[], cs: readonly number[], kind: number = DumpKind.STACKS): number[] {
   const p = [ds.length & 255];
   for (const v of ds) p.push(...be(v, 4));
   p.push(cs.length & 255);
   for (const v of cs) p.push(...be(v, 2));
-  return dumpFrame(DumpKind.STACKS, p);
+  return dumpFrame(kind, p);
 }
 
+export type DumpSlot = 'firmware' | 'program';
+/** `kind` is the layout (1 CPU, 2 stacks); `slot` tells firmware (kinds 1/2) from program (3/4). */
 export type DecodedDump =
-  | { kind: 1; ip: number; status: number; state: string; regs: number[]; dsDepth: number; csDepth: number }
-  | { kind: 2; dataStack: number[]; callStack: number[] };
+  | { kind: 1; slot: DumpSlot; ip: number; status: number; state: string; regs: number[]; dsDepth: number; csDepth: number }
+  | { kind: 2; slot: DumpSlot; dataStack: number[]; callStack: number[] };
 
 /** Decode a dump frame as received, or null if it is not one. */
 export function decodeDump(b: readonly number[]): DecodedDump | null {
   if (b[0] !== DUMP_HEADER) return null;
   const end = 3 + (b[2] ?? 0);
-  if (b[1] === DumpKind.CPU) {
+  const slot: DumpSlot = b[1] === DumpKind.PROG_CPU || b[1] === DumpKind.PROG_STACKS ? 'program' : 'firmware';
+  if (b[1] === DumpKind.CPU || b[1] === DumpKind.PROG_CPU) {
     const regs: number[] = [];
     for (let at = 7; at + 4 <= end - 2; at += 4) regs.push(rd(b, at, 4, true));
-    return { kind: 1, ip: rd(b, 3, 2, false), status: b[5] ?? 0, state: CPU_STATE_CODES[b[6] ?? 255] ?? '?', regs, dsDepth: b[end - 2] ?? 0, csDepth: b[end - 1] ?? 0 };
+    const names = slot === 'program' ? PROG_STATE_NAMES : CPU_STATE_CODES;
+    return { kind: 1, slot, ip: rd(b, 3, 2, false), status: b[5] ?? 0, state: names[b[6] ?? 255] ?? '?', regs, dsDepth: b[end - 2] ?? 0, csDepth: b[end - 1] ?? 0 };
   }
-  if (b[1] === DumpKind.STACKS) {
+  if (b[1] === DumpKind.STACKS || b[1] === DumpKind.PROG_STACKS) {
     const dataStack: number[] = [];
     const callStack: number[] = [];
     let at = 3;
@@ -331,7 +341,7 @@ export function decodeDump(b: readonly number[]): DecodedDump | null {
     for (let i = 0; i < nd; i++, at += 4) dataStack.push(rd(b, at, 4, true));
     const nc = b[at++] ?? 0;
     for (let i = 0; i < nc; i++, at += 2) callStack.push(rd(b, at, 2, false));
-    return { kind: 2, dataStack, callStack };
+    return { kind: 2, slot, dataStack, callStack };
   }
   return null;
 }

@@ -4,10 +4,11 @@ import type { DirectorState } from './EventDirector';
 import type { ProductDesc, QueuedFrame, ReceivedFrame, ReceivedProduct, SysFrame } from './downlink';
 import { SimulationEngine, type SupplyDrop } from './SimulationEngine';
 import { UPGRADE_BY_ID } from './upgrades';
-import { CpuState, type Status } from './types';
+import { CpuState, ProgState, type Status } from './types';
+import type { RoverVM } from './vm/RoverVM';
 import type { Unit, UnitAction, UnitMotion } from './Unit';
 
-export const SAVE_VERSION = 9;
+export const SAVE_VERSION = 10;
 
 interface UnitSave {
   id: number;
@@ -37,17 +38,47 @@ interface UnitSave {
   action: UnitAction | null;
   motion: UnitMotion | null;
   cyclesLeft: number;
-  vm: {
-    ip: number;
-    regs: number[];
-    dataStack: number[];
-    callStack: number[];
-    state: CpuState;
-    status: Status;
-    faultReason: string;
-    watchdog: number;
-    instructionsExecuted: number;
+  vm: VmSave;
+  /** v10: program slot (M10) */
+  program: { source: string; vm: VmSave; state: ProgState; result: number; slice: number };
+}
+
+interface VmSave {
+  ip: number;
+  regs: number[];
+  dataStack: number[];
+  callStack: number[];
+  state: CpuState;
+  status: Status;
+  faultReason: string;
+  watchdog: number;
+  instructionsExecuted: number;
+}
+
+function saveVm(vm: RoverVM): VmSave {
+  return {
+    ip: vm.ip,
+    regs: Array.from(vm.regs),
+    dataStack: [...vm.dataStack],
+    callStack: [...vm.callStack],
+    state: vm.state,
+    status: vm.status,
+    faultReason: vm.faultReason,
+    watchdog: vm.watchdog,
+    instructionsExecuted: vm.instructionsExecuted,
   };
+}
+
+function loadVm(vm: RoverVM, s: VmSave): void {
+  vm.ip = s.ip;
+  vm.regs.set(s.regs);
+  vm.dataStack = [...s.dataStack];
+  vm.callStack = [...s.callStack];
+  vm.state = s.state;
+  vm.status = s.status;
+  vm.faultReason = s.faultReason;
+  vm.watchdog = s.watchdog;
+  vm.instructionsExecuted = s.instructionsExecuted;
 }
 
 interface ChunkSave {
@@ -146,7 +177,6 @@ export function serialize(e: SimulationEngine): SaveSnapshot {
 }
 
 function saveUnit(u: Unit): UnitSave {
-  const vm = u.vm;
   return {
     id: u.id,
     name: u.name,
@@ -182,17 +212,8 @@ function saveUnit(u: Unit): UnitSave {
     action: u.action ? { ...u.action } : null,
     motion: u.motion ? { ...u.motion } : null,
     cyclesLeft: u.cyclesLeft,
-    vm: {
-      ip: vm.ip,
-      regs: Array.from(vm.regs),
-      dataStack: [...vm.dataStack],
-      callStack: [...vm.callStack],
-      state: vm.state,
-      status: vm.status,
-      faultReason: vm.faultReason,
-      watchdog: vm.watchdog,
-      instructionsExecuted: vm.instructionsExecuted,
-    },
+    vm: saveVm(u.vm),
+    program: { source: u.programSource, vm: saveVm(u.prog), state: u.progState, result: u.progResult, slice: u.slice },
   };
 }
 
@@ -267,6 +288,14 @@ export function migrate(raw: unknown): SaveSnapshot {
     out.anomalyTiles = [];
     out.stats.anomaliesFound = 0;
     v = 9;
+  }
+  if (v === 9) {
+    // v9 -> v10: firmware + program slot (M10). The old code stays the firmware; no program.
+    for (const u of out.units) {
+      const ctx: VmSave = { ip: 0, regs: u.vm.regs.map(() => 0), dataStack: [], callStack: [], state: CpuState.RUNNING, status: 0 as Status, faultReason: '', watchdog: 0, instructionsExecuted: 0 };
+      u.program = { source: '', vm: ctx, state: ProgState.PROG_NONE, result: 0, slice: -1 };
+    }
+    v = 10;
   }
   if (v !== SAVE_VERSION) throw new SaveError(`Unsupported save version ${s.version}.`);
   out.version = v;
@@ -352,17 +381,19 @@ export function deserialize(raw: unknown): SimulationEngine {
     const res = e.compileFor(u, us.sourceCode);
     if (!res.program) throw new SaveError(`Saved firmware of ${us.name} no longer compiles: ${res.errors[0]?.message}`);
     u.sourceCode = us.sourceCode;
+    u.firmwareBytes = res.flashUsed;
     u.vm.load(res.program);
-    const vm = u.vm;
-    vm.ip = us.vm.ip;
-    vm.regs.set(us.vm.regs);
-    vm.dataStack = [...us.vm.dataStack];
-    vm.callStack = [...us.vm.callStack];
-    vm.state = us.vm.state;
-    vm.status = us.vm.status;
-    vm.faultReason = us.vm.faultReason;
-    vm.watchdog = us.vm.watchdog;
-    vm.instructionsExecuted = us.vm.instructionsExecuted;
+    loadVm(u.vm, us.vm);
+    const ps = us.program;
+    const pres = e.compileFor(u, ps.source, 'program');
+    if (!pres.program) throw new SaveError(`Saved program of ${us.name} no longer compiles: ${pres.errors[0]?.message}`);
+    u.programSource = ps.source;
+    u.programBytes = pres.flashUsed;
+    u.prog.load(pres.program);
+    loadVm(u.prog, ps.vm);
+    u.progState = ps.state;
+    u.progResult = ps.result;
+    u.slice = ps.slice;
   }
   e.refreshDerived();
   return e;

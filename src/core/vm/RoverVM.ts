@@ -14,6 +14,8 @@ export interface VmHost {
   hardware(instr: Instr, values: number[]): number[] | void;
   /** LOG: queue a log frame (compute instruction, no @STATUS). */
   log?(tag: number, value: number | null): void;
+  /** END (program slot, M10): the program finished with `value`. */
+  end?(value: number): void;
 }
 
 export type StepResult = 'continue' | 'endTick';
@@ -211,6 +213,10 @@ export class RoverVM {
       case 'BRK':
         this.ip = next;
         this.halt();
+        return 'endTick';
+      case 'END':
+        this.ip = next;
+        host.end?.(a.length ? val(a[0]) : 0);
         return 'endTick';
       case 'PEEK': {
         // Cargo is [later]; route through host so it can implement it without VM changes.
