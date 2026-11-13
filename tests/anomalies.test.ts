@@ -71,7 +71,7 @@ describe('anomalies (SPEC §3.8.5)', () => {
   });
 
   it('SNAP of an anomaly tile marks the descriptor and shows a different scene', () => {
-    const { e, u } = rover('SNAP EAST\nSLEEP 1000');
+    const { e, u } = rover('SNAP EAST\nSEND\nSLEEP 1000');
     const y = cliffTile(true);
     // Put the rover next to the anomaly cliff.
     u.y = y;
@@ -84,7 +84,7 @@ describe('anomalies (SPEC §3.8.5)', () => {
     expect(productPayload(SEED, p)).not.toEqual(plain);
     expect(productPayload(SEED, p)).toEqual(productPayload(SEED, { ...p })); // deterministic
 
-    const n = rover('SNAP EAST\nSLEEP 1000');
+    const n = rover('SNAP EAST\nSEND\nSLEEP 1000');
     const y2 = cliffTile(false);
     n.u.y = y2;
     for (let x = -1; x <= 3; x++) n.e.world.setTile(x, y2, Layer.OBSTACLE, 0);

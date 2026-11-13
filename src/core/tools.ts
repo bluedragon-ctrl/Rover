@@ -145,18 +145,15 @@ export const TOOLS: Record<ToolId, ToolDef> = {
     energy: BALANCE.snapEnergy,
     keepsHeading: true,
     description:
-      'SNAP <dir> [mode=1] photographs the first obstacle, item or rover within 2 tiles in <dir>; with nothing that close, a landscape of what lies ahead (ridges, ground, the sun) into the science recorder. Needs @SUN_LIGHT ≥ 20 or the headlight aimed that way (@HEADING = dir), else the photo is dark and worth nothing. Mk-I modes: 1 grey, 2 dithered (258 B each); upgrades add 3 colour palette (514 B), 4 hi-res 64×64 (1026 B), 5 RGB332 (1026 B).',
+      'SNAP <dir> [mode=1] photographs the first obstacle, item or rover within 2 tiles in <dir>; with nothing that close, a landscape of what lies ahead (ridges, ground, the sun). The photo goes into image memory: change it with LDB / STB, then SEND it to the science recorder. Needs @SUN_LIGHT ≥ 20 or the headlight aimed that way (@HEADING = dir), else the photo is dark and worth nothing. Mk-I modes: 1 grey, 2 dithered (256 B each); upgrades add 3 colour palette (512 B), 4 hi-res 64×64 (1024 B), 5 RGB332 (1024 B).',
     target: (u, d) => (validDir(d) ? adjacent(u, d) : null),
     check(_e, u, dir, mode = 1) {
-      if (!validDir(dir) || !u.chassis.cameraModes.includes(mode)) return Status.ERR_INVALID;
-      return u.link.recFree(u.chassis.recorderBytes) < productFrameBytes(mode) ? Status.ERR_FULL : Status.OK;
+      return !validDir(dir) || !u.chassis.cameraModes.includes(mode) ? Status.ERR_INVALID : Status.OK;
     },
     complete(e, u, dir, mode = 1) {
       const st = this.check(e, u, dir, mode);
       if (st !== Status.OK) return st;
-      const shot = e.cameraSubject(u, dir);
-      e.recordProduct(u, { type: mode, subject: shot.subject, x: u.x, y: u.y, sx: shot.x, sy: shot.y, lit: e.photoLit(u, dir), credits: 0, ...(shot.horizon ? { horizon: shot.horizon } : {}), ...(e.anomalyAt(shot.subject, shot.x, shot.y) ? { anomaly: true } : {}) });
-      e.stats.photosTaken++;
+      e.capturePhoto(u, dir, mode); // into image memory (M12, SPEC §3.8.7); SEND records it
       return Status.OK;
     },
   },

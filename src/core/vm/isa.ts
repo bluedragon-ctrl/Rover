@@ -16,7 +16,8 @@ export type Op =
   | 'CALL' | 'RET'
   | 'SLEEP' | 'SCAN' | 'STEP' | 'ACT' | 'PEEK' | 'USE' | 'SNAP'
   | 'LOG' | 'BRK'
-  | 'RUN' | 'END';
+  | 'RUN' | 'END'
+  | 'LDB' | 'STB' | 'SEND';
 
 export type Operand =
   | { k: 'imm'; v: number }
@@ -77,15 +78,18 @@ export const SIGNATURES: Record<Op, string[]> = {
   BRK: [],
   RUN: ['v'],
   END: ['v?'],
+  LDB: ['d', 'v'],
+  STB: ['v', 'v'],
+  SEND: ['v?'],
 };
 
 export const OPCODES = Object.keys(SIGNATURES) as Op[];
-export const HARDWARE_OPS: ReadonlySet<Op> = new Set(['SLEEP', 'SCAN', 'STEP', 'ACT', 'USE', 'SNAP', 'RUN']);
+export const HARDWARE_OPS: ReadonlySet<Op> = new Set(['SLEEP', 'SCAN', 'STEP', 'ACT', 'USE', 'SNAP', 'RUN', 'SEND']);
 
 /**
  * Fixed opcode numbers (SPEC §5.7.1), in §5.4 order. Append only: never renumber.
- * The low 5 bits of the opcode byte hold this number (1–30). 1D and 1E are reserved for
- * the planned image-memory `LDB` / `STB` (SPEC §3.8.7); 1F is the extension prefix.
+ * The low 5 bits of the opcode byte hold this number (1–30): the image-memory `LDB` / `STB`
+ * (SPEC §3.8.7) took the last two, 1D and 1E; 1F is the extension prefix.
  */
 export const OPCODE_NUMBERS: Readonly<Partial<Record<Op, number>>> = {
   MOV: 0x01, PUSH: 0x02, POP: 0x03,
@@ -95,6 +99,7 @@ export const OPCODE_NUMBERS: Readonly<Partial<Record<Op, number>>> = {
   SLEEP: 0x12, SCAN: 0x13, STEP: 0x14, ACT: 0x15, PEEK: 0x16, USE: 0x17, SNAP: 0x18,
   LOG: 0x19, BRK: 0x1a,
   RUN: 0x1b, END: 0x1c,
+  LDB: 0x1d, STB: 0x1e,
 };
 
 /**
@@ -106,6 +111,7 @@ export const OPCODE_NUMBERS: Readonly<Partial<Record<Op, number>>> = {
 export const EXT_PREFIX = 0x1f;
 export const EXT_OPCODE_NUMBERS: Readonly<Partial<Record<Op, number>>> = {
   AND: 0x01, OR: 0x02, SHL: 0x03, SHR: 0x04,
+  SEND: 0x05,
 };
 const OP_BY_NUMBER = new Map(Object.entries(OPCODE_NUMBERS).map(([op, n]) => [n, op as Op]));
 const OP_BY_EXT_NUMBER = new Map(Object.entries(EXT_OPCODE_NUMBERS).map(([op, n]) => [n, op as Op]));
@@ -122,7 +128,7 @@ export function opcodeBytes(op: Op): number[] {
 /** Opcode as the Reference tab shows it: `04`, `1F 01`. */
 export const opcodeHex = (op: Op): string => opcodeBytes(op).map((b) => b.toString(16).toUpperCase().padStart(2, '0')).join(' ');
 
-/** Size of the opcode in bytes: 1, or 2 for an extended instruction. */
+/** Size of the opcode in bytes: 1, or 2 for an extended instruction (bit instructions, SEND). */
 export const opcodeSize = (op: Op): number => (EXT_OPCODE_NUMBERS[op] !== undefined ? ENCODING.extOpcode : ENCODING.opcode);
 
 /**

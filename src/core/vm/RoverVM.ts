@@ -16,6 +16,10 @@ export interface VmHost {
   log?(tag: number, value: number | null): void;
   /** END (program slot, M10): the program finished with `value`. */
   end?(value: number): void;
+  /** LDB (M12): the byte (0–255) at `addr` of image memory. Compute: no @STATUS. */
+  load?(addr: number): number;
+  /** STB (M12): store `value & 255` at `addr` of image memory. Compute: no @STATUS. */
+  store?(addr: number, value: number): void;
 }
 
 export type StepResult = 'continue' | 'endTick';
@@ -247,6 +251,12 @@ export class RoverVM {
         this.ip = next;
         host.end?.(a.length ? val(a[0]) : 0);
         return 'endTick';
+      case 'LDB':
+        put(a[0], host.load?.(val(a[1])) ?? 0);
+        break;
+      case 'STB':
+        host.store?.(val(a[0]), val(a[1]));
+        break;
       case 'PEEK': {
         // Cargo is [later]; route through host so it can implement it without VM changes.
         const out = host.hardware(ins, [val(a[0])]) ?? [];

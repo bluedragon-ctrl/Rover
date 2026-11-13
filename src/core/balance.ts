@@ -52,6 +52,7 @@ export const BALANCE = {
   // Camera (docs/SPEC.md §3.8.5): SNAP dir [mode]
   snapTicks: 10,
   snapEnergy: 200,
+  sendTicks: 1, // SEND (M12, §3.8.7): image memory → recorder, no energy (the transmitter pays)
   snapReach: 2, // subject: first obstacle / item / rover within this many tiles, else a landscape
   horizonRange: 16, // landscape: obstacles up to this far shape the skyline
   snapMinSunLight: 20, // @SUN_LIGHT needed for a lit photo (or the headlight aimed at the subject)
@@ -81,7 +82,7 @@ export const BALANCE = {
  */
 export const ENCODING = {
   opcode: 1,
-  extOpcode: 2, // extension prefix 1F + the instruction's number (AND, OR, SHL, SHR)
+  extOpcode: 2, // extension prefix 1F + the instruction's number (AND, OR, SHL, SHR, SEND)
   register: 1, // operand byte: addressing mode + register index
   port: 1, // operand byte: addressing mode + port number
   shortImm: 1, // 0..shortImmMax packed into the operand byte itself

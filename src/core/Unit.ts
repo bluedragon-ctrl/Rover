@@ -2,7 +2,17 @@ import { BALANCE, cloneChassis, type ChassisDef } from './balance';
 import { CpuState, ProgState } from './types';
 import type { ToolId } from './tools';
 import { RoverVM } from './vm/RoverVM';
-import { Downlink } from './downlink';
+import { Downlink, type ProductDesc } from './downlink';
+import { photoBytes } from './photos';
+
+/** Image memory size (SPEC §3.8.7): the largest photo the installed camera modes take. */
+export const imageBytes = (c: Pick<ChassisDef, 'cameraModes'>): number => c.cameraModes.reduce((n, m) => Math.max(n, photoBytes(m)), 0);
+
+/**
+ * What the camera saw at the last SNAP (M12): the photo fields of a product descriptor plus
+ * the noise seed its bytes were generated with. The first SEND of the same type carries it.
+ */
+export type Capture = Pick<ProductDesc, 'type' | 'subject' | 'x' | 'y' | 'sx' | 'sy' | 'lit' | 'horizon' | 'anomaly'> & { noise: { tick: number; seq: number } };
 
 export type UnitAction =
   | { kind: 'WAIT'; ticksLeft: number }
@@ -45,6 +55,17 @@ export class Unit {
   antennaTarget = 0;
   /** Byte downlink: log FIFO, science recorder, transmitter (M9). */
   link = new Downlink();
+  /**
+   * M12 image memory (SPEC §3.8.7). Physical: survives reboots, zeroed at power-off. Grows
+   * with camera upgrades; use imageMemory() to read it at the right size.
+   */
+  img = new Uint8Array(0);
+  /** The last SNAP's capture, until a SEND of the same type carries it home. */
+  capture: Capture | null = null;
+  /** Mode of the last SNAP: the default type of SEND. */
+  snapMode = 1;
+  /** An STB since the last SNAP (the next SEND is EDITED, not RAW). */
+  imgEdited = false;
   /** Energy gained from solar last tick (for UI). */
   lastSolarGain = 0;
   /** Cache key of the last fog reveal (x, y, range). */
@@ -76,12 +97,31 @@ export class Unit {
   /** This rover's own stats: base chassis + upgrades. */
   readonly chassis: ChassisDef;
 
+  /** Image memory at its current size (grows, keeping its contents, when an upgrade adds a camera mode). */
+  imageMemory(): Uint8Array {
+    const n = imageBytes(this.chassis);
+    if (this.img.length < n) {
+      const grown = new Uint8Array(n);
+      grown.set(this.img);
+      this.img = grown;
+    }
+    return this.img;
+  }
+
+  /** Power lost: image memory and the capture are gone (SPEC §3.8.7). */
+  clearImageMemory(): void {
+    this.img.fill(0);
+    this.capture = null;
+    this.imgEdited = false;
+  }
+
   constructor(readonly id: number, public name: string, base: ChassisDef) {
     const chassis = (this.chassis = cloneChassis(base));
     this.energy = chassis.batteryCapacity;
     this.vm = new RoverVM(chassis);
     this.prog = new RoverVM(chassis);
     this.cargo = new Array(chassis.cargoSlots).fill(0);
+    this.img = new Uint8Array(imageBytes(chassis));
   }
 
   /** The context that executes now: the program inside a RUN slice, else the firmware. */

@@ -20,7 +20,10 @@ const NOTES: Record<string, string> = {
   JMP: 'jump', JEQ: 'jump if a == b', JNE: 'jump if a != b', JLT: 'jump if a < b', JGT: 'jump if a > b', JLE: 'jump if a <= b', JGE: 'jump if a >= b',
   CALL: 'push args, call', RET: 'return',
   SLEEP: 'wait N ticks', SCAN: 'ray: dest1 = tile type, dest2 = distance', STEP: 'drive [tiles] in dir', ACT: 'fire tool in hardpoint (see Tools)', PEEK: 'dest = item ID in cargo slot', USE: 'repair [system] (default SYS_HULL) by consuming the material in cargo slot (see Tools)',
-  SNAP: 'photograph the subject in dir into the science recorder (see Tools). Mk-I modes 1 (grey) and 2 (dithered), 258 B each; needs daylight or the headlight aimed at dir',
+  SNAP: 'photograph the subject in dir into image memory (see Tools); nothing is sent until SEND. Mk-I modes 1 (grey) and 2 (dithered), 256 B each; needs daylight or the headlight aimed at dir',
+  LDB: 'dst = byte at addr of image memory (0–255); the address wraps at the memory size (Mk-I 256 B). 1 cycle, no @STATUS',
+  STB: 'byte at addr of image memory = v (only the low 8 bits: 256 → 0, −1 → 255). 1 cycle, no @STATUS. Makes the next SEND of the photo "edited"',
+  SEND: 'copy image memory into the science recorder as a photo of [type] (default: the last SNAP\'s mode; SEND 1 = 32×32 grey). The first SEND after a SNAP carries its credits; any other SEND is a "drawn" picture worth nothing. 1 tick; ERR_FULL (recorder), ERR_INVALID (type)',
   LOG: 'queue a log frame for the downlink (Comms tab). tag: number or CONST 0–14 (15 = system). 1 cycle, no @STATUS; dropped if the FIFO is full (@LOG_LOST)',
   BRK: 'breakpoint: halt the CPU (HALTED) until mission control sends Resume (Continue) or you upload; the world keeps running, no watchdog. The rover sends a register dump by itself (Comms: "sent by BRK"). 1 cycle. In a program: halts only the program (PROG_HALTED)',
   RUN: 'firmware only: run the program for N ticks (a STEP or SLEEP in progress finishes first), then continue here. @STATUS ERR_INVALID if @PROG_STATE is not PROG_READY',
@@ -34,6 +37,7 @@ const OP_GROUPS: [string, Op[]][] = [
   ['Bits (2-byte opcodes)', ['AND', 'OR', 'SHL', 'SHR']],
   ['Flow control', ['JMP', 'JEQ', 'JNE', 'JLT', 'JGT', 'JLE', 'JGE', 'CALL', 'RET']],
   ['Hardware (end the tick, write @STATUS)', ['SLEEP', 'SCAN', 'STEP', 'ACT', 'PEEK', 'USE', 'SNAP']],
+  ['Image memory (SNAP → LDB / STB → SEND)', ['LDB', 'STB', 'SEND']],
   ['Program, log and debug', ['RUN', 'END', 'LOG', 'BRK']],
 ];
 
@@ -96,7 +100,7 @@ function basicsHtml(): string {
     <h4>Syntax</h4>
     <p>One instruction per line. <code>label:</code> marks a jump target, <code>;</code> starts a comment.
     The program loops back to the top when it runs off the end.
-    Compute instructions are fast (several per tick); hardware instructions (<code>SCAN STEP SLEEP ACT USE SNAP</code>) end the tick and take time.
+    Compute instructions are fast (several per tick); hardware instructions (<code>SCAN STEP SLEEP ACT USE SNAP SEND</code>) end the tick and take time.
     Names are case-insensitive.</p>
     <h4>Registers</h4>
     <p>The Mk-I has ${CHASSIS_MK1.registers} registers, <code>r0</code>–<code>r${CHASSIS_MK1.registers - 1}</code>${regUpgrades()}.
@@ -249,7 +253,8 @@ function radioHtml(): string {
     <table class="radio-kv">
       <tr><td><code>k</code> bit 7</td><td>0 = <code>LOG</code> or system message; 1 = a frame with a length (dumps, science)</td></tr>
       <tr><td><code>tttt</code> bits 6–3</td><td>tag 0–14 (your <code>LOG tag</code>, named by your <code>CONST</code>); 15 = system</td></tr>
-      <tr><td><code>ss</code> bits 2–1</td><td>value size: <code>00</code> none, <code>01</code> 1 byte, <code>10</code> 2 bytes, <code>11</code> 4 bytes</td></tr>
+      <tr><td><code>ss</code> bits 2–1</td><td>value size: <code>00</code> none, <code>01</code> 1 byte, <code>10</code> 2 bytes, <code>11</code> 4 bytes.
+        In a science frame (tag = product type): the picture's processing level, <code>00</code> raw, <code>01</code> edited, <code>10</code> drawn</td></tr>
     </table>
     <h4>Numbers</h4>
     <table class="radio-kv">

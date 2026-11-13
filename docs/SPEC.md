@@ -68,7 +68,7 @@ Each rover owns a copy of its chassis stats; upgrades (§3.7) modify that copy.
 | Sensor range | 6 tiles | `SCAN` radar, every direction, day and night. The operator's *view* needs light: 6 by day, 1-tile ring at night plus the headlight cone (§3.1.1). **[M4, M8.1]** |
 | Downlink | 2 B/tick at full signal, log FIFO 32 B, science recorder 1024 B | **[M9]** §3.8 |
 | Camera | mast camera, 32×32 2 bpp (modes 1–2) | `SNAP dir [mode]`; modes 3–5 by upgrade. **[M9]** §3.8.5 |
-| Image memory | 256 bytes (the largest installed camera mode) | `SNAP` fills it, `LDB` / `STB` read and write it, `SEND` sends it. **[M12, planned]** §3.8.7 |
+| Image memory | 256 bytes (the largest installed camera mode) | `SNAP` fills it, `LDB` / `STB` read and write it, `SEND` sends it. **[M12]** §3.8.7 |
 
 ### 3.1 Energy costs (defaults)
 
@@ -444,10 +444,9 @@ range, keeping hue) before quantizing. Reference renders: `preview.html?photos=1
   brightness (88–112 %), with per-position band variation (±6) and a little sensor noise
   per measurement (±2). The descriptor holds the material, the rover's position and tick.
 * **Camera** (mast, not a hardpoint): `SNAP dir [mode=1]`, blocks 10 ticks,
-  **[M12, planned]** `SNAP` takes the picture into image memory and `SEND` records it
-  (§3.8.7); until then `SNAP` records the photo directly.
-  200 energy, writes `@STATUS`: `ERR_FULL` (not enough recorder space),
-  `ERR_INVALID` (bad direction or mode not installed), `ERR_LOW_POWER`. Subject: the first
+  200 energy, writes `@STATUS`: `ERR_INVALID` (bad direction or mode not installed),
+  `ERR_LOW_POWER`. **[M12]** The photo goes into image memory; `SEND` records it in the
+  recorder (`ERR_FULL` there), changed by the program or not (§3.8.7). Subject: the first
   rover, obstacle or item within 2 tiles in `dir`; with nothing that close, a **landscape**
   (subject `NONE`): a loose view of what really lies ahead over a 90° field of view. Cliff
   walls up to 16 tiles away rise as ridges (about 3 tiles tall, so nearer ones stand taller,
@@ -466,7 +465,8 @@ range, keeping hue) before quantizing. Reference renders: `preview.html?photos=1
 * **Content is deterministic:** a product is stored as a descriptor (type, subject tile,
   position, light, tick); its bytes come from a pure, integer-only function of the world
   seed and the descriptor (`src/core/imaging.ts`, no `Math.random`, no float trig in the
-  tick path), so saves stay small and runs stay reproducible.
+  tick path), so saves stay small and runs stay reproducible. **[M12]** The same function
+  fills image memory at the end of a `SNAP`; edited and drawn products carry their bytes.
 
 **Credits on delivery** (tunable, `BALANCE`): spectrum = the item's `science` value
 (sample 3, ore 1, as today); lit photo = 1, +5 the first time a subject type is
@@ -502,19 +502,21 @@ gallery keeps the last 100 products (saved). Old saves: science points still wai
 | Hi-res sensor (`CAM_HIRES`) | 80 | Camera mode 4 | Recorder 2 KB |
 | Colour sensor (`CAM_RGB`) | 100 | Camera mode 5 | Colour filter wheel, Recorder 2 KB |
 
-### 3.8.7 Image memory **[M12, planned]**
+### 3.8.7 Image memory **[M12]**
 
 Designed with the owner (2026-11-13): take a picture → change it → send it, with every byte
-readable and writable. Player guide with six worked examples: [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md)
-(becomes the Reference → Image sub-tab; the examples become program templates).
+readable and writable. Built in the core (M12 slice 1); the Reference → Image sub-tab and the
+program templates follow (slice 2). Player guide with six worked examples, run by the tests:
+[`IMAGE_MEMORY.md`](IMAGE_MEMORY.md).
 
 * **Image memory:** one flat byte array per rover, as big as the largest photo the
-  installed camera modes take (`chassis.imageBytes`: Mk-I 256 B; 512 B with *Colour
+  installed camera modes take (`imageBytes(chassis)`: Mk-I 256 B; 512 B with *Colour
   filter wheel*, 1024 B with *Hi-res sensor* or *Colour sensor*). Physical: survives
   reboots, zeroed when the rover is powered off (and at landing). Saved.
 * **`SNAP dir [mode]`** (timing, energy, subject and light rules unchanged, §3.8.5)
   writes the photo's bytes (layout §3.8.5) into image memory instead of the recorder and
-  remembers the **capture** (the descriptor and the mode). `ERR_FULL` no longer applies.
+  remembers the **capture** (the descriptor, the mode and the noise seed). `ERR_FULL` no
+  longer applies. Like the memory, the capture survives reboots and is lost at power-off.
 * **`LDB dst addr`** / **`STB addr src`** (1 cycle each, compute: no energy, no `@STATUS`;
   opcodes 1D / 1E): read a byte (0–255) / write `src & 255`. Addresses wrap modulo the
   memory size. The bit instructions (`AND`, `OR`, `SHL`, `SHR`, §5.4) take pixels apart.
@@ -532,8 +534,10 @@ readable and writable. Player guide with six worked examples: [`IMAGE_MEMORY.md`
   subject type; anomaly flags allowed, checked against the real tile). Every other `SEND`
   is *drawn*: no credits, cannot be flagged. Goal *Photographer* counts captured photos.
 * **Storage:** raw products stay descriptors in the recorder and gallery (bytes
-  regenerated, as today); edited and drawn products store their bytes. Save v14 adds the
-  memory, the capture and product bytes; older saves start with zeroed memory.
+  regenerated, as today); edited and drawn products store their bytes (`data`, hex), and
+  captured ones keep the noise seed, so the original photo can always be regenerated.
+  Save v14 adds the memory (hex, trailing zeros dropped), the capture, `SEND`'s default
+  type and the edited flag; older saves start with zeroed memory.
 * Spectra are unchanged (straight to the recorder, §3.8.5).
 
 ## 3.9 Firmware and programs **[M10]**
@@ -759,10 +763,10 @@ friction, but the set should stay small enough to learn in one sitting.
 | | `ACT tool [arg]` | tool-defined | Fire the tool in hardpoint `tool` (§3.3.2). |
 | | `PEEK slot -> dst` | 1 cycle | Item ID in cargo `slot` (0 = empty); bad slot → `ERR_INVALID`. |
 | | `USE slot` | 5 ticks | Consume a cargo item (§3.3.2). |
-| | `SNAP dir [mode]` | blocks 10 | **[M9]** Photograph the subject in `dir` into the science recorder (§3.8.5). **[M12, planned]** into image memory (§3.8.7). |
-| | `SEND [type]` | blocks 1 | **[M12, planned]** Copy image memory into the science recorder as a photo product (§3.8.7). |
-| Memory | `LDB dst addr` | 1 cycle | **[M12, planned]** Load the byte at `addr` of image memory (0–255); compute (§3.8.7). |
-| | `STB addr src` | 1 cycle | **[M12, planned]** Store `src & 255` at `addr` of image memory; compute (§3.8.7). |
+| | `SNAP dir [mode]` | blocks 10 | **[M9]** Photograph the subject in `dir` (§3.8.5); **[M12]** into image memory (§3.8.7). |
+| | `SEND [type]` | blocks 1 | **[M12]** Copy image memory into the science recorder as a photo product (§3.8.7). |
+| Memory | `LDB dst addr` | 1 cycle | **[M12]** Load the byte at `addr` of image memory (0–255); compute (§3.8.7). |
+| | `STB addr src` | 1 cycle | **[M12]** Store `src & 255` at `addr` of image memory; compute (§3.8.7). |
 | Debug | `LOG tag [src]` | 1 cycle | **[M9]** Queue a log frame for the downlink; compute, no `@STATUS` (§3.8.3). |
 | Slots | `RUN ticks` | hardware | **[M10]** Firmware only: run the program for a time slice (§3.9.2). |
 | | `END [value]` | 1 cycle | **[M10]** Program only: finish with `PROG_DONE` and `@PROG_RESULT` (§3.9.2). |
@@ -853,11 +857,11 @@ slot, assembled on the ground (free) while typing.
 
 * **Opcode byte** `kkknnnnn`: `nnnnn` is the instruction from a fixed table (`MOV` 01,
   `PUSH` 02, … `BRK` 1A, `RUN` 1B, `END` 1C, in §5.4 order; the Reference tab lists them);
-  old numbers never change. 1D and 1E are reserved for the planned `LDB` / `STB` (§3.8.7),
-  the most frequent instructions of image loops.
+  old numbers never change. 1D and 1E are `LDB` / `STB` (§3.8.7), the most frequent
+  instructions of image loops: the last one-byte numbers.
 * **Extended instructions:** `nnnnn` = `1F` is a prefix; the next byte is the
   instruction's number in a second table (append only): `AND` 01, `OR` 02, `SHL` 03,
-  `SHR` 04 (planned: `SEND` 05). Like the prefix bytes of real CPUs (Z80 `CB` / `ED`, x86
+  `SHR` 04, `SEND` 05. Like the prefix bytes of real CPUs (Z80 `CB` / `ED`, x86
   `0F`): one byte longer, same speed. `AND r0 3` = `1F 01 10 03`. `kkk` in the prefix byte
   counts optional operands as usual.
 * `kkk` counts the

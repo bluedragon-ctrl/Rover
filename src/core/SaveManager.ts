@@ -6,9 +6,10 @@ import { SimulationEngine, type SentRecord, type SupplyDrop } from './Simulation
 import { UPGRADE_BY_ID } from './upgrades';
 import { CpuState, ProgState, type Status } from './types';
 import type { RoverVM } from './vm/RoverVM';
-import type { Unit, UnitAction, UnitMotion } from './Unit';
+import type { Capture, Unit, UnitAction, UnitMotion } from './Unit';
+import { fromHex, toHex } from './imaging';
 
-export const SAVE_VERSION = 13;
+export const SAVE_VERSION = 14;
 
 interface UnitSave {
   id: number;
@@ -42,6 +43,8 @@ interface UnitSave {
   vm: VmSave;
   /** v10: program slot (M10) */
   program: { source: string; vm: VmSave; state: ProgState; result: number; slice: number };
+  /** v14: image memory (M12, SPEC §3.8.7): bytes as hex without trailing zeros, the capture, SEND's default type, edited since the SNAP */
+  image: { mem: string; capture: Capture | null; mode: number; edited: boolean };
 }
 
 interface VmSave {
@@ -223,8 +226,15 @@ function saveUnit(u: Unit): UnitSave {
     cyclesLeft: u.cyclesLeft,
     vm: saveVm(u.vm),
     program: { source: u.programSource, vm: saveVm(u.prog), state: u.progState, result: u.progResult, slice: u.slice },
+    image: { mem: toHex(u.img.subarray(0, lastNonZero(u.img) + 1)), capture: u.capture ? { ...u.capture } : null, mode: u.snapMode, edited: u.imgEdited },
   };
 }
+
+const lastNonZero = (b: Uint8Array): number => {
+  let i = b.length - 1;
+  while (i >= 0 && b[i] === 0) i--;
+  return i;
+};
 
 export class SaveError extends Error {}
 
@@ -342,6 +352,11 @@ export function migrate(raw: unknown): SaveSnapshot {
     out.sent = [];
     v = 13;
   }
+  if (v === 13) {
+    // v13 -> v14: image memory (M12). Empty, no capture.
+    for (const u of out.units) u.image = { mem: '', capture: null, mode: 1, edited: false };
+    v = 14;
+  }
   if (v !== SAVE_VERSION) throw new SaveError(`Unsupported save version ${s.version}.`);
   out.version = v;
   return out;
@@ -400,6 +415,12 @@ export function deserialize(raw: unknown): SimulationEngine {
     });
     u.seismicType = us.seismic[0];
     u.seismicDist = us.seismic[1];
+    const mem = u.imageMemory(); // sized by the camera modes the upgrades installed
+    mem.fill(0);
+    mem.set(fromHex(us.image.mem).slice(0, mem.length));
+    u.capture = us.image.capture ? { ...us.image.capture } : null;
+    u.snapMode = us.image.mode;
+    u.imgEdited = us.image.edited;
     Object.assign(u, {
       x: us.x,
       y: us.y,

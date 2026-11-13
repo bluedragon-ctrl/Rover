@@ -79,9 +79,9 @@ describe('M9 upgrades (SPEC §3.8.6)', () => {
   });
 
   it('camera modes 3–5 are accepted only once their upgrade is installed', () => {
-    const src = 'SNAP NORTH 3\nMOV r0 @STATUS\nSNAP NORTH 4\nMOV r1 @STATUS\nSNAP NORTH 5\nMOV r2 @STATUS\nSLEEP 1000';
+    const src = 'SNAP NORTH 3\nMOV r0 @STATUS\nSEND\nSNAP NORTH 4\nMOV r1 @STATUS\nSEND\nSNAP NORTH 5\nMOV r2 @STATUS\nSEND\nSLEEP 1000';
     const before = rover(src);
-    run(before.e, 5);
+    run(before.e, 10);
     expect([0, 1, 2].map((i) => before.u.vm.regs[i])).toEqual([Status.ERR_INVALID, Status.ERR_INVALID, Status.ERR_INVALID]);
 
     const after = rover();
@@ -92,6 +92,7 @@ describe('M9 upgrades (SPEC §3.8.6)', () => {
     expect([0, 1, 2].map((i) => after.u.vm.regs[i])).toEqual([Status.OK, Status.OK, Status.OK]);
     expect(after.u.link.products.map((p) => p.type)).toEqual([3, 4, 5]);
     expect(after.u.link.recUsed).toBe(514 + 1026 + 1026);
+    expect(after.u.img.length).toBe(1024); // image memory grew with the camera upgrades
   });
 
   it('prerequisites: hi-res needs the 2 KB recorder, the colour sensor needs the filter wheel too', () => {

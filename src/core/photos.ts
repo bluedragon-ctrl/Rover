@@ -2,8 +2,9 @@
  * Camera photos (docs/SPEC.md §3.8.5): a deterministic, integer-only image generator.
  * Each subject is a small procedural scene (ported from the preview POC,
  * src/preview/photos.ts); the camera box-filters it, auto-exposes and quantizes it into one
- * of the product formats. Only runs when mission control decodes a product (the recorder
- * stores descriptors), never per tick. No Math.random, no float trig: coordinates are
+ * of the product formats. Runs when a SNAP's exposure ends (it fills image memory, SPEC
+ * §3.8.7) and when mission control decodes a raw product (the recorder stores descriptors).
+ * Deterministic, so it may run in the tick path. No Math.random, no float trig: coordinates are
  * fixed point (1024 = the full frame), colours 0–255, waves from the SIN1000 table.
  */
 import { sin1000 } from './Environment';

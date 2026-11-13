@@ -24,10 +24,11 @@ describe('machine code (SPEC §5.7.1)', () => {
     expect([OPCODE_NUMBERS.MOV, OPCODE_NUMBERS.JLE, OPCODE_NUMBERS.BRK, OPCODE_NUMBERS.RUN, OPCODE_NUMBERS.END]).toEqual([0x01, 0x0e, 0x1a, 0x1b, 0x1c]);
   });
 
-  it('gives every instruction exactly one opcode; 1D–1E are reserved, 1F is the extension prefix', () => {
+  it('gives every instruction exactly one opcode; LDB 1D, STB 1E, 1F is the extension prefix', () => {
     for (const op of OPCODES) expect((OPCODE_NUMBERS[op] === undefined) !== (EXT_OPCODE_NUMBERS[op] === undefined)).toBe(true);
     const base = Object.values(OPCODE_NUMBERS);
-    expect(Math.max(...base)).toBeLessThan(0x1d);
+    expect(Math.max(...base)).toBe(0x1e);
+    expect([OPCODE_NUMBERS.LDB, OPCODE_NUMBERS.STB, EXT_OPCODE_NUMBERS.SEND]).toEqual([0x1d, 0x1e, 0x05]);
     expect(EXT_PREFIX).toBe(0x1f);
     expect([EXT_OPCODE_NUMBERS.AND, EXT_OPCODE_NUMBERS.OR, EXT_OPCODE_NUMBERS.SHL, EXT_OPCODE_NUMBERS.SHR]).toEqual([1, 2, 3, 4]);
     expect(opcodeHex('AND')).toBe('1F 01');

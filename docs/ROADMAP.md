@@ -23,7 +23,7 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | ✅ slices 1–6 done (link layer, `LOG`, Console tab; recorder, spectra, Gallery tab; dumps, `BRK`, admin-only debugger; `@POST` display; camera + photos; upgrades, camera modes 3–5, fossil anomalies; save v9) |
 | **M10** | **Firmware + program slot (SPEC §3.9)** | 🚧 slice 1 (core, save v10) done; slice 2 (machine code + byte addresses, save v11, Code tab / Console redesign, listing pane) in review |
 | M11 | User interface review (after M10) | 🚧 Comms tab, Code tab dump box, Reference → Radio, Mission events: default since 2026-11-13 (save v13); `BRK` reports itself |
-| M12 | Image memory: `SNAP` → `LDB` / `STB` → `SEND` (SPEC §3.8.7, guide [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md)) | 🚧 bit instructions `AND` / `OR` / `SHL` / `SHR` + extended opcodes done; image memory planned (design + verified examples) |
+| M12 | Image memory: `SNAP` → `LDB` / `STB` → `SEND` (SPEC §3.8.7, guide [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md)) | 🚧 slice 0 (bit instructions, extended opcodes) and slice 1 (image memory in the core, save v14) done; slice 2 (templates, Reference → Image, Gallery labels) next |
 
 ## Done: Flash measured in bytes
 
@@ -458,14 +458,27 @@ Slices:
        `put16` with `AND 0xFF` / `SHR 8`. Tests in `tests/vm.test.ts`,
        `tests/machine-code.test.ts`. No save change (source is recompiled on load; old
        programs encode as before).
-1. [ ] **Core.** `chassis.imageBytes` (from the installed camera modes, upgrades grow it);
-       `SNAP` writes `photoPayload` into image memory at the end of the exposure and keeps
-       the capture; `LDB` / `STB` / `SEND` in `isa.ts`, `Compiler.ts`, `RoverVM.ts`;
-       provenance bits in the science header (encoder, decoder, Comms *Decode bytes*);
-       credits per capture; edited / drawn products store their bytes; **save v14** +
-       migration. Tests: wrap and `& 255`, `SEND` errors, credits once per capture (no
-       farming with repeated `SEND`s), anomaly flags only on captured photos, save
-       mid-processing == uninterrupted, determinism.
+1. [x] **Core.** `imageBytes(chassis)` (largest installed camera mode; `Unit.imageMemory()`
+       grows it after an upgrade, keeping its contents); `Unit.img`, `capture`, `snapMode`,
+       `imgEdited`; cleared at power-off, kept across reboots. `SNAP` (`capturePhoto`) fills
+       image memory at the end of the exposure through the same `productPayload` that
+       regenerates raw products, and keeps the capture with its noise seed; no more
+       `ERR_FULL` on `SNAP`. `LDB` 1D / `STB` 1E (compute, through `VmHost.load` /
+       `store`), `SEND` `1F 05` (hardware, 1 tick, `BALANCE.sendTicks`, no energy).
+       Provenance `Level` in bits 2–1 of the science header (`scienceHeader(type, level)`,
+       `headerLevel`); edited and drawn products carry `data` (hex), captured ones keep
+       `noise`. Credits and *Photographer* only for captured photos; drawn pictures cannot
+       be flagged. **Save v14** (`image`: memory as hex, capture, mode, edited) + v13
+       migration. Minimal UI so nothing reads wrong: Gallery shows *drawn picture* /
+       *edited* from the received header byte and no flag button on drawings; Reference
+       notes for `SNAP` / `LDB` / `STB` / `SEND` (*Image memory* group), Radio header row,
+       camera tool text, *Photographer* text. Comms needed nothing (science frames reach it
+       as gallery rows). Tests `tests/image-memory.test.ts`: encoding, wrap and `& 255`, no
+       `@STATUS`, drawn / raw / edited `SEND`s, credits once per capture, `SEND` errors and
+       timing, reboot / power-off / upgrade growth, save mid-processing at four points ==
+       uninterrupted, v13 migration, and **the six guide examples run from the Markdown**
+       (Flash sizes = the guide's table, pictures checked); camera tests updated to
+       `SNAP` + `SEND`.
 2. [ ] **Examples and teaching.** The six examples from the guide as program templates
        (compiled and run in tests: assert the pictures); Reference → **Image** sub-tab
        (from the guide: diagram, rows and addresses, bits in a byte, modes table); Gallery
@@ -605,3 +618,4 @@ window with a fixed dish?
 | 2026-11-13 | `ccr-2a541ea4-pbkrmo` (4) | Comms is the default: Console tab, `ConsolePanel.ts`, its CSS and the `?comms=1` flag removed; "Console" wording replaced (Reference, shipped firmware comments, admin banner, SPEC). |
 | 2026-11-13 | `claude/gallant-bell-hb1kyd` | M12 designed with the owner: image memory (`SNAP` → `LDB` / `STB` → `SEND`, SPEC §3.8.7) and player guide `docs/IMAGE_MEMORY.md` with six examples checked on a prototype interpreter; multiple rovers dropped from the plan (one rover is plenty of work). |
 | 2026-11-13 | `claude/gallant-bell-hb1kyd` (2) | M12 slice 0: bit instructions `AND` / `OR` / `SHL` / `SHR`, opcode `1F` as extension prefix (2-byte opcodes; 1D / 1E reserved for `LDB` / `STB`), Reference *Bits* group; guide examples `plot` and `put16` rewritten with them and re-checked on the prototype. |
+| 2026-11-13 | `claude/gallant-bell-hb1kyd` (3) | M12 slice 1: image memory in the core (`SNAP` into memory, `LDB` 1D / `STB` 1E, `SEND` 1F 05, raw / edited / drawn levels in the science header, credits per capture, save v14); minimal Gallery / Reference updates; tests run the six guide examples from the Markdown. |
