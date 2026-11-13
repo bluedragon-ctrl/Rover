@@ -182,8 +182,10 @@ CONST SLICE 50              ; ticks per program time slice
 CONST T_BAT 1               ; log tags: the Comms tab shows "T_BAT = 97"
 CONST T_RESULT 13
 CONST T_END 14              ; T_END = 3: program done, 4: fault
+CONST WDT_TICKS 1000        ; watchdog: no kick for this long = hang, reboot
 
-fw:     MOV @ANTENNA_ANGLE @ORBIT_AZIMUTH ; keep the dish on the orbiter
+fw:     MOV @WDT WDT_TICKS                 ; kick the watchdog (arms it at boot)
+        MOV @ANTENNA_ANGLE @ORBIT_AZIMUTH ; keep the dish on the orbiter
 ;--- comfort: lamp 3 blue while the dish is on the orbiter (12 B) ---
         MOV @IND3 OFF
         JLT @SIGNAL_STR 20 link
@@ -235,7 +237,8 @@ charge: MOV @HEADLIGHT 0
 ;--- comfort: lamp 2 amber while charging (3 B) ---
         MOV @IND2 AMBER
 ;--- end ---
-chg:    MOV @SOLAR_OPEN 1
+chg:    MOV @WDT WDT_TICKS                 ; charging can take a whole night: keep kicking
+        MOV @SOLAR_OPEN 1
         JNE @ALERT ALERT_SQUALL aim
         MOV @SOLAR_OPEN 0                  ; squall: keep the array stowed
 aim:    MOV @SOLAR_ANGLE @SUN_AZIMUTH
@@ -246,6 +249,65 @@ aim:    MOV @SOLAR_ANGLE @SUN_AZIMUTH
         MOV @IND2 OFF
 ;--- end ---
 `;
+
+/** Apply exact text edits; a missing anchor is a bug (the template would silently drift). */
+function edited(src: string, edits: [string, string][]): string {
+  return edits.reduce((out, [from, to]) => {
+    if (!out.includes(from)) throw new Error(`template anchor not found: ${from}`);
+    return out.replace(from, to);
+  }, src);
+}
+
+/**
+ * Firmware template (SPEC §3.9.2): the default firmware plus fault protection. Built from
+ * DEFAULT_FIRMWARE so the two never drift apart.
+ */
+export const FIRMWARE_FAULT_PROTECTION = edited(DEFAULT_FIRMWARE, [
+  [
+    `; DEFAULT FIRMWARE: keeps the rover alive and runs your program
+; in time slices (RUN). Upload programs in the Program slot.
+`,
+    `; FAULT PROTECTION FIRMWARE: the default firmware, plus it takes
+; control back at once when something goes wrong.
+;
+; The default firmware only looks around between time slices, so a
+; program in a long SLEEP or STEP keeps it waiting. Here the hardware
+; ends a slice at once when a world event is announced or the battery
+; drops below LOW_BAT (@PREEMPT, @BAT_ALARM). The program's action is
+; aborted (its @STATUS reads ERR_PREEMPTED); the next RUN resumes it
+; after that instruction. Comms shows "T_PREEMPT = 1" (alert) or 4.
+;
+; Learn: @PREEMPT and the PRE_* bits, @BAT_ALARM, @PREEMPTED: why
+; flight software must be able to stop a running task. It is 15 B
+; bigger than the default firmware: programs up to 83 B fit with it.
+; Try: also stop for damage: CONST PROTECT 7 (PRE_ALERT + PRE_DAMAGE
+; + PRE_LOW_BAT = 1 + 2 + 4).
+;
+`,
+  ],
+  [
+    `CONST WDT_TICKS 1000        ; watchdog: no kick for this long = hang, reboot
+`,
+    `CONST WDT_TICKS 1000        ; watchdog: no kick for this long = hang, reboot
+CONST PROTECT 5             ; PRE_ALERT (1) + PRE_LOW_BAT (4)
+CONST T_PREEMPT 12          ; T_PREEMPT = why a slice was cut short (PRE_* bits)
+`,
+  ],
+  [
+    `fw:     MOV @WDT WDT_TICKS`,
+    `boot:   MOV @PREEMPT PROTECT               ; set once: a reboot switches it off
+        MOV @BAT_ALARM LOW_BAT             ; PRE_LOW_BAT below this
+fw:     MOV @WDT WDT_TICKS`,
+  ],
+  [
+    `        RUN SLICE
+        JEQ @PROG_STATE PROG_READY fw`,
+    `        RUN SLICE
+        JEQ @PREEMPTED 0 cont              ; slice cut short? tell mission control why
+        LOG T_PREEMPT @PREEMPTED
+cont:   JEQ @PROG_STATE PROG_READY fw`,
+  ],
+]);
 
 /*
  * Program templates (M10; reworked as lessons after M12). Each header says what the
@@ -779,11 +841,12 @@ export const PROGRAM_TEMPLATES: Record<string, string> = {
 };
 
 /**
- * Firmware examples (M10, Code tab Firmware slot): the default firmware, then the
- * pre-M10 all-in-one firmwares, which do everything themselves and never RUN a program.
+ * Firmware examples (M10, Code tab Firmware slot): the default firmware, its fault
+ * protection variant, then the pre-M10 all-in-one firmwares, which do everything themselves and never RUN a program.
  */
 export const FIRMWARE_TEMPLATES: Record<string, string> = {
   'Default firmware': DEFAULT_FIRMWARE,
+  'Fault protection': FIRMWARE_FAULT_PROTECTION,
   'All-in-one Explorer (no RUN)': DEMO_EXPLORER,
   'All-in-one Prospector (no RUN)': PROSPECTOR,
   'All-in-one Fetch (no RUN)': FETCH_SUPPLY,

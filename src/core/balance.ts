@@ -3,7 +3,9 @@ import type { ToolId } from './tools';
 /** All tunable gameplay numbers. See docs/SPEC.md §2–§3. */
 export const BALANCE = {
   defaultTickHz: 10,
-  watchdogTicks: 50,
+  watchdogTicks: 50, // FAULT → hard reboot after this many ticks (the fault reset)
+  /** Longest @WDT timeout firmware can arm (SPEC §3.9.5). */
+  wdtMaxTicks: 30_000,
 
   batteryCapacity: 100_000,
   idleDrainPerTick: 1,
@@ -24,6 +26,17 @@ export const BALANCE = {
   actuatorSlewDegPerTick: 3,
   actuatorEnergyPerTick: 1,
   headlightPerTick: 8,
+
+  // Thermal (docs/SPEC.md §3.3.4): the rover follows the ambient slowly; heaters hold a floor
+  ambientNightC: -80, // ambient at @SUN_LIGHT 0 (night, total eclipse)
+  ambientDayC: 20, // ambient at @SUN_LIGHT 100; linear in between
+  thermalTicksPerDeg: 4, // the rover's temperature moves 1 °C toward the ambient every N ticks
+  heaterSetpointC: -40, // survival heaters (thermostat) keep the rover at or above this
+  heaterPerTick: 6, // energy per tick while the heaters run
+
+  // Dust on the solar array (docs/SPEC.md §3.3.4)
+  dustTicks: 800, // +1 % dust per this many ticks the array is not fully stowed
+  dustShedPercent: 50, // folding the array (a completed stow) shakes off this share of the dust (rounded up)
 
   // Operator view (what the player sees / maps; SCAN is radar: chassis.sensorRange, any light)
   dayViewRange: 6, // daylight: disc around the rover

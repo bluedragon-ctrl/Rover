@@ -7,7 +7,7 @@ import { BOOT_REASON_NAMES, DumpKind, encodeCpuDump, encodeLog, encodeStackDump 
 import { emptyDictionary, fieldsHtml, frameFields, type Dictionaries } from './comms';
 import { TOOLS } from '../core/tools';
 import { UPGRADES } from '../core/upgrades';
-import { Alert, Dir, Layer, LightColor, ProgState, Status, SystemId } from '../core/types';
+import { Alert, Dir, Layer, LightColor, Preempt, ProgState, Status, SystemId } from '../core/types';
 import { PHOTO_FORMATS, photoBytes } from '../core/photos';
 import { imageBytes } from '../core/Unit';
 import { PROGRAM_TEMPLATES } from '../core/programs';
@@ -30,7 +30,7 @@ const NOTES: Record<string, string> = {
   ERASE: 'zero all of image memory and forget the last SNAP (the next SEND is a drawn picture). Image memory keeps its contents through reboots and power loss until ERASE or a new SNAP. 2 ticks, 10 energy',
   LOG: 'queue a log frame for the downlink (Comms tab). tag: number or CONST 0–14 (15 = system). 1 cycle, no @STATUS; dropped if the FIFO is full (@LOG_LOST)',
   BRK: 'breakpoint: halt the CPU (HALTED) until mission control sends Resume (Continue) or you upload; the world keeps running, no watchdog. The rover sends a register dump by itself (Comms: "sent by BRK"). 1 cycle. In a program: halts only the program (PROG_HALTED)',
-  RUN: 'firmware only: run the program for N ticks (a STEP or SLEEP in progress finishes first), then continue here. @STATUS ERR_INVALID if @PROG_STATE is not PROG_READY',
+  RUN: 'firmware only: run the program for N ticks (a STEP or SLEEP in progress finishes first, unless a @PREEMPT condition ends the slice at once), then continue here. @STATUS ERR_INVALID if @PROG_STATE is not PROG_READY',
   END: 'program only: finish with @PROG_STATE = PROG_DONE and @PROG_RESULT = value (default 0); control returns to the firmware',
 };
 
@@ -47,15 +47,16 @@ const OP_GROUPS: [string, Op[]][] = [
 
 /** Port sections. A port not listed here lands in "Other", so new ones still show up. */
 const PORT_GROUPS: [string, string[]][] = [
-  ['Health and power', ['BAT', 'HULL', 'SOLAR_HEALTH', 'ANTENNA_HEALTH']],
+  ['Health and power', ['BAT', 'HULL', 'SOLAR_HEALTH', 'ANTENNA_HEALTH', 'TEMP', 'HEATER']],
   ['Position and motion', ['X', 'Y', 'HEADING', 'TICK', 'STATUS']],
   ['Sensors and ground', ['GROUND', 'GROUND_HAZARD', 'SENSOR_RANGE', 'SEISMIC_TYPE', 'SEISMIC_DIST']],
   ['Cargo, science and supplies', ['CARGO_FREE', 'SCIENCE_READY', 'REC_FREE', 'DROPS', 'DROP_X', 'DROP_Y']],
-  ['Sun and solar array', ['SUN_AZIMUTH', 'SUN_ELEV', 'SUN_LIGHT', 'SOLAR_OPEN', 'SOLAR_ANGLE']],
+  ['Sun and solar array', ['SUN_AZIMUTH', 'SUN_ELEV', 'SUN_LIGHT', 'SOLAR_OPEN', 'SOLAR_ANGLE', 'SOLAR_DUST']],
   ['Comms and log', ['ORBIT_AZIMUTH', 'ANTENNA_ANGLE', 'SIGNAL_STR', 'TX_DATA', 'LOG_FREE', 'LOG_LOST']],
   ['World events', ['ALERT', 'ALERT_ETA']],
   ['Lights and displays', ['HEADLIGHT', 'IND1', 'IND2', 'IND3', 'POST']],
   ['Firmware and program', ['PROG_STATE', 'PROG_RESULT']],
+  ['Watchdog and fault protection (firmware writes)', ['WDT', 'PREEMPT', 'BAT_ALARM', 'PREEMPTED']],
 ];
 
 /** Builtin constant families (the same enums `builtinConstants()` merges for the compiler). */
@@ -66,6 +67,7 @@ const CONST_GROUPS: [string, object][] = [
   ['Systems (USE)', SystemId],
   ['Alerts (@ALERT)', Alert],
   ['Program states (@PROG_STATE)', ProgState],
+  ['Fault protection (@PREEMPT bits)', Preempt],
 ];
 
 const SECTIONS = [

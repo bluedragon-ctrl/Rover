@@ -90,6 +90,21 @@ export class Unit {
   /** Ticks left in the program's current RUN slice; -1 when the firmware has control. */
   slice = -1;
 
+  /**
+   * @WDT (SPEC §3.9.5): ticks until the watchdog reboots the rover; 0 = not armed. CPU state:
+   * a hard reboot disarms it.
+   */
+  wdt = 0;
+  /** @PREEMPT condition mask, @BAT_ALARM threshold and @PREEMPTED (what ended the last slice early). CPU state. */
+  preemptMask = 0;
+  batAlarm = 0;
+  preempted = 0;
+  /** Internal temperature in °C (@TEMP, SPEC §3.3.4) and whether the survival heaters ran this tick (@HEATER). */
+  temp = 0;
+  heater = 0;
+  /** Dust on the solar array, 0–100 % (@SOLAR_DUST): charging is scaled by what is left. */
+  solarDust = 0;
+
   /** Last seismic scan result (TOOL_3 SEISMIC). */
   seismicType = 0;
   seismicDist = 0;

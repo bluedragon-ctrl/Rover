@@ -24,8 +24,10 @@ export const BootReason = {
   WATCHDOG: 2,
   COLD_BOOT: 3,
   ADMIN: 4,
+  /** @WDT expired: the firmware did not kick it in time (SPEC §3.9.5). */
+  WDT_TIMEOUT: 5,
 } as const;
-export const BOOT_REASON_NAMES: Record<number, string> = { 1: 'code upload', 2: 'watchdog', 3: 'cold boot', 4: 'admin' };
+export const BOOT_REASON_NAMES: Record<number, string> = { 1: 'code upload', 2: 'watchdog', 3: 'cold boot', 4: 'admin', 5: 'watchdog timeout' };
 
 /** Received frames mission control keeps (console history, saved). */
 export const RECEIVED_KEEP = 200;

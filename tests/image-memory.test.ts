@@ -88,7 +88,7 @@ describe('Darkroom: first-edit bonus per camera mode (M12 slice 3)', () => {
     v14.version = 14;
     delete v14.editedTypes;
     delete v14.stats.photosEdited;
-    expect(SAVE_VERSION).toBe(15);
+    expect(SAVE_VERSION).toBeGreaterThanOrEqual(15);
     const m = migrate(v14);
     expect(m.editedTypes).toEqual([]);
     expect(m.stats.photosEdited).toBe(0);

@@ -24,6 +24,44 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | **M10** | **Firmware + program slot (SPEC §3.9)** | 🚧 slice 1 (core, save v10) done; slice 2 (machine code + byte addresses, save v11, Code tab / Console redesign, listing pane) in review |
 | M11 | User interface review (after M10) | 🚧 Comms tab, Code tab dump box, Reference → Radio, Mission events: default since 2026-11-13 (save v13); `BRK` reports itself |
 | M12 | Image memory: `SNAP` → `LDB` / `STB` → `SEND` (SPEC §3.8.7, guide [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md)) | ✅ done (bit instructions; image memory in the core, save v14; templates, Reference → Image, Gallery labels + hex view, `SNAP` warning; goal *Darkroom* + first-edit bonus per camera mode, save v15) |
+| M13 | Realism pass 1: watchdog `@WDT`, thermal model + array dust, fault protection `@PREEMPT` (SPEC §3.3.4, §3.9.2, §3.9.5) | 🚧 core, default firmware, *Fault protection* template, Reference, save v16 done; in review (balance numbers to playtest) |
+
+## M13 — Realism pass 1 (in review)
+
+From a review of how the virtual hardware compares with real rovers (2026-11-13). The owner
+picked three items for now; the rest are in the Backlog (*Realism review*).
+
+- [x] **Watchdog timer `@WDT`** (SPEC §3.9.5): firmware arms and kicks it; expiry = hard
+      reboot, boot reason 5 *watchdog timeout*; cannot be disarmed until a reboot; `BRK`
+      freezes it; firmware-only writes (compiler rule generalised: `FIRMWARE_ONLY_PORTS`).
+      The default firmware kicks it in its main and charge loops (`WDT_TICKS 1000`; 148 →
+      158 B, still room for every shipped program).
+- [x] **Thermal model** (SPEC §3.3.4): `@TEMP` follows `ambientTemp(@SUN_LIGHT)` (−80..+20 °C)
+      at 1 °C / 4 ticks; thermostat survival heaters hold −40 °C for 6 energy/tick
+      (`@HEATER`): ≈ 1450 ticks / 9 % battery per sol. Eclipses cool the rover too.
+- [x] **Dust** (SPEC §3.3.4): `@SOLAR_DUST` +1 % / 800 ticks open, scales charging; a full
+      stow sheds half; the *Dust squall* dusts an open array.
+- [x] **Fault protection `@PREEMPT`** (SPEC §3.9.2): `PRE_ALERT` / `PRE_DAMAGE` /
+      `PRE_LOW_BAT` (+ `@BAT_ALARM`) end a slice at once, aborting the program's action
+      (`ERR_PREEMPTED` = 9); `@PREEMPTED` says why; the next `RUN` resumes. Firmware template
+      *Fault protection* (default firmware + `PRE_ALERT + PRE_LOW_BAT`, logs `T_PREEMPT`).
+- [x] Reference: ports grouped (*Watchdog and fault protection*), `PRE_*` constants,
+      `ERR_PREEMPTED` note in Comms; admin debugger shows temperature, heaters, dust,
+      watchdog and preemption.
+- [x] Save v16 (watchdog, fault protection, thermal, dust; v15 saves start disarmed with a
+      clean array at the ambient temperature). Tests: `tests/fault-protection.test.ts`,
+      `tests/thermal.test.ts` (incl. save round trip at night with everything armed).
+
+Open decisions (owner):
+1. `@WDT` cannot be disarmed once armed (like an independent watchdog). Allow `0` = off?
+2. Heater balance: −40 °C setpoint at ambient light 40 means the heaters also run in the
+   evening and early morning (≈ 60 % of a sol). Tune `ambientDayC` / `heaterPerTick`?
+3. Dust shed by folding the array is a game liberty (real rovers wait for wind). Keep, or
+   replace with storyteller cleaning events (dust devils)?
+4. The default firmware arms the watchdog but not `@PREEMPT` (bytes: *Image: Plot* needs
+   95 B; and its 50-tick slices already poll). OK, or make preemption the default?
+5. Cold has no consequence yet (a powered-off rover just gets cold). Later: battery
+   cannot charge below a temperature, or cold-soaked motors?
 
 ## Done: program templates as lessons
 
@@ -595,6 +633,12 @@ window with a fixed dish?
   Changes what the player knows before exploring (fog rules in `src/core/`), so it is a
   gameplay decision; pair it with a visible sky (horizon, orbiting satellite passes).
 
+- **Realism review (2026-11-13), still open** after M13: light-time delay on uplink and
+  commands (configurable; the biggest "feel" change); relay-orbiter elevation with rise
+  and set (pass windows instead of a link whenever the dish is aimed); odometry drift and
+  wheel slip on gravel (`@X`/`@Y` become estimates); onboard compression as a player
+  exercise with `LDB`/`STB`; the operator view and fog reveal cost no downlink bytes
+  (justify as orbital imagery, or charge bandwidth).
 - More storyteller events using the catalogue: dust devils that push the rover, solar
   flares that scramble the uplink, ore-rich meteor falls (reward events), distress beacon
   missions. Teaching variants first.
@@ -653,3 +697,4 @@ window with a fixed dish?
 | 2026-11-13 | `claude/gallant-bell-hb1kyd` (5) | M12 slice 2: six *Image: …* program templates (= the guide's examples, test-enforced), Reference → Image sub-tab, Gallery *raw / edited / drawn* chips and hex view, Code tab warning for `SNAP` without `SEND`. |
 | 2026-11-13 | `claude/gallant-bell-hb1kyd` (6) | M12 slice 3: goal *Darkroom* (a lit edited photo, 15 cr); first-edit bonus +5 per camera mode (`editedTypes`, save v15). M12 complete. |
 | 2026-11-13 | `claude/gallant-bell-hb1kyd` (7) | Program templates reworked as lessons (owner: they are teaching material): headers with *Learn* / *Try*, five new templates (Photographer, Field repair, Spiral, Seismic survey, Weather station), Explorer logs acid vents, Prospector `CALL lab` + `PEEK`, Fetch result 2 when blocked; tests: every instruction used, every template run. |
+| 2026-11-13 | `claude/intelligent-faraday-lx8xgo` | Realism review of the virtual hardware; M13 realism pass 1: watchdog `@WDT` (boot reason 5, default firmware kicks it, 158 B), thermal model (`@TEMP`, survival heaters `@HEATER`), array dust (`@SOLAR_DUST`, shed on stow, dust squall), fault protection (`@PREEMPT`, `@BAT_ALARM`, `@PREEMPTED`, `ERR_PREEMPTED`, *Fault protection* firmware template), save v16; remaining realism items in Backlog. |

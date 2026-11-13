@@ -23,9 +23,9 @@ import {
 import { UPGRADE_BY_ID } from './upgrades';
 import type { SquallDamage } from './events';
 import { TOOLS, type ToolDef } from './tools';
-import { Environment, signalStrength, solarGain, wrapDeg, angleDiff, type SunState } from './Environment';
+import { ambientTemp, Environment, signalStrength, solarGain, wrapDeg, angleDiff, type SunState } from './Environment';
 import { getPort, writePortClamped, type PortContext } from './ports';
-import { CpuState, DIR_VEC, Layer, ProgState, Status } from './types';
+import { CpuState, DIR_VEC, Layer, Preempt, ProgState, Status } from './types';
 import { Unit, type Capture } from './Unit';
 import { productPayload, toHex } from './imaging';
 import { compile, type CompileResult, type Instr, type Slot } from './vm/Compiler';
@@ -181,6 +181,7 @@ export class SimulationEngine {
     const u = new Unit(this.nextUnitId++, name, chassis);
     u.x = x;
     u.y = y;
+    u.temp = ambientTemp(this.sun.light);
     this.units.push(u);
     this.world.touchRadius(x, y, BALANCE.chunkBubbleRadius);
     this.revealAround(u);
@@ -356,6 +357,11 @@ export class SimulationEngine {
   private hardReboot(u: Unit, reason: number): void {
     u.slice = -1;
     u.action = null;
+    // Control registers are CPU state: the watchdog is disarmed, fault protection off.
+    u.wdt = 0;
+    u.preemptMask = 0;
+    u.batAlarm = 0;
+    u.preempted = 0;
     u.vm.reboot();
     this.restartProgram(u);
     this.booted(u, reason);
@@ -477,13 +483,17 @@ export class SimulationEngine {
     const squall = this.director.active('SQUALL', this.tick)?.damage ?? null;
     if (wasNight && this.sun.elevation > 0) for (const u of this.units) if (u.powered) this.stats.sunrisesPowered++;
     this.orbitAzimuth = this.env.orbitAzimuth(this.tick);
+    const announced = this.director.announcedAt(this.tick);
     for (const u of this.units) {
+      const integrity = u.hull + u.solarHealth + u.antennaHealth;
       this.world.touchRadius(u.x, u.y, BALANCE.chunkBubbleRadius);
       this.updatePower(u);
+      this.updateWatchdog(u);
       if (u.powered) this.updateLink(u);
       if (squall) this.applySquall(u, squall);
       this.updateUnitPhysics(u);
       this.revealAround(u);
+      this.updatePreempt(u, integrity, announced);
       this.updateSlice(u);
       u.cyclesLeft = u.cpu.state === CpuState.RUNNING ? u.chassis.cyclesPerTick : 0;
     }
@@ -501,6 +511,43 @@ export class SimulationEngine {
     if (u.slice < 0) return;
     if (u.slice > 0) u.slice--;
     else if (u.prog.state !== CpuState.BLOCKED) this.endSlice(u, ProgState.PROG_READY);
+  }
+
+  /**
+   * @WDT (SPEC §3.9.5): counts down while the firmware runs or waits; BRK (HALTED) freezes it
+   * like a debugger does, a FAULT leaves it to the fault reset. At 0: hard reboot.
+   */
+  private updateWatchdog(u: Unit): void {
+    if (u.wdt <= 0 || (u.vm.state !== CpuState.RUNNING && u.vm.state !== CpuState.BLOCKED)) return;
+    if (--u.wdt > 0) return;
+    this.hardReboot(u, BootReason.WDT_TIMEOUT);
+    this.log(u, 'warn', 'Watchdog timeout: the firmware did not kick @WDT in time. Rebooting.', 'rover');
+    this.events.emit('UNIT_STATE', { unitId: u.id, state: u.vm.state });
+  }
+
+  /**
+   * Fault protection (SPEC §3.9.2): a condition armed in @PREEMPT ends the running slice now.
+   * The program's action in progress is aborted (@STATUS ERR_PREEMPTED); it stays PROG_READY,
+   * so the next RUN resumes it after that instruction.
+   */
+  private updatePreempt(u: Unit, integrityBefore: number, announced: boolean): void {
+    if (u.slice < 0 || !u.preemptMask) return;
+    let hit = 0;
+    if (announced) hit |= Preempt.PRE_ALERT;
+    if (u.hull + u.solarHealth + u.antennaHealth < integrityBefore) hit |= Preempt.PRE_DAMAGE;
+    if (u.batteryPercent < u.batAlarm) hit |= Preempt.PRE_LOW_BAT;
+    hit &= u.preemptMask;
+    if (!hit) return;
+    if (u.prog.state === CpuState.BLOCKED) {
+      u.action = null;
+      u.prog.status = Status.ERR_PREEMPTED;
+      u.prog.unblock();
+      this.events.emit('UNIT_STATUS', { unitId: u.id, status: Status.ERR_PREEMPTED });
+    }
+    u.preempted = hit;
+    this.endSlice(u, ProgState.PROG_READY);
+    const why = [hit & Preempt.PRE_ALERT && 'alert', hit & Preempt.PRE_DAMAGE && 'damage', hit & Preempt.PRE_LOW_BAT && 'low battery'].filter(Boolean).join(', ');
+    this.log(u, 'warn', `Program preempted (${why}): the firmware has control.`, 'rover');
   }
 
   private runCpu(u: Unit, maxInstructions: number): void {
@@ -545,8 +592,22 @@ export class SimulationEngine {
     const B = BALANCE;
 
     // Solar charging works even when powered off: that is how a dead rover recovers.
-    u.lastSolarGain = u.solarDeployed ? Math.floor((solarGain(u.solarAngle, this.sun) * u.solarHealth * u.chassis.solarPercent) / 10_000) : 0;
+    u.lastSolarGain = u.solarDeployed
+      ? Math.floor((solarGain(u.solarAngle, this.sun) * u.solarHealth * u.chassis.solarPercent * (100 - u.solarDust)) / 1_000_000)
+      : 0;
     u.energy = Math.min(u.chassis.batteryCapacity, u.energy + u.lastSolarGain);
+
+    // Thermal (SPEC §3.3.4): drift toward the ambient; powered survival heaters hold the floor.
+    const ambient = ambientTemp(this.sun.light);
+    u.heater = u.powered && u.temp <= B.heaterSetpointC && ambient < B.heaterSetpointC ? 1 : 0;
+    if (this.tick % B.thermalTicksPerDeg === 0) {
+      if (u.heater) {
+        if (u.temp < B.heaterSetpointC) u.temp++; // warming up after a cold soak
+      } else if (u.temp !== ambient) u.temp += u.temp < ambient ? 1 : -1;
+    }
+
+    // Dust settles on an open array; folding it (a completed stow) shakes some off.
+    if (u.solarDeploy > 0 && u.solarDust < 100 && this.tick % B.dustTicks === 0) u.solarDust++;
 
     if (u.vm.state === CpuState.POWER_OFF) {
       if (u.energy * 100 >= B.coldBootPercent * u.chassis.batteryCapacity) {
@@ -560,11 +621,13 @@ export class SimulationEngine {
 
     let drain = B.idleDrainPerTick;
     if (u.headlight) drain += B.headlightPerTick;
+    if (u.heater) drain += B.heaterPerTick;
     // Motors: deploy/stow array, slew panel and dish toward their targets.
     const deployTarget = u.solarOpen ? B.solarDeployTicks : 0;
     if (u.solarDeploy !== deployTarget) {
       u.solarDeploy += u.solarDeploy < deployTarget ? 1 : -1;
       drain += B.actuatorEnergyPerTick;
+      if (u.solarDeploy === 0) u.solarDust -= Math.ceil((u.solarDust * B.dustShedPercent) / 100);
     }
     const slew = (cur: number, target: number): number => {
       const d = angleDiff(cur, target);
@@ -588,6 +651,7 @@ export class SimulationEngine {
       if (t % every === 0) this.damage(u, 1);
     }
     if (d.solarEvery && !u.solarStowed && t % d.solarEvery === 0) u.solarHealth = Math.max(0, u.solarHealth - d.solarDamage);
+    if (d.dustEvery && !u.solarStowed && t % d.dustEvery === 0) u.solarDust = Math.min(100, u.solarDust + 1);
     if (d.antennaEvery && t % d.antennaEvery === 0) u.antennaHealth = Math.max(0, u.antennaHealth - 1);
   }
 
@@ -1151,6 +1215,7 @@ export class SimulationEngine {
         }
         this.setStatus(u, Status.OK);
         u.progState = ProgState.PROG_RUNNING;
+        u.preempted = 0;
         u.slice = Math.max(1, v[0]);
         u.vm.block();
         return;
@@ -1207,6 +1272,7 @@ export class SimulationEngine {
       u.hull = 100;
       u.solarHealth = 100;
       u.antennaHealth = 100;
+      u.solarDust = 0;
       if (u.vm.state === CpuState.DESTROYED) {
         u.vm.state = CpuState.RUNNING;
         this.hardReboot(u, BootReason.ADMIN);
@@ -1233,6 +1299,8 @@ export class SimulationEngine {
       u.hull = 100;
       u.solarHealth = 100;
       u.antennaHealth = 100;
+      u.solarDust = 0;
+      u.temp = ambientTemp(this.sun.light);
       u.vm.state = CpuState.RUNNING;
       this.hardReboot(u, BootReason.ADMIN);
       this.revealAround(u);

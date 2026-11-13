@@ -1,7 +1,7 @@
 import { ENCODING, type ChassisDef } from '../balance';
 import { MAX_LOG_TAG, SYSTEM_TAG } from '../downlink';
 import { getPort } from '../ports';
-import { Alert, Dir, LightColor, ProgState, Status, SystemId } from '../types';
+import { Alert, Dir, LightColor, Preempt, ProgState, Status, SystemId } from '../types';
 
 import { encodeInstr, immBytes, instrBytes, MAX_OPTIONAL, OPCODES, opcodeSize, SIGNATURES, type Instr, type Op, type Operand } from './isa';
 
@@ -58,9 +58,13 @@ export function builtinConstants(): Record<string, number> {
   for (const [k, v] of Object.entries(SystemId)) if (typeof v === 'number') c[k] = v;
   for (const [k, v] of Object.entries(Alert)) if (typeof v === 'number') c[k] = v;
   for (const [k, v] of Object.entries(ProgState)) if (typeof v === 'number') c[k] = v;
+  for (const [k, v] of Object.entries(Preempt)) if (typeof v === 'number') c[k] = v;
   for (let i = 0; i < 4; i++) c[`TOOL_${i}`] = i;
   return c;
 }
+
+/** Ports a program may read but only the firmware may write (SPEC §3.9). */
+export const FIRMWARE_ONLY_PORTS: ReadonlySet<string> = new Set(['PROG_STATE', 'WDT', 'PREEMPT', 'BAT_ALARM']);
 
 const IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const NUMBER = /^-?(0x[0-9a-f]+|\d+)$/i;
@@ -294,8 +298,9 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
       err(l.line, 'END is a program instruction: firmware never ends (it runs the program with RUN)');
       ok = false;
     }
-    if (slot === 'program' && ok && args.some((o, i) => o.k === 'port' && o.name === 'PROG_STATE' && /^[dm]/.test(sig[Math.min(i, sig.length - 1)]))) {
-      err(l.line, 'Only the firmware may write @PROG_STATE');
+    const fwPort = slot === 'program' && ok ? args.find((o, i) => o.k === 'port' && FIRMWARE_ONLY_PORTS.has(o.name) && /^[dm]/.test(sig[Math.min(i, sig.length - 1)])) : undefined;
+    if (fwPort?.k === 'port') {
+      err(l.line, `Only the firmware may write @${fwPort.name}`);
       ok = false;
     }
     if (op === 'CALL' && args.length - 1 > chassis.dataStack) {

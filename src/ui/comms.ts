@@ -246,6 +246,7 @@ export const STATUS_NOTES: Record<number, string> = {
   [Status.ERR_NO_SIGNAL]: 'the dish does not reach the orbiter',
   [Status.ERR_HAZARD]: 'STEP moved onto a hazard',
   [Status.ERR_DEPLOYED]: 'STEP refused: the solar array is open',
+  [Status.ERR_PREEMPTED]: 'the firmware took control back in the middle of the action (@PREEMPT)',
 };
 
 /** False for a program that is not running (finished or never started): its "next" means nothing. */

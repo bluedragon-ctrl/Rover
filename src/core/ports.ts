@@ -72,10 +72,18 @@ export const PORTS: PortDef[] = [
     write: (u, v, c) => c.turn(u, ((v % 4) + 4) % 4),
   },
 
+  {
+    name: 'TEMP',
+    description: `Internal temperature in °C. Follows the ambient slowly (${BALANCE.ambientDayC} °C in full sun, ${BALANCE.ambientNightC} °C at night); the survival heaters keep it at ${BALANCE.heaterSetpointC} °C or above`,
+    read: (u) => u.temp,
+  },
+  { name: 'HEATER', description: `1 while the survival heaters run (${BALANCE.heaterPerTick} energy/tick: cold nights cost battery), else 0. Automatic thermostat`, read: (u) => u.heater },
+
   // Sun & solar
   { name: 'SUN_AZIMUTH', description: 'Sun bearing 0–359 (0 = north, 90 = east)', read: (_u, c) => c.sun.azimuth },
   { name: 'SUN_ELEV', description: 'Sun elevation in degrees; <= 0 is night', read: (_u, c) => c.sun.elevation },
   { name: 'SUN_LIGHT', description: 'Illumination 0–100 (0 at night / eclipse)', read: (_u, c) => c.sun.light },
+  { name: 'SOLAR_DUST', description: 'Dust on the solar array 0–100 % (charging gets what is left). Builds up while the array is open; folding it (a full stow) shakes off half', read: (u) => u.solarDust },
   {
     name: 'SOLAR_OPEN',
     description: 'Solar array 0 = stow, 1 = deploy (takes 20 ticks; blocks STEP unless fully stowed)',
@@ -147,6 +155,27 @@ export const PORTS: PortDef[] = [
     write: (u, v, c) => c.setProgState(u, v),
   },
   { name: 'PROG_RESULT', description: 'Value of the program\'s last END (0 after a restart)', read: (u) => u.progResult },
+  // Watchdog and fault protection (SPEC §3.9.2, §3.9.5)
+  {
+    name: 'WDT',
+    description: `Watchdog timer. Firmware writes n > 0 to arm it and to "kick" it: if n ticks pass without another kick, the rover hard-reboots (boot reason: watchdog timeout). Once armed it cannot be switched off until a reboot (writing 0 does nothing). Read: ticks left, 0 = not armed. Firmware only`,
+    min: 0,
+    max: BALANCE.wdtMaxTicks,
+    read: (u) => u.wdt,
+    write: (u, v) => {
+      if (v > 0) u.wdt = v;
+    },
+  },
+  {
+    name: 'PREEMPT',
+    description: 'What ends a program slice at once (bits, add them up): PRE_ALERT a world event is announced, PRE_DAMAGE hull/array/dish lose integrity, PRE_LOW_BAT @BAT drops below @BAT_ALARM. The program\'s action in progress is aborted (its @STATUS = ERR_PREEMPTED); the next RUN resumes it. 0 = off (reboot default). Firmware only',
+    min: 0,
+    max: 7,
+    read: (u) => u.preemptMask,
+    write: (u, v) => (u.preemptMask = v),
+  },
+  { name: 'BAT_ALARM', description: 'Battery threshold for PRE_LOW_BAT, 0–100 % (0 after a reboot). Firmware only', min: 0, max: 100, read: (u) => u.batAlarm, write: (u, v) => (u.batAlarm = v) },
+  { name: 'PREEMPTED', description: 'The @PREEMPT conditions that ended the last program slice early (bits), 0 if it ended normally. Cleared by RUN', read: (u) => u.preempted },
   {
     name: 'HEADLIGHT',
     description: `Headlight 0/1 (${BALANCE.headlightPerTick} energy/tick): at night lights a cone ${BALANCE.headlightSensorRange} tiles along @HEADING (3 wide, then 5) so the operator can see and map it. SCAN does not need it`,
@@ -168,7 +197,7 @@ export const PORT_CODES: readonly string[] = [
   'SEISMIC_DIST', 'DROPS', 'DROP_X', 'DROP_Y', 'SENSOR_RANGE', 'HEADING', 'SUN_AZIMUTH', 'SUN_ELEV',
   'SUN_LIGHT', 'SOLAR_OPEN', 'SOLAR_ANGLE', 'ORBIT_AZIMUTH', 'ANTENNA_ANGLE', 'SIGNAL_STR', 'TX_DATA', 'LOG_FREE',
   'LOG_LOST', '', '', 'IND1', 'IND2', 'IND3', 'POST', 'PROG_STATE', 'PROG_RESULT',
-  'HEADLIGHT',
+  'HEADLIGHT', 'WDT', 'PREEMPT', 'BAT_ALARM', 'PREEMPTED', 'TEMP', 'HEATER', 'SOLAR_DUST',
 ];
 
 const byName = new Map(PORTS.map((p) => [p.name, p]));

@@ -69,6 +69,8 @@ Each rover owns a copy of its chassis stats; upgrades (§3.7) modify that copy.
 | Downlink | 2 B/tick at full signal, log FIFO 32 B, science recorder 1024 B | **[M9]** §3.8 |
 | Camera | mast camera, 32×32 2 bpp (modes 1–2) | `SNAP dir [mode]`; modes 3–5 by upgrade. **[M9]** §3.8.5 |
 | Image memory | 256 bytes (the largest installed camera mode) | `SNAP` fills it, `LDB` / `STB` read and write it, `SEND` sends it. **[M12]** §3.8.7 |
+| Thermal | survival heaters hold −40 °C | `@TEMP`, `@HEATER`; dust on the array `@SOLAR_DUST`. **[M13]** §3.3.4 |
+| Watchdog, fault protection | `@WDT`; `@PREEMPT`, `@BAT_ALARM` | Firmware-armed reset timer and slice preemption. **[M13]** §3.9.5, §3.9.2 |
 
 ### 3.1 Energy costs (defaults)
 
@@ -82,8 +84,9 @@ Each rover owns a copy of its chassis stats; upgrades (§3.7) modify that copy.
 | Turn in place (`@HEADING` write) | instant | 5 |
 | Headlight on | per tick | 8 |
 | Actuator moving (array deploy, panel or dish slew) | per tick, each | 1 |
+| Survival heaters **[M13]** | per tick while `@HEATER` = 1 (cold: night, low sun) | 6 (§3.3.4) |
 | Downlink transmitter | per tick in which bytes are sent | 2 (§3.8.1) |
-| Solar charge | per tick | `floor(60 × SUN_LIGHT/100 × cos(panel − sun azimuth))`, only when fully deployed |
+| Solar charge | per tick | `floor(60 × SUN_LIGHT/100 × cos(panel − sun azimuth))` × `@SOLAR_HEALTH`% × (100 − `@SOLAR_DUST`)%, only when fully deployed |
 
 ### 3.1.1 Radar, operator view and the headlight **[M8.1]**
 
@@ -117,7 +120,7 @@ The rover and the player "see" differently:
 | `RUNNING` | Executing instructions. |
 | `BLOCKED` | Waiting for a hardware action (`STEP`, `SCAN`, `SLEEP`, ...). |
 | `HALTED` | **[M9]** Stopped by `BRK`; resumes on *Continue* or upload (§3.8.4). No watchdog. |
-| `FAULT` | Stack overflow/underflow. A **watchdog** hard-reboots the CPU after 50 ticks. |
+| `FAULT` | Stack overflow/underflow. The **fault reset** (boot reason "watchdog") hard-reboots the CPU after 50 ticks. A hang without a fault is caught only by the firmware's `@WDT` (§3.9.5). |
 | `POWER_OFF` | Battery empty (§3.4). |
 | `DESTROYED` | Hull at 0. Only the admin console can recover. |
 
@@ -210,6 +213,29 @@ material fixes what (`repairs` in the tile registry):
 A material that cannot fix the chosen system gives `ERR_INVALID` and is not consumed.
 Ore is therefore a choice: analyze it for science, or keep it as spare parts.
 
+### 3.3.4 Thermal and dust **[M13]**
+
+Real rovers lose most of their night-time energy to keeping warm, and their solar output
+to dust. Both are automatic hardware here: firmware cannot switch them off, only plan
+around them. Numbers in `BALANCE`.
+
+* **Ambient:** `ambientTemp(@SUN_LIGHT)` = −80 °C at light 0 (night, total eclipse) up to
+  +20 °C at light 100, linear (−40 °C at light 40, so the evening and early morning are
+  cold too).
+* **`@TEMP`** (R, °C): the rover's internal temperature. Thermal inertia: it moves 1 °C toward
+  the ambient every 4 ticks (on ticks divisible by 4). A new rover starts at the ambient.
+* **Survival heaters** (thermostat): while the rover is powered and `@TEMP` ≤ −40 °C with
+  the ambient below −40 °C, the heaters run (`@HEATER` = 1, 6 energy per tick) and hold
+  the temperature, or warm a colder rover by 1 °C per 4 ticks. They run about 1450 ticks
+  per sol (≈ 9 % of the battery). A powered-off rover has no heaters and cools to the
+  ambient; there is no cold damage yet.
+* **`@SOLAR_DUST`** (R, 0–100 %): +1 % every 800 ticks the array is not fully stowed
+  (≈ 3 % per sol open all day). Charging is scaled by `(100 − dust) / 100`. A completed
+  stow (the accordion folding shut) shakes off half the dust, rounded up: a game liberty
+  that gives firmware a choice (fold now and then, at 40 ticks and 40 energy) instead of
+  random cleaning events. The *Dust squall* adds 1 % every 2 ticks to an open array.
+  Admin *forceRepair* cleans it.
+
 ### 3.4 Power-off and solar recovery
 
 When energy reaches 0 the CPU powers off and any action is aborted. If the solar array
@@ -236,7 +262,7 @@ ticks until it starts (0 while active).
 
 | Event | Teaching | Unlocks after | Chance / sol | Warning | Length | Effect |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| Dust squall | ✔ (guaranteed first) | goal *First contact* | 15 % | 400 | 60 | Hull −1 / 20 ticks; open array −1 / 3 ticks. |
+| Dust squall | ✔ (guaranteed first) | goal *First contact* | 15 % | 400 | 60 | Hull −1 / 20 ticks; open array −1 / 3 ticks and +1 % dust / 2 ticks (M13). |
 | Partial eclipse | ✔ (guaranteed first) | goal *First contact* | 15 % | 300 | 120 | Light dips to 40 %. |
 | Micrometeorite squall | | Dust squall seen, sol ≥ 3 | 35 % | 200 | 100 | Hull −1 / 10 ticks (/5 while driving); dish −1 / 20; open array −2 / 3 ticks (≈ −66). |
 | Total solar eclipse | | Partial eclipse seen, goal *Night owl*, sol ≥ 3 | 30 % | 200 | 150 | Light → 0. Daytime only. |
@@ -247,13 +273,14 @@ prerequisites and count neither toward goals nor toward "seen" prerequisites.
 
 ## 3.6 Persistence **[M6]**
 
-`SaveManager.serialize/deserialize` (headless). A save (`version: 13`; v1–v12 files are migrated
+`SaveManager.serialize/deserialize` (headless). A save (`version: 16`; v1–v15 files are migrated
 by `migrate()`) holds the seed, supply drops, installed upgrades, each rover's downlink
 (log FIFO, transmitter budget, `@LOG_LOST`, recorder descriptors and progress, sequence
 number, dump replies waiting), mission control's last 200 received frames, the gallery's last 100 products,
 mission control's last 100 sent commands and uploads (v13, the Comms timeline),
 tick, credits, stats, cheats, storyteller state (RNG, schedule, completed goals), full
-unit and VM state (firmware source is recompiled on load), and **only chunks that are
+unit and VM state (firmware source is recompiled on load; v16: `@WDT`, fault protection,
+temperature, heater, array dust), and **only chunks that are
 dirty or explored**: fog as run lengths plus a sparse `[layer, index, id]` diff against
 the regenerated chunk. A saved-then-loaded world continues **bit-identically** to an
 uninterrupted one (tested). Typical size: a few KB.
@@ -345,7 +372,8 @@ kind 1 = science frame   size = 0; followed by 1 sequence byte, then the product
 * **Tag 15** is reserved for the system: boot frames, dump replies. `LOG 15` is a compile
   error.
 * **Boot frame:** after every hard reboot the rover queues `LOG 15 reason`
-  (1 = code upload, 2 = watchdog, 3 = cold boot, 4 = admin).
+  (1 = code upload, 2 = watchdog (the fault reset, §3.2), 3 = cold boot, 4 = admin,
+  5 = watchdog timeout (`@WDT` not kicked, §3.9.5) **[M13]**).
 * **Science frames:** `tag` = product type (§3.8.5), then a sequence byte (0–255,
   wrapping, per rover), then the payload. Overhead is 2 bytes per product.
 
@@ -606,10 +634,26 @@ running uplinked command sequences, or a small OS starting user programs:
 * **Program faults** (stack overflow/underflow) set `PROG_FAULT` and end the slice. No
   watchdog: the firmware keeps running and decides what to do. A firmware fault still
   watchdog-reboots the whole CPU.
+* **Fault protection (`@PREEMPT`) [M13]:** slices are cooperative unless the firmware arms
+  conditions that end one at once. `@PREEMPT` (RW, firmware-only write, 0–7) is a mask of
+  `PRE_ALERT` 1 (a world event is announced: its warning starts this tick), `PRE_DAMAGE` 2
+  (hull, array or dish lost integrity this tick), `PRE_LOW_BAT` 4 (`@BAT` below
+  `@BAT_ALARM`, RW firmware-only, 0–100). Checked at the start of every tick of a slice:
+  when one fires, the program's action in progress is **aborted** (a `STEP` stops before
+  the rover arrives on the next tile, the tile's energy is spent; a tool's effect is lost;
+  a `SLEEP` is cut short) and the program's `@STATUS` becomes `ERR_PREEMPTED` (9). The
+  program stays `PROG_READY`, so the next `RUN` resumes it after the aborted instruction.
+  The firmware continues after its `RUN` in the same tick; `@PREEMPTED` (R) holds the bits
+  that fired (0 when a slice ended normally) until the next `RUN` clears it. `@PREEMPT`,
+  `@BAT_ALARM` and `@PREEMPTED` are CPU state: 0 after every hard reboot. `PRE_LOW_BAT` is
+  level-triggered: below the alarm every new slice ends at once, so the firmware should
+  charge first. The default firmware does not arm it (its 50-tick slices already check
+  between slices, and the dish needs that rhythm); the firmware template *Fault protection*
+  does (`PRE_ALERT + PRE_LOW_BAT`, logs `T_PREEMPT`).
 * **`BRK` in a program** sets `PROG_HALTED` and ends the slice; the firmware runs on.
   *Continue* (Program slot) sets `PROG_READY`, so the next `RUN` resumes after the `BRK`.
   `BRK` in the firmware halts the whole CPU as before (§3.8.4).
-* **Hard reboots** (firmware upload, watchdog, solar cold boot, admin) reset both contexts.
+* **Hard reboots** (firmware upload, watchdog, watchdog timeout, solar cold boot, admin) reset both contexts.
   `@PROG_STATE` becomes `PROG_READY` if a program is in flash (the task restarts from the
   top, as before M10), else `PROG_NONE`.
 
@@ -624,7 +668,7 @@ running uplinked command sequences, or a small OS starting user programs:
 * **Code tab**: a **Program** (default) / **Firmware** (advanced) switch, each slot with its
   own editor and templates (programs: the lesson set below and the *Image: …* examples;
   firmware: Default firmware and the pre-M10 all-in-one examples), *Upload program* or *Upload
-  firmware & reboot*, a flash bar `firmware 148 + program 46 = 194 / 256 B` (the
+  firmware & reboot*, a flash bar `firmware 158 + program 46 = 204 / 256 B` (the
   edited slot counts its draft, the other slot what is on the rover), and a warning when
   the firmware has no `RUN`. New rovers ship the default firmware and no program (the
   Program slot shows *First steps* as an unsent draft).
@@ -684,8 +728,11 @@ running uplinked command sequences, or a small OS starting user programs:
 
 A **core** plus **comfort blocks**, each between marker comments with its byte cost, so
 experienced players can delete what they do not need and give the bytes to their program.
-The full default firmware is 148 B (comfort 55 B of it), leaving 108 B on Mk-I: the
-shipped programs need 20–95 B (all fit; tested).
+The full default firmware is 158 B (comfort 55 B of it), leaving 98 B on Mk-I: the
+shipped programs need 20–95 B (all fit; tested). **[M13]** Its core arms and kicks the
+watchdog (`CONST WDT_TICKS 1000`, a kick at the top of the main loop and in the charge loop,
+10 B). The firmware template *Fault protection* is the default firmware plus `@PREEMPT`
+(15 B more: programs up to 83 B fit next to it).
 
 **Program templates as lessons.** Each non-image template starts with a header: what it
 does, `; Learn:` (what it teaches) and `; Try:` (a change to make next); comments cost no
@@ -715,6 +762,32 @@ Flash. Together the templates use every instruction except the firmware-only `RU
 
 Templates (Explorer, Prospector, Fetch) become programs: their charging and dish code
 moves to the firmware.
+
+### 3.9.5 Watchdog timer `@WDT` **[M13]**
+
+The fault reset (§3.2) only catches crashes. A firmware that hangs without faulting (an
+endless loop, a `SLEEP` that is far too long, a wait that never ends) used to run forever.
+Real flight computers have a **watchdog timer**: hardware that resets the CPU unless the
+software "kicks" it in time.
+
+* **`@WDT`** (RW, writes firmware-only, 0–30000). Writing n > 0 **arms** the watchdog (the
+  first time) and **kicks** it: it now expires n ticks from this one. Writing 0 does
+  nothing: once armed it cannot be switched off until the next hard reboot (like an
+  independent watchdog on a real microcontroller). Read: ticks left, 0 = not armed.
+* It counts down once per tick while the firmware is `RUNNING` or `BLOCKED`, including
+  while a program slice runs. `BRK` (`HALTED`) freezes it, as a debugger does; a `FAULT`
+  leaves it to the fault reset; a powered-off rover does not count.
+* When it reaches 0: hard reboot (§3.3) with boot reason 5, *watchdog timeout*; the
+  Comms tab shows `BOOT: watchdog timeout`. A hard reboot disarms it (0), so a firmware
+  arms it again with its first kick.
+* After a reboot nothing is armed: firmware that never writes `@WDT` (every pre-M13
+  firmware) behaves as before.
+* **Cooperative slices count:** while the firmware waits in `RUN`, the program holds the
+  CPU. A program instruction that blocks longer than the timeout (`SLEEP 2000` under the
+  default firmware) starves the firmware and trips the watchdog: the reboot restarts the
+  program. Choose the timeout longer than a slice plus the program's longest action, or
+  stop long actions with `@PREEMPT` (§3.9.2). The default firmware uses 1000 ticks; the
+  shipped programs block at most ~100.
 
 ## 4. World
 
@@ -814,12 +887,14 @@ compute instructions leave it alone.
 
 * Directions: `NORTH=0`, `EAST=1`, `SOUTH=2`, `WEST=3`.
 * Status: `OK=0`, `ERR_INVALID=1`, `ERR_FULL=2`, `ERR_LOW_POWER=3`, `ERR_BLOCKED=4`,
-  `ERR_NO_TOOL=5`, `ERR_NO_SIGNAL=6`, `ERR_HAZARD=7`, `ERR_DEPLOYED=8`.
+  `ERR_NO_TOOL=5`, `ERR_NO_SIGNAL=6`, `ERR_HAZARD=7`, `ERR_DEPLOYED=8`,
+  `ERR_PREEMPTED=9` **[M13]** (the program's action was aborted by fault protection).
 * Tools: `TOOL_0`…`TOOL_3`.
 * Systems: `SYS_HULL=0`, `SYS_SOLAR=1`, `SYS_ANTENNA=2`.
 * Alerts: `ALERT_NONE=0`, `ALERT_ECLIPSE=1`, `ALERT_SQUALL=2`.
 * Program state **[M10]**: `PROG_NONE=0`, `PROG_READY=1`, `PROG_RUNNING=2`, `PROG_DONE=3`,
   `PROG_FAULT=4`, `PROG_HALTED=5`.
+* Fault protection **[M13]**: `PRE_ALERT=1`, `PRE_DAMAGE=2`, `PRE_LOW_BAT=4` (bits of `@PREEMPT`).
 * Colors: `OFF=0`, `RED=1`, `GREEN=2`, `BLUE=3`, `AMBER=4`.
 * Tiles: `NONE=0` plus every `constName` in `WorldRegistry` (`FLAT_SAND`, `IRON_ORE`, `ROVER`, ...).
 
@@ -857,6 +932,12 @@ compute instructions leave it alone.
 | `@POST` | RW | 0–255, two-digit hex display on the back of the cabin | M9 |
 | `@PROG_STATE` | RW (writes: firmware only) | `PROG_*`; write `PROG_NONE` = acknowledge, `PROG_READY` = restart | M10 |
 | `@PROG_RESULT` | R | value of the program's last `END` | M10 |
+| `@WDT` | RW (writes: firmware only) | 0–30000: write n > 0 arms / kicks (n ticks); read = ticks left, 0 = not armed | M13 |
+| `@PREEMPT` | RW (writes: firmware only) | 0–7, `PRE_*` bits that end a slice at once | M13 |
+| `@BAT_ALARM` | RW (writes: firmware only) | 0–100, threshold of `PRE_LOW_BAT` | M13 |
+| `@PREEMPTED` | R | `PRE_*` bits that ended the last slice early; cleared by `RUN` | M13 |
+| `@TEMP`, `@HEATER` | R | °C; survival heaters 0/1 | M13 |
+| `@SOLAR_DUST` | R | 0–100 % dust on the array | M13 |
 
 Writes are clamped to the port's range; angle ports wrap modulo 360.
 
