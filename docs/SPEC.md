@@ -622,8 +622,8 @@ running uplinked command sequences, or a small OS starting user programs:
 * **Upload firmware**: as §3.3 (base 500 + 12 × firmware bytes, hard reboot); rejected if
   firmware + program would not fit the flash.
 * **Code tab**: a **Program** (default) / **Firmware** (advanced) switch, each slot with its
-  own editor and templates (programs: First steps, Explorer, Prospector, Fetch; firmware:
-  Default firmware and the pre-M10 all-in-one examples), *Upload program* or *Upload
+  own editor and templates (programs: the lesson set below and the *Image: …* examples;
+  firmware: Default firmware and the pre-M10 all-in-one examples), *Upload program* or *Upload
   firmware & reboot*, a flash bar `firmware 148 + program 46 = 194 / 256 B` (the
   edited slot counts its draft, the other slot what is on the rover), and a warning when
   the firmware has no `RUN`. New rovers ship the default firmware and no program (the
@@ -685,7 +685,25 @@ running uplinked command sequences, or a small OS starting user programs:
 A **core** plus **comfort blocks**, each between marker comments with its byte cost, so
 experienced players can delete what they do not need and give the bytes to their program.
 The full default firmware is 148 B (comfort 55 B of it), leaving 108 B on Mk-I: the
-shipped programs need 20–79 B (First steps 20, Explorer 46, Fetch 72, Prospector 79).
+shipped programs need 20–95 B (all fit; tested).
+
+**Program templates as lessons.** Each non-image template starts with a header: what it
+does, `; Learn:` (what it teaches) and `; Try:` (a change to make next); comments cost no
+Flash. Together the templates use every instruction except the firmware-only `RUN`
+(tested), and the tests run each one:
+
+| Template | Teaches | B |
+|----------|---------|---|
+| First steps | registers, `ALIAS`, `STEP`, `@STATUS`, a loop, `END` | 20 |
+| Explorer | `SCAN`, tile constants, `MOD`, telling errors apart (`ERR_HAZARD`), `LOG` | 57 |
+| Photographer | `SNAP` / `SEND`, `@HEADING` for the headlight, `@REC_FREE` | 37 |
+| Prospector | tools (`ACT`), cargo (`PEEK`), `CALL` / `RET` | 88 |
+| Field repair | `USE slot system`, nested loops, picking a port with jumps | 68 |
+| Fetch supply crate | positions, `SUB`, direction from a sign, result codes | 73 |
+| Spiral | `CALL` with arguments, `POP` order, `LOG`, `BRK` | 50 |
+| Seismic survey | an upgrade tool (`TOOL_3`), searching for a minimum, `JGE` / `JLE` | 69 |
+| Weather station | `SLEEP` timing, `@TICK`, `DIV`, the alert ports | 35 |
+| Image: … (6) | image memory, bits, `PUSH` (guide `IMAGE_MEMORY.md`) | 27–95 |
 
 * Core: keep the dish on the orbiter; stow the array on a squall warning; charge below a
   threshold (`CONST LOW_BAT`, `FULL_BAT`) and give the program no slices while charging;

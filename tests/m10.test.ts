@@ -278,12 +278,11 @@ describe('save v10', () => {
     const a = make();
     run(a, 400);
     const b0 = make();
-    run(b0, 173);
-    expect(b0.units[0].slice).toBeGreaterThanOrEqual(0); // saved inside a RUN slice
-    expect(b0.units[0].prog.instructionsExecuted).toBeGreaterThan(0);
-    const b = deserialize(JSON.parse(JSON.stringify(serialize(b0))));
+    run(b0, 150);
+    const at = 150 + until(b0, () => b0.units[0].slice >= 0 && b0.units[0].prog.instructionsExecuted > 0, 200);
+    const b = deserialize(JSON.parse(JSON.stringify(serialize(b0)))); // saved inside a RUN slice
     expect(b.units[0].programSource).toBe(PROGRAM_TEMPLATES.Prospector);
-    run(b, 227);
+    run(b, 400 - at);
     expect(serialize(b)).toEqual(serialize(a));
   });
 

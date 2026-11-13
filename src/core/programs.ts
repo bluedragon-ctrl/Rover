@@ -25,8 +25,14 @@ wait:   SLEEP BEAT_TICKS
 `;
 
 /** Template: drive around, turn at obstacles, stop to charge when low. */
-export const DEMO_EXPLORER = `; EXPLORER: wander, turn right at obstacles,
+export const DEMO_EXPLORER = `; EXPLORER (all-in-one firmware): wander, turn right at obstacles,
 ; deploy solar panels to recharge when the battery runs low.
+;
+; Learn: what a firmware must do by itself when it runs no program:
+; charging (@SOLAR_OPEN, @SOLAR_ANGLE), the dish, the squall warning,
+; the headlight, and that the array stays open across a reboot.
+; This is the code of the program "Explorer" plus the jobs the default
+; firmware does for it. Try: compare it with "Default firmware".
 
 ALIAS r0 dir        ; heading (NORTH/EAST/SOUTH/WEST)
 ALIAS r1 seen       ; tile type returned by SCAN
@@ -68,9 +74,14 @@ aim:    MOV @SOLAR_ANGLE @SUN_AZIMUTH
 `;
 
 /** Template: mine ore, grab samples, analyze them; the downlink sends the spectra home. */
-export const PROSPECTOR = `; PROSPECTOR: wander; mine ore and grab samples found next to
-; the rover and analyze them. Each spectrum waits in the recorder
-; until the downlink has sent it: keep the dish on the orbiter.
+export const PROSPECTOR = `; PROSPECTOR (all-in-one firmware): wander; mine ore and grab
+; samples found next to the rover and analyze them. Each spectrum
+; waits in the recorder until the downlink has sent it: keep the dish
+; on the orbiter.
+;
+; Learn: a firmware that charges and works without RUN. Note that it
+; does not stow the array for squalls: a gap the default firmware
+; closes. Try: add the squall check (see "All-in-one Explorer").
 
 ALIAS r0 dir
 ALIAS r1 seen
@@ -108,8 +119,13 @@ chg:    MOV @SOLAR_ANGLE @SUN_AZIMUTH
 `;
 
 /** Template: drive to the nearest landed supply crate and grab it (installs the upgrade). */
-export const FETCH_SUPPLY = `; FETCH: drive to the nearest supply crate and grab it, which
-; installs the upgrade. Greedy: no obstacle avoidance (yours to add!).
+export const FETCH_SUPPLY = `; FETCH (all-in-one firmware): drive to the nearest supply crate
+; and grab it, which installs the upgrade. Greedy: no obstacle
+; avoidance (yours to add!).
+;
+; Learn: a firmware that never ends: with no crate it waits (SLEEP)
+; and checks again. It does not charge: watch @BAT on long trips.
+; Try: the program "Fetch supply crate" for the version with results.
 
 ALIAS r0 dx
 ALIAS r1 dy
@@ -231,56 +247,131 @@ aim:    MOV @SOLAR_ANGLE @SUN_AZIMUTH
 ;--- end ---
 `;
 
-/** Program: the shortest useful one. Drives a square and ends. */
-export const PROGRAM_FIRST_STEPS = `; FIRST STEPS: drive a 3x3 square, then END.
-; The firmware runs this program in time slices and reports
-; "T_END = 3" (done) with the result in the Comms tab.
+/*
+ * Program templates (M10; reworked as lessons after M12). Each header says what the
+ * program does, what it teaches (Learn) and what to change next (Try); together they
+ * use every instruction and the main ports. Comments cost no Flash. Tests compile each
+ * one within the default firmware's budget and run it.
+ */
 
-ALIAS r0 dir
+/** Program 1: the shortest useful one. */
+export const PROGRAM_FIRST_STEPS = `; FIRST STEPS: drive a 3×3 square, then end.
+;
+; Learn: registers and ALIAS, STEP, checking @STATUS, a loop, END.
+;
+; The CPU has four registers, r0–r3; each holds a number and starts
+; at 0. ALIAS gives one a name. Hardware instructions (STEP, SCAN,
+; ACT...) put their outcome in @STATUS: OK, or an error such as
+; ERR_BLOCKED. The firmware runs this program in time slices; when it
+; ENDs, the Comms tab shows "T_END = 3" (done) and "T_RESULT = 1",
+; and the rover's @POST display shows the result.
+; Try: a bigger square; END with the number of sides driven.
 
-side:   STEP dir 3
-        JNE @STATUS OK stuck      ; blocked, hazard...
-        ADD dir 1                 ; turn right
-        JLT dir 4 side
+ALIAS r0 dir              ; heading: 0 NORTH, 1 EAST, 2 SOUTH, 3 WEST
+
+side:   STEP dir 3                ; drive 3 tiles in direction dir
+        JNE @STATUS OK stuck      ; blocked, hazard, low power...
+        ADD dir 1                 ; turn right: NORTH -> EAST -> ...
+        JLT dir 4 side            ; fewer than 4 sides: next side
         END 1                     ; result 1: square done
 stuck:  END 0                     ; result 0: something was in the way
 `;
 
-/** Program: Explorer without its own charging code (the firmware charges). */
-export const PROGRAM_EXPLORER = `; EXPLORER: wander, turn right at obstacles.
-; The firmware charges the battery, aims the dish and turns on
-; the headlight at night between time slices.
+/** Program 2: wander forever. */
+export const PROGRAM_EXPLORER = `; EXPLORER: wander, turn right at obstacles, report acid vents.
+;
+; Learn: SCAN (radar), tile constants, MOD to wrap a counter, telling
+; @STATUS errors apart, LOG frames for mission control.
+;
+; SCAN dir -> seen dist returns the first thing in that direction
+; (NONE if nothing within range) and how far away it is; it works day
+; and night. Items (samples, kits) are driven over, not around.
+; Driving onto an ACID_VENT costs 10 hull and ends the STEP with
+; ERR_HAZARD; this program then logs the vent's position (Comms:
+; "T_VENT_X", "T_VENT_Y"). The program never ENDs: between slices the
+; firmware charges the battery, then the program goes on where it was.
+; Try: turn left instead; pick the turn from @TICK MOD 2 (random-ish).
 
-ALIAS r0 dir        ; heading (NORTH/EAST/SOUTH/WEST)
+CONST T_VENT_X 2            ; log tags (0–14): your names in the Comms tab
+CONST T_VENT_Y 3
+
+ALIAS r0 dir        ; heading 0–3
 ALIAS r1 seen       ; tile type returned by SCAN
 ALIAS r2 dist       ; distance to it
 
 loop:   SCAN dir -> seen dist
         JEQ seen NONE go          ; nothing ahead
         JGT dist 1 go             ; something ahead, but not adjacent
-        JEQ seen SAMPLE go        ; items are driven over, not around
+        JEQ seen SAMPLE go        ; items are driven over
         JEQ seen REPAIR_KIT go
 turn:   ADD dir 1                 ; turn right: dir = (dir + 1) mod 4
         MOD dir 4
         JMP loop
 go:     STEP dir 1
         JEQ @STATUS OK loop
-        JMP turn                  ; blocked, hazard...: turn
+        JNE @STATUS ERR_HAZARD turn ; blocked: something moved in
+        LOG T_VENT_X @X           ; on an acid vent: tell mission control
+        LOG T_VENT_Y @Y
+        JMP turn                  ; and leave it
 `;
 
-/** Program: Prospector without its own charging code. */
-export const PROGRAM_PROSPECTOR = `; PROSPECTOR: wander; mine ore and grab samples found next to
-; the rover and analyze them. Each spectrum waits in the recorder
-; until the downlink has sent it. The firmware charges.
+/** Program 3: SNAP and SEND. */
+export const PROGRAM_PHOTOGRAPHER = `; PHOTOGRAPHER: photograph all four directions, send the photos
+; home, END with how many were sent.
+;
+; Learn: SNAP and SEND, aiming the headlight with @HEADING, waiting
+; for space in the science recorder (@REC_FREE).
+;
+; SNAP dir takes a photo of the first thing within 2 tiles in that
+; direction (or the landscape) into image memory; SEND copies it into
+; the science recorder, and the downlink sends it home while the dish
+; is on the orbiter (the firmware keeps it there). Only a lit photo
+; earns credits: daylight, or the headlight shining at the subject.
+; The firmware turns the headlight on at night; it shines along
+; @HEADING, so face what you photograph. Photos appear in the Gallery
+; tab; the first photo of each kind of subject earns a bonus.
+; Try: SNAP only when SCAN sees a CLIFF_WALL or SAMPLE within 2 tiles.
+; Between SNAP and SEND you can change the photo: see "Image: ...".
+
+CONST PHOTO_BYTES 258       ; a mode-1 photo in the recorder (256 + header)
+
+ALIAS r0 dir
+ALIAS r1 sent       ; photos sent so far
+
+shot:   MOV @HEADING dir          ; turn in place to face it
+        SNAP dir                  ; mode 1: 32×32 grey, into image memory
+        JNE @STATUS OK next       ; ERR_LOW_POWER...: skip this one
+wait:   JGE @REC_FREE PHOTO_BYTES keep
+        SLEEP 10                  ; recorder full: let the downlink empty it
+        JMP wait
+keep:   SEND                      ; image memory -> science recorder
+        ADD sent 1
+next:   ADD dir 1
+        JLT dir 4 shot
+        END sent                  ; result: photos sent (0–4)
+`;
+
+/** Program 4: tools, cargo and a subroutine. */
+export const PROGRAM_PROSPECTOR = `; PROSPECTOR: wander; mine ore veins and pick up samples next to
+; the rover, analyze them and send the spectra home.
+;
+; Learn: tools (ACT TOOL_n), cargo (PEEK), a subroutine (CALL / RET).
+;
+; Mk-I hardpoints: TOOL_0 drill (mines an adjacent ore vein into
+; cargo), TOOL_1 grabber (picks up an adjacent item), TOOL_2
+; spectrometer (analyzes the item in a cargo slot and frees the slot).
+; Spectra wait in the science recorder (@SCIENCE_READY counts them)
+; until the downlink sends them: a sample earns 3 credits, ore 1.
+; CALL lab jumps to lab and remembers where it came from; RET goes back.
+; Try: keep IRON_ORE in cargo for repairs (see Field repair).
 
 ALIAS r0 dir
 ALIAS r1 seen
 ALIAS r2 dist
 ALIAS r3 slot
 
-loop:   MOV @ANTENNA_ANGLE @ORBIT_AZIMUTH ; spectra go home by themselves
-        SCAN dir -> seen dist
-        JGT dist 1 go                     ; target not adjacent yet
+loop:   SCAN dir -> seen dist
+        JGT dist 1 go             ; target not adjacent yet
         JEQ seen IRON_ORE mine
         JEQ seen SILICON_ORE mine
         JEQ seen SAMPLE grab
@@ -288,48 +379,219 @@ loop:   MOV @ANTENNA_ANGLE @ORBIT_AZIMUTH ; spectra go home by themselves
 turn:   ADD dir 1
         MOD dir 4
         JMP loop
-mine:   ACT TOOL_0 dir                    ; drill: 8 ticks
-        JMP lab
-grab:   ACT TOOL_1 dir                    ; grabber: 2 ticks
-lab:    MOV slot 0
-an:     ACT TOOL_2 slot                   ; spectrometer (ERR_INVALID if empty)
-        ADD slot 1
-        JLT slot 4 an
+mine:   ACT TOOL_0 dir            ; drill: 8 ticks, ore into cargo
+        JMP done
+grab:   ACT TOOL_1 dir            ; grabber: 2 ticks, item into cargo
+done:   CALL lab
         JMP loop
 go:     STEP dir 1
         JEQ @STATUS OK loop
         JMP turn
+
+; lab: analyze everything in cargo. Changes seen and slot.
+lab:    MOV slot 0
+item:   PEEK slot -> seen         ; item in the slot, 0 = empty
+        JEQ seen 0 skip           ; empty slot: nothing to analyze
+        ACT TOOL_2 slot           ; spectrometer: spectrum to the recorder
+skip:   ADD slot 1
+        JLT slot 4 item           ; Mk-I has 4 cargo slots (0–3)
+        RET
 `;
 
-/** Program: fetch the nearest supply crate, then END. */
-export const PROGRAM_FETCH = `; FETCH: drive to the nearest supply crate and grab it, which
-; installs the upgrade. Greedy: no obstacle avoidance (yours to add!).
-; END 1 when the crate is installed, END 0 if there is none.
+/** Program 5: PEEK and USE. */
+export const PROGRAM_FIELD_REPAIR = `; FIELD REPAIR: repair worn systems with what is in cargo, END
+; with the number of repairs.
+;
+; Learn: USE slot system, nested loops, choosing a port with jumps.
+;
+; Systems: SYS_HULL (0), SYS_SOLAR (1), SYS_ANTENNA (2), with health
+; in @HULL, @SOLAR_HEALTH, @ANTENNA_HEALTH (0–100). USE takes 10
+; ticks and uses the item up. REPAIR_KIT: +30 hull, +40 solar, +40
+; dish; IRON_ORE: +10 hull, +15 dish; SILICON_ORE: +20 solar. An item
+; that cannot repair a system fails with ERR_INVALID, so the program
+; simply tries every slot. Get materials with the grabber or the drill
+; first (Prospector). Goal "Field engineer": one repair.
+; Try: repair the dish first; keep one REPAIR_KIT for emergencies.
 
-ALIAS r0 dx
-ALIAS r1 dy
+CONST WORN 80               ; repair systems below this health
+
+ALIAS r0 sys        ; system being checked: 0, 1, 2
+ALIAS r1 slot       ; cargo slot being tried: 0–3
+ALIAS r2 value      ; a health, then an item
+ALIAS r3 fixed      ; repairs made
+
+check:  MOV value @HULL           ; read the health of system sys:
+        JEQ sys SYS_HULL test     ; one port per system, so pick it
+        MOV value @SOLAR_HEALTH   ; with jumps
+        JEQ sys SYS_SOLAR test
+        MOV value @ANTENNA_HEALTH
+test:   JGE value WORN nextsys    ; healthy enough
+        MOV slot 0
+try:    PEEK slot -> value        ; the health is not needed any more
+        JEQ value 0 nextslot      ; empty slot
+        USE slot sys
+        JNE @STATUS OK nextslot   ; this item cannot repair sys
+        ADD fixed 1
+        JMP check                 ; still worn? try again
+nextslot: ADD slot 1
+        JLT slot 4 try
+nextsys: ADD sys 1
+        JLT sys 3 check
+        END fixed
+`;
+
+/** Program 6: positions and directions. */
+export const PROGRAM_FETCH = `; FETCH: drive to the nearest supply crate and pick it up, which
+; installs the upgrade. END 1 = installed, 0 = no crate, 2 = stuck.
+;
+; Learn: positions (@X, @Y, @DROP_X, @DROP_Y), SUB for differences,
+; picking a direction from a sign, "set a default, then jump".
+;
+; Buy an upgrade in the Upgrades tab: its crate lands 3–6 tiles away
+; after 80 ticks (@DROPS counts the crates that have landed). The
+; rover heads for the tile just south of the crate, then grabs NORTH.
+; It drives straight at it: with a rock in the way it ENDs with 2.
+; Try: when blocked, step sideways once and go on (see Explorer).
+
+ALIAS r0 dx         ; how far east the target is (negative: west)
+ALIAS r1 dy         ; how far north
+ALIAS r2 dir
 
 loop:   JEQ @DROPS 0 nocrate
         MOV dx @DROP_X
         SUB dx @X
         MOV dy @DROP_Y
         SUB dy @Y
-        SUB dy 1                ; aim for the tile just south of the crate
-        JGT dx 0 go_e
-        JLT dx 0 go_w
-        JGT dy 0 go_n
-        JLT dy 0 go_s
-        ACT TOOL_1 NORTH        ; adjacent: grab = install
+        SUB dy 1                  ; the tile south of the crate
+        MOV dir EAST              ; guess a direction, then check it
+        JGT dx 0 go
+        MOV dir WEST
+        JLT dx 0 go
+        MOV dir NORTH
+        JGT dy 0 go
+        MOV dir SOUTH
+        JLT dy 0 go
+        ACT TOOL_1 NORTH          ; there: grab = install
         JNE @STATUS OK loop
         END 1
 nocrate: END 0
-go_e:   STEP EAST
-        JMP loop
-go_w:   STEP WEST
-        JMP loop
-go_n:   STEP NORTH
-        JMP loop
-go_s:   STEP SOUTH
+go:     STEP dir
+        JEQ @STATUS OK loop
+        END 2                     ; something is in the way
+`;
+
+/** Program 7: CALL with arguments, the data stack, LOG and BRK. */
+export const PROGRAM_SPIRAL = `; SPIRAL: search around the start in a growing square spiral
+; (legs of 1, 1, 2, 2, 3, 3... tiles), logging every corner.
+;
+; Learn: subroutines with arguments, the data stack (POP), LOG, BRK.
+;
+; CALL leg dir len pushes dir, then len, onto the data stack and jumps
+; to leg; leg POPs them back in reverse order (last in, first out).
+; The stack holds 8 numbers: every CALL argument must be POPped.
+; Each corner arrives in the Comms tab as "T_X = ..." and "T_Y = ...".
+; At the end BRK halts the program and the rover sends its registers
+; home (Comms: a DUMP "sent by BRK"); press Continue to END.
+; Try: stop early when SCAN sees a SAMPLE; spiral the other way.
+
+CONST LEGS 6                ; longest leg, in tiles
+CONST T_X 2                 ; log tags for the corners
+CONST T_Y 3
+
+ALIAS r0 dir
+ALIAS r1 len
+
+        MOV len 1
+spiral: CALL leg dir len          ; two legs of the same length...
+        ADD dir 1
+        MOD dir 4
+        CALL leg dir len
+        ADD dir 1
+        MOD dir 4
+        ADD len 1                 ; ...then one tile longer
+        JLE len LEGS spiral
+        BRK                       ; look at the dump, then Continue
+        END len
+
+; leg(dir, len): drive len tiles in dir, log the corner. Uses r2, r3.
+leg:    POP r3                    ; len: pushed last, popped first
+        POP r2                    ; dir
+        STEP r2 r3                ; blocked? it just stops early
+        LOG T_X @X
+        LOG T_Y @Y
+        RET
+`;
+
+/** Program 8: an upgrade tool and a search for the minimum. */
+export const PROGRAM_SEISMIC = `; SEISMIC SURVEY: listen for ore in four directions, drive to the
+; nearest vein and mine it. Needs the seismic scanner upgrade.
+;
+; Learn: finding the smallest value in a loop, a tool that answers
+; through ports (@SEISMIC_TYPE, @SEISMIC_DIST), result codes.
+;
+; ACT TOOL_3 dir (4 ticks) hears the nearest ore vein up to 12 tiles
+; away in dir, even through walls: @SEISMIC_DIST = distance, 0 = none.
+; Without the upgrade the hardpoint is empty: ERR_NO_TOOL.
+; END 1 = mined, 0 = no scanner, 2 = no ore in range, 3 = blocked on
+; the way (the scanner hears through walls, the rover cannot drive).
+; Try: when blocked, scan again from where the rover stopped.
+
+ALIAS r0 dir
+ALIAS r1 best       ; direction of the nearest vein so far
+ALIAS r2 near       ; its distance (99 = none yet)
+
+        MOV near 99
+listen: ACT TOOL_3 dir
+        JEQ @STATUS ERR_NO_TOOL notool
+        JEQ @SEISMIC_DIST 0 next  ; nothing that way
+        JGE @SEISMIC_DIST near next ; not nearer than the best so far
+        MOV near @SEISMIC_DIST    ; new nearest
+        MOV best dir
+next:   ADD dir 1
+        JLT dir 4 listen
+        JEQ near 99 noore
+        SUB near 1                ; stop next to the vein
+        JEQ near 0 drill          ; already there
+        STEP best near
+drill:  ACT TOOL_0 best           ; ore into cargo
+        JNE @STATUS OK blocked
+        END 1
+noore:  END 2
+blocked: END 3
+notool: END 0
+`;
+
+/** Program 9: timing and alerts. */
+export const PROGRAM_WEATHER = `; WEATHER STATION: stay put and report the weather: the sunlight
+; every 100 ticks, plus every warning of a squall or an eclipse.
+; Runs until you upload another program.
+;
+; Learn: SLEEP for timing, @TICK, DIV, the alert ports.
+;
+; @SUN_LIGHT is 0–100. @ALERT is ALERT_NONE or the event on its way
+; (ALERT_SQUALL, ALERT_ECLIPSE); @ALERT_ETA is the ticks until it
+; starts. The firmware already stows the solar array for a squall:
+; this program only reports. A sol is 2400 ticks; this program counts
+; it in 24 "hours" of 100 ticks from the landing (tick 0), so hour 0
+; is not midnight: watch @SUN_LIGHT to see when the sun rises.
+; Try: only log when the light changed; LOG the hour of sunrise.
+
+CONST T_HOUR 2              ; log tags
+CONST T_LIGHT 3
+CONST T_ALERT 4
+CONST T_ETA 5
+
+ALIAS r0 hour
+
+loop:   MOV hour @TICK
+        MOD hour 2400             ; ticks since the sol started
+        DIV hour 100              ; whole hours: 0–23
+        LOG T_HOUR hour
+        LOG T_LIGHT @SUN_LIGHT
+        JEQ @ALERT ALERT_NONE calm
+        LOG T_ALERT @ALERT
+        LOG T_ETA @ALERT_ETA
+calm:   SLEEP 100
         JMP loop
 `;
 
@@ -501,8 +763,13 @@ go:     STEP dir 1
 export const PROGRAM_TEMPLATES: Record<string, string> = {
   'First steps': PROGRAM_FIRST_STEPS,
   Explorer: PROGRAM_EXPLORER,
+  Photographer: PROGRAM_PHOTOGRAPHER,
   Prospector: PROGRAM_PROSPECTOR,
+  'Field repair': PROGRAM_FIELD_REPAIR,
   'Fetch supply crate': PROGRAM_FETCH,
+  Spiral: PROGRAM_SPIRAL,
+  'Seismic survey': PROGRAM_SEISMIC,
+  'Weather station': PROGRAM_WEATHER,
   'Image: Line': IMAGE_LINE,
   'Image: Test pattern': IMAGE_TEST_PATTERN,
   'Image: Negative': IMAGE_NEGATIVE,
