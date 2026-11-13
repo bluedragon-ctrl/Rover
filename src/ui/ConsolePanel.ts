@@ -271,7 +271,7 @@ export class ConsolePanel {
             <button data-slot="program">Program</button><button data-slot="firmware">Firmware</button>
           </span>
           <span class="spacer"></span>
-          <button data-cmd="RUN_AGAIN" id="console-run-again" title="Restart the program from its first line (whichever part is selected)">↻ Run program again</button>
+          <button data-cmd="RUN_AGAIN" id="console-run-again" title="Restart the program from its first line (always the program, whatever Talk to says)">↻ Run program again</button>
         </div>
         <div class="toolbar">
           <button data-cmd="DUMP" title="Reply: where the selected part is in its code, its state, @STATUS and its registers">Dump registers</button>
