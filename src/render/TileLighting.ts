@@ -27,8 +27,8 @@ export function radarFront(age: number, range: number): number {
  * therefore light up as crisp cells, the same cells the operator sees and maps: the disc and
  * cone here mirror `src/core/sensors.ts` (cone numbers are injected from HEADLIGHT_CONE).
  *
- * Geometry flagged `hidden` (unmapped tiles) is discarded except where a radar wave
- * passes, so a SCAN briefly outlines unexplored terrain without mapping it.
+ * Geometry flagged hidden (unmapped tiles) is culled in the vertex shader except where a
+ * radar wave passes, so a SCAN briefly outlines unexplored terrain without mapping it.
  *
  * At night unlit tiles fade to a cold, desaturated grey ("remembered terrain") instead of
  * black; lit tiles keep their full colour and a slight boost so they bloom.
@@ -141,6 +141,14 @@ void main() {
       }
     }
   }
+  // Unmapped terrain outside a radar wave, or a survey cross whose tile is now mapped: move
+  // the vertex outside the clip volume. The decision depends only on the tile centre, so all
+  // vertices of a tile agree and whole primitives are dropped before rasterisation (no
+  // fragment discard, which would also defeat early depth testing).
+  if (vis > 1.5 || (vis > 0.5 && radar < 0.02)) {
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    return;
+  }
   vLit = max(lit, uDay);
   vRadar = radar;
   vHidden = vis > 0.5 ? 1.0 : 0.0;
@@ -161,8 +169,6 @@ varying float vHidden;
 #include <fog_pars_fragment>
 
 void main() {
-  // Unmapped terrain: only the radar wave shows it, as a red silhouette.
-  if (vHidden > 0.5 && vRadar < 0.02) discard;
   float g = dot(vColor, vec3(0.299, 0.587, 0.114));
 #ifdef FILL
   vec3 dark = uNight * g * 0.8;
