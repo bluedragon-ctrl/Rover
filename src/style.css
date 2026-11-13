@@ -60,6 +60,21 @@ main { display: flex; height: calc(100% - 44px); }
 #reference table { border-collapse: collapse; width: 100%; } #reference td { border-bottom: 1px solid var(--line); padding: 3px 4px; vertical-align: top; }
 #reference h4 { margin: 12px 0 4px; color: var(--accent); }
 .consts code { display: inline-block; margin: 1px 2px; }
+.consts code[hidden] { display: none; }
+.ref-head { position: sticky; top: -8px; z-index: 1; margin: -8px -8px 0; padding: 6px 8px 0; background: var(--panel); border-bottom: 1px solid var(--line); display: flex; align-items: flex-end; gap: 8px; }
+.ref-tabs { display: flex; flex-wrap: wrap; flex: 1; }
+.ref-tab { border: none; border-radius: 0; background: none; padding: 5px 9px; color: var(--dim); font-size: 12px; }
+.ref-tab.active { color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); background: none; }
+.ref-filter { width: 110px; margin-bottom: 4px; }
+.ref-pane { display: none; } .ref-pane.active { display: block; }
+#reference td.small { color: var(--dim); }
+#reference table { table-layout: fixed; }
+#reference td:nth-child(2).dim { width: 28px; }
+.ref-pane[data-ref=basics] td:first-child { width: 90px; }
+.ref-pane[data-ref=instr] td:first-child { width: 42%; }
+.ref-pane[data-ref=ports] td:first-child { width: 128px; } .ref-pane[data-ref=ports] td:nth-child(3) { width: 26px; }
+.ref-pane[data-ref=tools] td:first-child { width: 150px; }
+.ref-pane[data-ref=registry] td:first-child { width: 108px; } .ref-pane[data-ref=registry] td:nth-child(3) { width: 96px; }
 #console-list { font-family: var(--mono); font-size: 11px; flex: 1; min-height: 140px; overflow: auto; border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; }
 #console-list .hex { color: #5d7a9a; }
 #console-list .warn { color: var(--warn); }
