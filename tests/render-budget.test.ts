@@ -120,3 +120,20 @@ describe('chunk fog updates', () => {
     expect(pool.lastBuilds).toBe(1);
   });
 });
+
+describe('rover rig draw calls', () => {
+  it('merges static parts (was 88 draw calls per rover)', async () => {
+    const { buildRoverRig, LAMP } = await import('../src/render/VectorFactory');
+    const rig = buildRoverRig({ post: true });
+    let draws = 0;
+    rig.group.traverseVisible((o) => {
+      if ((o as THREE.Mesh).isMesh || (o as THREE.Line).isLine || (o as THREE.Points).isPoints) draws++;
+    });
+    expect(draws).toBeLessThanOrEqual(42);
+    expect(rig.lamps.length).toBe(LAMP.POST + 14);
+    // Recolouring a lamp touches only its own vertices.
+    rig.lamps.set(LAMP.BEACON, 0xff0000);
+    expect(rig.lamps.get(LAMP.BEACON)).toBe(0xff0000);
+    expect(rig.lamps.get(LAMP.HEAD)).toBe(0x1e293b);
+  });
+});

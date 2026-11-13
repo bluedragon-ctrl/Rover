@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { TileShape } from '../core/WorldRegistry';
+import { ColorCells, mergeStatic } from './RigMerge';
 
 /** Falling supply capsule with parachute, centred at the origin (y up). */
 export function buildCapsuleMesh(): THREE.LineSegments {
@@ -509,12 +510,16 @@ export function drawTileVec(b: LineBatch, f: FillBatch, shape: TileShape, color:
 
 // ----------------------------------------------------------------------------- rover v2
 
-/** Filled dark body + bright edges. Returns the group and its edge material (for tinting). */
-function vectorPart(geo: THREE.BufferGeometry, edge: number, fill = 0x09131f, edgeOpacity = 1, side: THREE.Side = THREE.FrontSide): { obj: THREE.Group; edgeMat: THREE.LineBasicMaterial; fillMat: THREE.MeshBasicMaterial } {
+/**
+ * Filled dark body + bright edges. Returns the group and its edge material (for tinting).
+ * Pass `sharedEdge` to use one material for several parts (tinted together, merged into
+ * one draw call by mergeStatic).
+ */
+function vectorPart(geo: THREE.BufferGeometry, edge: number, fill = 0x09131f, edgeOpacity = 1, side: THREE.Side = THREE.FrontSide, sharedEdge?: THREE.LineBasicMaterial): { obj: THREE.Group; edgeMat: THREE.LineBasicMaterial; fillMat: THREE.MeshBasicMaterial } {
   const obj = new THREE.Group();
   const fillMat = new THREE.MeshBasicMaterial({ color: fill, side, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
   obj.add(new THREE.Mesh(geo, fillMat));
-  const edgeMat = new THREE.LineBasicMaterial({ color: edge, transparent: edgeOpacity < 1, opacity: edgeOpacity });
+  const edgeMat = sharedEdge ?? new THREE.LineBasicMaterial({ color: edge, transparent: edgeOpacity < 1, opacity: edgeOpacity });
   obj.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo, 20), edgeMat));
   return { obj, edgeMat, fillMat };
 }
@@ -525,11 +530,12 @@ function wireOnly(geo: THREE.BufferGeometry, color: number, opacity = 1): { obj:
 }
 
 /** One solar panel segment spanning x∈[0, w] from its hinge, with a 2×4 cell grid. */
-function solarSegment(w: number, length: number, color: number): { seg: THREE.Group; mat: THREE.LineBasicMaterial } {
+function solarSegment(w: number, length: number, color: number, edgeMat: THREE.LineBasicMaterial): THREE.Group {
   const seg = new THREE.Group();
   const box = new THREE.BoxGeometry(w - 0.02, 0.03, length);
   box.translate(w / 2, 0, 0);
-  const frame = vectorPart(box, color, 0x061626);
+  const PANEL = 0x061626;
+  const frame = vectorPart(box, color, PANEL, 1, THREE.FrontSide, edgeMat);
   seg.add(frame.obj);
   const pts: number[] = [];
   for (const side of [0.017, -0.017]) {
@@ -541,12 +547,15 @@ function solarSegment(w: number, length: number, color: number): { seg: THREE.Gr
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-  seg.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.6 })));
+  // Cell grid: 60% over the dark panel, pre-blended (linear) so it can be opaque and merge
+  // with the hinge pin into one draw call.
+  const grid = new THREE.Color(color).multiplyScalar(0.6).add(new THREE.Color(PANEL).multiplyScalar(0.4));
+  seg.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: grid })));
   // Hinge pin along the inner edge.
   const pin = new THREE.BufferGeometry();
   pin.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, -length / 2 - 0.03, 0, 0, length / 2 + 0.03], 3));
   seg.add(new THREE.LineSegments(pin, new THREE.LineBasicMaterial({ color: ROVER_AMBER })));
-  return { seg, mat: frame.edgeMat };
+  return seg;
 }
 
 /** Segments per solar wing (accordion fold). */
@@ -563,6 +572,9 @@ export const POST_DARK = 0x2a0e08;
 
 export const ROVER_AMBER = 0xf59e0b;
 export const ROVER_CYAN = 0x38bdf8;
+
+/** Indices into `RoverRigMesh.lamps`. */
+export const LAMP = { IND: 0, BEACON: 3, HEAD: 4, POST: 5 } as const;
 
 /** Parts of the v2 rover the animator drives. Faces -Z (north) at rotation 0, 1 tile ≈ 1 unit. */
 export interface RoverRigMesh {
@@ -582,12 +594,14 @@ export interface RoverRigMesh {
   solarMats: THREE.LineBasicMaterial[];
   dish: THREE.Group;
   dishMats: THREE.LineBasicMaterial[];
-  beacon: THREE.MeshBasicMaterial;
-  /** Indicator lamp lenses on the cabin roof (@IND1..@IND3), left to right. */
-  indicators: THREE.MeshBasicMaterial[];
-  /** @POST display (M9, preview): 14 segment materials, digit-major (high digit first), a..g. Empty if not built. */
-  postSegs: THREE.MeshBasicMaterial[];
-  headLamp: THREE.MeshBasicMaterial;
+  /**
+   * All small coloured parts in one mesh, indexed by `LAMP`: indicator lenses (@IND1..3,
+   * left to right), status LED, headlight bar, then (if built) the 14 @POST segments,
+   * digit-major (high digit first), a..g.
+   */
+  lamps: ColorCells;
+  /** True when the @POST display was built. */
+  hasPost: boolean;
   /** Ground beam (tile units, not scaled with the model). */
   beam: THREE.Group;
   beamMats: THREE.Material[];
@@ -654,7 +668,8 @@ export function buildRoverRig(opts: { post?: boolean } = {}): RoverRigMesh {
   const solarMount = new THREE.Group();
   solarMount.position.set(0, 0.72, 0.06);
   body.add(solarMount);
-  const solarMats: THREE.LineBasicMaterial[] = [];
+  // One edge material for all segments: tinted together by damage, merged per joint.
+  const solarEdge = new THREE.LineBasicMaterial({ color: 0x5a7dff });
   const solarSides: THREE.Group[] = [];
   const solarJoints: THREE.Group[][] = [];
   const SEG_W = 0.42, SEG_L = 1.1, RAIL_X = 0.82;
@@ -672,12 +687,10 @@ export function buildRoverRig(opts: { post?: boolean } = {}): RoverRigMesh {
     for (let i = 0; i < SOLAR_SEGMENTS; i++) {
       const joint = new THREE.Group();
       if (i > 0) joint.position.x = SEG_W;
-      const s = solarSegment(SEG_W, SEG_L, 0x5a7dff);
-      joint.add(s.seg);
+      joint.add(solarSegment(SEG_W, SEG_L, 0x5a7dff, solarEdge));
       parent.add(joint);
       parent = joint;
       joints.push(joint);
-      solarMats.push(s.mat);
     }
     solarMount.add(sideGroup);
     solarSides.push(sideGroup);
@@ -687,52 +700,53 @@ export function buildRoverRig(opts: { post?: boolean } = {}): RoverRigMesh {
   // Dorsal dish on a turntable.
   const dish = new THREE.Group();
   dish.position.set(0, 1.0, 0.3);
-  const mast = vectorPart(new THREE.CylinderGeometry(0.04, 0.07, 0.26, 6), ROVER_CYAN);
+  // Mast, dish and feed share one edge material (tinted by dish damage, one draw call).
+  const dishEdge = new THREE.LineBasicMaterial({ color: 0x3affc8 });
+  const mast = vectorPart(new THREE.CylinderGeometry(0.04, 0.07, 0.26, 6), ROVER_CYAN, undefined, 1, THREE.FrontSide, dishEdge);
   mast.obj.position.y = 0.13;
   dish.add(mast.obj);
   // Solid parabolic dish (opaque, ribbed), facing local -Z and up.
   const profile = [0, 0.1, 0.2, 0.28, 0.35].map((r) => new THREE.Vector2(r, r * r * 0.9));
   const dishGeo = new THREE.LatheGeometry(profile, 12);
   dishGeo.rotateX(-Math.PI / 3);
-  const cone = vectorPart(dishGeo, 0x3affc8, 0x08201c, 1, THREE.DoubleSide);
+  const cone = vectorPart(dishGeo, 0x3affc8, 0x08201c, 1, THREE.DoubleSide, dishEdge);
   cone.obj.position.set(0, 0.3, 0.02);
   dish.add(cone.obj);
-  const feed = vectorPart(new THREE.OctahedronGeometry(0.05, 0), 0x3affc8);
+  const feed = vectorPart(new THREE.OctahedronGeometry(0.05, 0), 0x3affc8, undefined, 1, THREE.FrontSide, dishEdge);
   feed.obj.position.set(0, 0.44, -0.22);
   dish.add(feed.obj);
   body.add(dish);
 
+  // Coloured parts, collected in LAMP order and merged into one ColorCells mesh below.
+  const lampParts: THREE.Mesh[] = [];
+
   // Headlight bar on the nose.
-  const headLamp = new THREE.MeshBasicMaterial({ color: 0x1e293b });
-  const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.08, 0.06), headLamp);
+  const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.08, 0.06), new THREE.MeshBasicMaterial({ color: 0x1e293b }));
   lamp.position.set(0, 0.56, -0.74);
   body.add(lamp);
 
   // Status LED crystal.
-  const beacon = new THREE.MeshBasicMaterial({ color: LIGHT_HEX[2] });
-  const led = new THREE.Mesh(new THREE.OctahedronGeometry(0.07, 0), beacon);
+  const led = new THREE.Mesh(new THREE.OctahedronGeometry(0.07, 0), new THREE.MeshBasicMaterial({ color: LIGHT_HEX[2] }));
   led.position.set(-0.28, 1.08, -0.2);
   body.add(led);
 
   // Indicator lamp bar on the cabin roof, in front of the dish: three lenses in housings.
-  const indicators: THREE.MeshBasicMaterial[] = [];
   const bar = vectorPart(new THREE.BoxGeometry(0.5, 0.04, 0.14), 0x64748b);
   bar.obj.position.set(0.1, 1.01, -0.22);
   body.add(bar.obj);
   for (let i = 0; i < 3; i++) {
-    const lensMat = new THREE.MeshBasicMaterial({ color: indicatorHex(0) });
-    const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 0.07, 8), lensMat);
+    const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 0.07, 8), new THREE.MeshBasicMaterial({ color: indicatorHex(0) }));
     lens.position.set(-0.05 + i * 0.15, 1.065, -0.22);
     body.add(lens);
     const rim = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.CylinderGeometry(0.06, 0.06, 0.02, 8)), new THREE.LineBasicMaterial({ color: 0x64748b }));
     rim.position.set(-0.05 + i * 0.15, 1.04, -0.22);
     body.add(rim);
-    indicators.push(lensMat);
+    lampParts.push(lens);
   }
+  lampParts.push(led, lamp);
 
   // @POST display: two seven-segment digits on a bezel at the back of the cabin, tilted up
   // so it reads from the usual orbit camera behind and above the rover.
-  const postSegs: THREE.MeshBasicMaterial[] = [];
   if (opts.post) {
     const panel = new THREE.Group();
     panel.position.set(0, 0.82, 0.575);
@@ -747,13 +761,12 @@ export function buildRoverRig(opts: { post?: boolean } = {}): RoverRigMesh {
     ];
     for (const dx of [-0.075, 0.075]) {
       for (const [sx, sy, horiz] of segs) {
-        const mat = new THREE.MeshBasicMaterial({ color: POST_DARK });
-        const seg = new THREE.Mesh(new THREE.PlaneGeometry(horiz ? W - T : T, horiz ? T : H / 2 - T), mat);
+        const seg = new THREE.Mesh(new THREE.PlaneGeometry(horiz ? W - T : T, horiz ? T : H / 2 - T), new THREE.MeshBasicMaterial({ color: POST_DARK }));
         // Slight italic slant, like a real LED display.
         seg.position.set(dx + sx + sy * 0.12, sy, 0.017);
         seg.rotation.z = -0.12 * (horiz ? 0 : 1);
         panel.add(seg);
-        postSegs.push(mat);
+        lampParts.push(seg);
       }
     }
   }
@@ -801,6 +814,19 @@ export function buildRoverRig(opts: { post?: boolean } = {}): RoverRigMesh {
   );
   sensorRing.computeLineDistances();
 
+  // Draw-call reduction: lamps into one recolourable mesh, then every rigid node's static
+  // parts into one fill + one line mesh (88 -> ~40 draw calls per rover).
+  const lamps = new ColorCells(body, lampParts);
+  mergeStatic(body, new Set<THREE.Object3D>([...wheels, solarMount, dish, drillBit, core.obj]));
+  for (const hub of wheels) mergeStatic(hub, new Set());
+  for (let i = 0; i < solarSides.length; i++) {
+    const joints = solarJoints[i];
+    mergeStatic(solarSides[i], new Set([joints[0]]));
+    joints.forEach((j, k) => mergeStatic(j, new Set(joints.slice(k + 1, k + 2)), new Set([solarEdge])));
+  }
+  mergeStatic(dish, new Set(), new Set([dishEdge]));
+  mergeStatic(drillBit, new Set());
+
   return {
     group,
     model,
@@ -810,13 +836,11 @@ export function buildRoverRig(opts: { post?: boolean } = {}): RoverRigMesh {
     solarMount,
     solarSides,
     solarJoints,
-    solarMats,
+    solarMats: [solarEdge],
     dish,
-    dishMats: [cone.edgeMat, mast.edgeMat],
-    beacon,
-    indicators,
-    postSegs,
-    headLamp,
+    dishMats: [dishEdge],
+    lamps,
+    hasPost: !!opts.post,
     beam,
     beamMats: [beamFill, beamLines.material as THREE.Material],
     drillBit,

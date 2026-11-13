@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { POST_DARK, POST_LIT, SEVEN_SEG, type RoverRigMesh } from './VectorFactory';
+import { LAMP, POST_DARK, POST_LIT, SEVEN_SEG, type RoverRigMesh } from './VectorFactory';
 
 /** Everything the rover model shows, in renderer terms (no sim types, so the preview can drive it). */
 export interface RoverPose {
@@ -75,14 +75,14 @@ export class RoverAnimator {
     for (const w of m.wheels) w.rotation.x = this.wheelSpin;
     m.model.position.y = p.moving ? Math.abs(Math.sin(t * 13)) * 0.012 : 0;
 
-    m.beacon.color.setHex(p.beaconHex);
-    p.indicators.forEach((hex, i) => m.indicators[i]?.color.setHex(hex));
-    if (m.postSegs.length) {
+    m.lamps.set(LAMP.BEACON, p.beaconHex);
+    for (let i = 0; i < 3; i++) if (i < p.indicators.length) m.lamps.set(LAMP.IND + i, p.indicators[i]);
+    if (m.hasPost) {
       const v = p.post ?? null;
       const pats = v === null ? [0, 0] : [SEVEN_SEG[(v >> 4) & 15], SEVEN_SEG[v & 15]];
-      m.postSegs.forEach((mat, i) => mat.color.setHex((pats[Math.floor(i / 7)] >> i % 7) & 1 ? POST_LIT : POST_DARK));
+      for (let i = 0; i < 14; i++) m.lamps.set(LAMP.POST + i, (pats[Math.floor(i / 7)] >> i % 7) & 1 ? POST_LIT : POST_DARK);
     }
-    m.headLamp.color.setHex(p.headlight ? 0xf0f8ff : 0x1e293b);
+    m.lamps.set(LAMP.HEAD, p.headlight ? 0xf0f8ff : 0x1e293b);
     m.beam.visible = p.headlight;
 
     // Drill extends, spins, ring pulses, sparks fly.
@@ -90,6 +90,7 @@ export class RoverAnimator {
     m.drillBit.position.y = 0.3 - this.drill * 0.2;
     if (p.drilling) m.drillBit.rotation.y += dt * 22;
     m.drillGlow.opacity = p.drilling ? 0.6 + Math.sin(t * 20) * 0.3 : 0;
+    m.drillRing.visible = p.drilling; // invisible (opacity 0) otherwise: skip the draw call
     m.drillRing.scale.setScalar(0.85 + Math.sin(t * 18) * 0.2);
     this.updateSparks(p.drilling, dt);
   }
