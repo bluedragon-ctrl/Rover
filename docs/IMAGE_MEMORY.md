@@ -143,8 +143,10 @@ In mode 5 one byte is one pixel: **address = y × 32 + x**, the easiest mode to 
   *drawn* (no camera picture behind it). The Gallery labels each photo.
 * **Credits** come from what the camera saw, never from the bytes: the first `SEND` after a
   `SNAP`, with the same type as the `SNAP`'s mode, earns the photo credits (lit photo 1, +5
-  the first time for a subject type), edited or not. Other `SEND`s earn nothing. Anomaly
-  flags are checked against the real tile, so a painted fossil costs credits.
+  the first time for a subject type), edited or not. An **edited** photo earns +5 more
+  the first time in each camera mode (goal *Darkroom*: deliver your first one). Other
+  `SEND`s earn nothing. Anomaly flags are checked against the real tile, so a painted
+  fossil costs credits.
 * **Speed.** The Mk-I CPU runs 4 cycles per tick. A loop that touches every byte costs
   about 6 cycles per byte: roughly **400 ticks** (a sixth of a sol) for a whole picture,
   three times longer than sending it (128 ticks at full signal). The firmware runs your
@@ -243,6 +245,8 @@ fail:   END 0
 
 The read → change → write loop is the heart of all image processing. The photo arrives
 labelled *edited*, and still earns its credits: it is the first `SEND` after the `SNAP`.
+In daylight it also completes the goal *Darkroom* and earns the first-edit bonus for
+mode 1; try the other camera modes for their bonuses once you have the upgrades.
 **Try:** brighten the photo (each pixel +1, but not above 3: use the recipe of §3, or a
 cleverer byte trick); mirror it left to right.
 

@@ -117,11 +117,15 @@ export class SimulationEngine {
     photosDelivered: 0,
     /** Correct anomaly flags on new anomaly tiles. */
     anomaliesFound: 0,
+    /** M12: lit edited photos delivered completely. */
+    photosEdited: 0,
   };
   /** Anomaly tiles already credited ("x,y"; saved). */
   anomalyTiles: string[] = [];
   /** Subject tile types already delivered in a lit photo (first-of-a-kind bonus, saved). */
   photoSubjects: number[] = [];
+  /** M12: photo types (camera modes) already delivered as a lit edited photo (first-edit bonus, saved). */
+  editedTypes: number[] = [];
   /** Science credits: delivered science + goal rewards. Spent on upgrades. */
   credits = 0;
   /** Ordered upgrades: in flight (landed=false) or waiting on the ground. */
@@ -769,9 +773,19 @@ export class SimulationEngine {
     if (!isPhoto(p.type)) return p.credits;
     if (!p.lit || p.level === Level.DRAWN) return 0;
     this.stats.photosDelivered++;
-    if (this.photoSubjects.includes(p.subject)) return BALANCE.photoCredits;
-    this.photoSubjects.push(p.subject);
-    return BALANCE.photoCredits + BALANCE.photoFirstBonus;
+    let credits = BALANCE.photoCredits;
+    if (!this.photoSubjects.includes(p.subject)) {
+      this.photoSubjects.push(p.subject);
+      credits += BALANCE.photoFirstBonus;
+    }
+    if (p.level === Level.EDITED) {
+      this.stats.photosEdited++;
+      if (!this.editedTypes.includes(p.type)) {
+        this.editedTypes.push(p.type);
+        credits += BALANCE.editFirstBonus;
+      }
+    }
+    return credits;
   }
 
   private updateUnitPhysics(u: Unit): void {

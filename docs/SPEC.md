@@ -188,7 +188,7 @@ each with a credit reward. Checked every 10 ticks; deterministic. Since M9, *Fir
 contact* = mission control receives a first frame the firmware sent (a `LOG` frame or a
 science product; the automatic boot frame does not count) and *Scientist* = 5 science
 products delivered. M9 adds *Photographer* (3 lit photos) and *Anomaly hunter* (one correct anomaly flag,
-§3.8.5).
+§3.8.5). M12 adds *Darkroom* (one lit edited photo, §3.8.7).
 
 ### 3.3.3 Subsystem damage **[M6]**
 
@@ -545,6 +545,10 @@ six worked examples (the templates, word for word, run by the tests):
   subject type; anomaly flags allowed, checked against the real tile). Every other `SEND`
   is *drawn*: no credits, cannot be flagged (owner, 2026-11-13: no rewards for drawn
   pictures for now). Goal *Photographer* counts captured photos.
+* **First-edit bonus** (owner, 2026-11-13: every kind of edit is rewarded the first time):
+  a lit *edited* photo earns `editFirstBonus` = +5 the first time for each photo type
+  (camera mode 1–5), on top of the photo credits. The list of modes already credited is
+  saved (v15). Goal *Darkroom* (reward 15): deliver one lit edited photo.
 * **Storage:** raw products stay descriptors in the recorder and gallery (bytes
   regenerated, as today); edited and drawn products store their bytes (`data`, hex), and
   captured ones keep the noise seed, so the original photo can always be regenerated.

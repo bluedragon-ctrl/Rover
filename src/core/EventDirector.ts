@@ -24,6 +24,7 @@ export const GOALS: GoalDef[] = [
   { id: 'collector', title: 'Collector', description: 'Pick up 2 surface items with the grabber (ACT TOOL_1).', target: 2, reward: 10, progress: (e) => e.stats.itemsCollected },
   { id: 'scientist', title: 'Scientist', description: 'Deliver 5 science products (spectra or photos) over the downlink.', target: 5, reward: 20, progress: (e) => e.stats.scienceDelivered },
   { id: 'photographer', title: 'Photographer', description: 'Deliver 3 lit photos (SNAP dir, then SEND; in daylight or with the headlight aimed at the subject).', target: 3, reward: 15, progress: (e) => e.stats.photosDelivered },
+  { id: 'darkroom', title: 'Darkroom', description: 'Deliver a lit edited photo: SNAP, change bytes with STB, then SEND (see Reference → Image). The first edit in each camera mode earns a bonus.', target: 1, reward: 15, progress: (e) => e.stats.photosEdited },
   { id: 'anomaly_hunter', title: 'Anomaly hunter', description: 'Flag a photo of an anomaly in the gallery (rare cliff walls and samples hide something only a photo shows).', target: 1, reward: 30, progress: (e) => e.stats.anomaliesFound },
   { id: 'field_engineer', title: 'Field engineer', description: 'Repair a system with material from cargo (USE slot SYS_*).', target: 1, reward: 10, progress: (e) => e.stats.repairs },
   { id: 'upgraded', title: 'Upgraded', description: 'Buy an upgrade and pick up its supply crate with the grabber.', target: 1, reward: 5, progress: (e) => e.stats.upgradesInstalled },
