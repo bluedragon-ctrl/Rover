@@ -784,7 +784,6 @@ source line) and the final byte count of each slot.
   errors still lists, with estimated sizes and `??` bytes); clicking a row jumps to its
   line, the cursor's line is highlighted, and so is the admin debugger's next line.
   *Compile* (free) logs the slot's size and address range and the flash total.
-  **[M10 slice 2: in owner review in `preview.html?editor=1`; `?listing=1` shows it in the game.]**
 
 ## 6. Milestones
 

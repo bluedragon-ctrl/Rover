@@ -79,14 +79,13 @@ engine.events.on('GOAL_COMPLETED', (g) => {
 });
 renderReference($('#reference'), engine.registry);
 
-// Code tab: Program / Firmware slots (M10). The listing pane is in review in the preview
-// (preview.html?editor=1); ?listing=1 shows it in the game too.
+// Code tab: Program / Firmware slots and the machine-code listing (M10; ?listing=0 hides it).
 const code = new CodeWorkspace({
   el: $('#code-ws'),
   engine,
   rover: () => rover,
   log: (level, m) => log(level, m),
-  listing: params.get('listing') === '1',
+  listing: params.get('listing') !== '0',
   starterProgram: PROGRAM_FIRST_STEPS,
 });
 

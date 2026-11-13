@@ -21,7 +21,7 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | M8.1 | Radar `SCAN` vs. light-limited operator view; headlight cone; `@HEADING` | ✅ done |
 | Flash bytes | Program size in machine-code bytes instead of lines (SPEC §5.7) | ✅ done; the byte gutter became the M10 listing pane |
 | **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | ✅ slices 1–6 done (link layer, `LOG`, Console tab; recorder, spectra, Gallery tab; dumps, `BRK`, admin-only debugger; `@POST` display; camera + photos; upgrades, camera modes 3–5, fossil anomalies; save v9) |
-| **M10** | **Firmware + program slot (SPEC §3.9)** | 🚧 slice 1 (core, save v10) done; slice 2 (machine code + byte addresses, save v11, Code tab / Console redesign) in review; listing pane in owner preview review |
+| **M10** | **Firmware + program slot (SPEC §3.9)** | 🚧 slice 1 (core, save v10) done; slice 2 (machine code + byte addresses, save v11, Code tab / Console redesign, listing pane) in review |
 | M11 | User interface review (after M10) | planned |
 | M12 | Multiple rovers (after single-rover tuning) | planned |
 
@@ -321,10 +321,11 @@ the Code tab and Console were redesigned rather than extended.
       round-trip over every shipped program, encoding examples, VM, migration, listing).
 - [x] Listing pane (`src/ui/listing.ts` + Code tab): address | hex | source, in sync while
       typing, click a row → line, cursor and debugger line highlighted, per-slot range and
-      totals. Shown in `preview.html?editor=1` (with the Console, on a live engine); in the
-      game only with `?listing=1` until the owner approves. Replaces the byte gutter.
+      totals. Reviewed in `preview.html?editor=1` (with the Console, on a live engine) and
+      approved by the owner; on by default in the game (`?listing=0` hides it). Replaces
+      the byte gutter.
 - [x] Admin debugger follows the Code tab's slot (program context, `@PROG_STATE`, addresses).
-- [ ] Owner review: listing screenshots → enable it in the game by default.
+- [x] Owner review: listing approved (2026-11-13) and enabled in the game by default.
 
 **Decisions taken in slice 2 (owner may veto):**
 1. Optional operands are counted in the opcode byte's top 3 bits (`STEP 1 2` = `34 01 02`):
@@ -448,3 +449,4 @@ window with a fixed dish?
 | 2026-11-13 | `ccr-1e08ca42-e1n32b` (2) | Docs: rare local fauna and flora noted as planned future exploration content (Backlog). |
 | 2026-11-13 | `ccr-d9e2f47d-6jnxk7` | M10 detailed plan with the owner (Mk-I 256 B, two sources, writable `@PROG_STATE`, dumps per slot); slice 1 core: `RUN`/`END`, program context and slices, program upload, Run again, per-slot dumps, default firmware 136 B + 4 programs, save v10. |
 | 2026-11-13 | `m10-slice2` | M10 slice 2: machine code (opcode/port tables, encoder/decoder, byte-address IPs, save v11), Code tab redesign (Program/Firmware slots, Upload program, Compile, flash bar, no-`RUN` warning), Console redesign (slot switch, Run again, merged tags, program dumps), Reference machine-code columns, listing pane in preview review; new rovers ship the default firmware. |
+| 2026-11-13 | `m10-slice2` (2) | Listing pane approved by the owner; enabled in the game by default (`?listing=0` hides it). |

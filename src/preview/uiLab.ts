@@ -1,7 +1,7 @@
 /**
  * M10 slice 2 UI preview (preview.html?editor=1): the redesigned Code tab with the
  * machine-code listing pane (SPEC §5.7.1) and the Console, on a live headless engine,
- * at the game's panel widths. For review before the listing goes into the game.
+ * at the game's panel widths. Kept as the review page for later Code tab / Console changes.
  * Options: &slot=firmware, &program=<template name>, &width=<px>.
  */
 import '../style.css';
