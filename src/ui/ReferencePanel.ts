@@ -41,7 +41,7 @@ export function renderReference(el: HTMLElement, registry: WorldRegistry): void 
     Constants cost what their value costs (<code>NORTH</code> 1 B, <code>IRON_ORE</code> 1 B).
     Labels, comments, <code>ALIAS r0 name</code> and <code>CONST NAME 5</code> themselves cost nothing.
     Example: <code>JLE @BAT 20 home</code> = ${E.opcode}+${E.port}+${E.imm8}+${E.label} = ${E.opcode + E.port + E.imm8 + E.label} B.</p>
-    <p><b>Machine code</b> (<b>Compile</b> shows the listing): opcode byte = instruction number (column 2 below), plus 0x20 per
+    <p><b>Machine code</b> (the listing beside the editor shows it while you type): opcode byte = instruction number (column 2 below), plus 0x20 per
     optional operand given (<code>STEP 1 2</code> = <code>34 01 02</code>). Operand bytes: <code>00</code>–<code>0F</code> number 0–15,
     <code>10</code>–<code>17</code> register r0–r7, <code>40</code>–<code>7F</code> port (column 2 of Ports), <code>18</code> / <code>19</code> / <code>1A</code>
     followed by an 8 / 16 / 32-bit number; a label is its 2-byte address. Each slot starts at address 0x000:

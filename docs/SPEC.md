@@ -560,7 +560,7 @@ running uplinked command sequences, or a small OS starting user programs:
 * **Code tab**: a **Program** (default) / **Firmware** (advanced) switch, each slot with its
   own editor and templates (programs: First steps, Explorer, Prospector, Fetch; firmware:
   Default firmware and the pre-M10 all-in-one examples), *Upload program* or *Upload
-  firmware & reboot*, *Compile*, a flash bar `firmware 136 + program 46 = 182 / 256 B` (the
+  firmware & reboot*, a flash bar `firmware 148 + program 46 = 194 / 256 B` (the
   edited slot counts its draft, the other slot what is on the rover), and a warning when
   the firmware has no `RUN`. New rovers ship the default firmware and no program (the
   Program slot shows *First steps* as an unsent draft).
@@ -755,9 +755,9 @@ first line that no longer fits.
 
 #### 5.7.1 Machine code and the listing **[M10]**
 
-Decided with the owner (2026-11-13): the compiler emits real bytes, and the player can
-**Compile** (free, on the ground) to see an assembler listing (address, hex bytes,
-source line) and the final byte count of each slot.
+Decided with the owner (2026-11-13): the compiler emits real bytes, and the player sees
+an assembler listing (address, hex bytes, source line) and the final byte count of each
+slot, assembled on the ground (free) while typing.
 
 * **Opcode byte** `kkknnnnn`: `nnnnn` is the instruction from a fixed table (`MOV` 01,
   `PUSH` 02, … `BRK` 1A, `RUN` 1B, `END` 1C, in §5.4 order; the Reference tab lists them);
@@ -786,7 +786,8 @@ source line) and the final byte count of each slot.
   instructions continue on the next row) | source. Kept in sync while typing (a slot with
   errors still lists, with estimated sizes and `??` bytes); clicking a row jumps to its
   line, the cursor's line is highlighted, and so is the admin debugger's next line.
-  *Compile* (free) logs the slot's size and address range and the flash total.
+  There is no separate *Compile* button (removed 2026-11-13): the listing and the flash
+  bar already show the result live.
 
 ## 6. Milestones
 

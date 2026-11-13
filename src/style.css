@@ -132,7 +132,6 @@ input[type=checkbox] { width: auto; }
 .code-ws.slot-firmware .cw-editors { border-color: #6f8cff66; }
 .cw-editor { flex: 1; min-width: 0; } .cw-editor[hidden] { display: none; } .cw-editor .cm-editor { height: 100%; }
 .cw-listing { flex: 1 1 40%; min-height: 90px; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 4px; font-family: var(--mono); font-size: 11px; transition: box-shadow 0.3s; }
-.cw-listing.flash { box-shadow: 0 0 0 1px var(--accent); }
 .lst-head { display: flex; justify-content: space-between; gap: 8px; padding: 3px 8px; border-bottom: 1px solid var(--line); color: var(--dim); }
 .lst-head b { color: var(--accent); font-weight: 600; } .lst-head .bad { color: var(--bad); }
 .lst-cols, .lst-row { display: grid; grid-template-columns: 10ch 17ch minmax(0, 1fr); gap: 8px; padding: 0 8px; white-space: pre; }
