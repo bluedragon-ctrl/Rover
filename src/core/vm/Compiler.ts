@@ -3,33 +3,20 @@ import { MAX_LOG_TAG, SYSTEM_TAG } from '../downlink';
 import { getPort } from '../ports';
 import { Alert, Dir, LightColor, ProgState, Status, SystemId } from '../types';
 
-export type Op =
-  | 'MOV' | 'PUSH' | 'POP'
-  | 'ADD' | 'SUB' | 'MUL' | 'DIV' | 'MOD'
-  | 'JMP' | 'JEQ' | 'JNE' | 'JLT' | 'JGT' | 'JLE' | 'JGE'
-  | 'CALL' | 'RET'
-  | 'SLEEP' | 'SCAN' | 'STEP' | 'ACT' | 'PEEK' | 'USE' | 'SNAP'
-  | 'LOG' | 'BRK'
-  | 'RUN' | 'END';
+import { encodeInstr, immBytes, instrBytes, MAX_OPTIONAL, OPCODES, SIGNATURES, type Instr, type Op, type Operand } from './isa';
 
-export type Operand =
-  | { k: 'imm'; v: number }
-  | { k: 'reg'; i: number }
-  | { k: 'port'; name: string }
-  | { k: 'label'; target: number; name: string };
-
-export interface Instr {
-  op: Op;
-  args: Operand[];
-  /** 1-based source line. */
-  line: number;
-}
+export { HARDWARE_OPS, immBytes, instrBytes, OPCODES, operandBytes, type Instr, type Op, type Operand } from './isa';
 
 export interface Program {
   instrs: Instr[];
+  /** Label name → byte address. */
   labels: Record<string, number>;
-  /** Map from source line (1-based) to instruction index, for breakpoints/UI. */
+  /** Source line (1-based) → byte address of its instruction, for breakpoints/UI. */
   lineToIp: Record<number, number>;
+  /** Machine code of the slot (SPEC §5.7.1), addressed from 0x000. */
+  code: number[];
+  /** Byte address → index into `instrs` (instruction starts only). */
+  indexAt: Map<number, number>;
 }
 
 export interface CompileError {
@@ -50,74 +37,6 @@ export interface CompileResult {
    */
   logTags: Record<number, { names: string[]; lines: number[] }>;
 }
-
-/** Encoded size of an integer immediate. */
-export function immBytes(v: number): number {
-  if (v >= 0 && v <= ENCODING.shortImmMax) return ENCODING.shortImm;
-  if (v >= -128 && v <= 127) return ENCODING.imm8;
-  if (v >= -32768 && v <= 32767) return ENCODING.imm16;
-  return ENCODING.imm32;
-}
-
-export function operandBytes(o: Operand): number {
-  switch (o.k) {
-    case 'reg':
-      return ENCODING.register;
-    case 'port':
-      return ENCODING.port;
-    case 'label':
-      return ENCODING.label;
-    case 'imm':
-      return immBytes(o.v);
-  }
-}
-
-export function instrBytes(i: Instr): number {
-  return i.args.reduce<number>((n, o) => n + operandBytes(o), ENCODING.opcode);
-}
-
-/**
- * Operand kinds:
- *  v  readable value (reg, port, imm, const)
- *  d  destination (reg or writable port)
- *  m  read-modify-write destination (reg or read+write port)
- *  l  label
- *  k  compile-time constant (number or CONST), no register/port
- *  suffix '?' optional, '*' variadic
- */
-const SIGNATURES: Record<Op, string[]> = {
-  MOV: ['d', 'v'],
-  PUSH: ['v'],
-  POP: ['d'],
-  ADD: ['m', 'v'],
-  SUB: ['m', 'v'],
-  MUL: ['m', 'v'],
-  DIV: ['m', 'v'],
-  MOD: ['m', 'v'],
-  JMP: ['l'],
-  JEQ: ['v', 'v', 'l'],
-  JNE: ['v', 'v', 'l'],
-  JLT: ['v', 'v', 'l'],
-  JGT: ['v', 'v', 'l'],
-  JLE: ['v', 'v', 'l'],
-  JGE: ['v', 'v', 'l'],
-  CALL: ['l', 'v*'],
-  RET: [],
-  SLEEP: ['v'],
-  SCAN: ['v', 'd', 'd'],
-  STEP: ['v', 'v?'],
-  ACT: ['v', 'v?'],
-  PEEK: ['v', 'd'],
-  USE: ['v', 'v?'],
-  SNAP: ['v', 'v?'],
-  LOG: ['k', 'v?'],
-  BRK: [],
-  RUN: ['v'],
-  END: ['v?'],
-};
-
-export const OPCODES = Object.keys(SIGNATURES) as Op[];
-export const HARDWARE_OPS: ReadonlySet<Op> = new Set(['SLEEP', 'SCAN', 'STEP', 'ACT', 'USE', 'SNAP', 'RUN']);
 
 /** Code slot (M10, SPEC §3.9): the firmware runs the program inside `RUN` time slices. */
 export type Slot = 'firmware' | 'program';
@@ -240,12 +159,6 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
   }
 
 
-  // Pass 2: instructions.
-  const instrs: Instr[] = [];
-  const lineToIp: Record<number, number> = {};
-  const lineBytes: Record<number, number> = {};
-  const logTags: CompileResult['logTags'] = {};
-
   /** Size of an operand token without reporting errors (so lines with errors still get a size). */
   const tokenBytes = (tok: string, kind: string): number => {
     const up = tok.toUpperCase();
@@ -257,6 +170,27 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
     if (n !== undefined) return immBytes(n);
     return up in labels ? ENCODING.label : ENCODING.imm8;
   };
+
+  const lineSize = (l: RawLine): number => {
+    const sigOf = SIGNATURES[l.tokens[0].toUpperCase() as Op] as string[] | undefined;
+    return l.tokens.slice(1).reduce<number>((n, tok, i) => n + tokenBytes(tok, (sigOf?.[Math.min(i, sigOf.length - 1)] ?? 'v')[0]), ENCODING.opcode);
+  };
+
+  // Labels become byte addresses (SPEC §5.7.1): every slot is addressed from 0x000.
+  const addrOf: number[] = [];
+  let addr = 0;
+  for (const l of code) {
+    addrOf.push(addr);
+    addr += lineSize(l);
+  }
+  addrOf.push(addr);
+  for (const name of Object.keys(labels)) labels[name] = addrOf[labels[name]];
+
+  // Pass 2: instructions.
+  const instrs: Instr[] = [];
+  const lineToIp: Record<number, number> = {};
+  const lineBytes: Record<number, number> = {};
+  const logTags: CompileResult['logTags'] = {};
 
   const parseOperand = (tok: string, kind: string, line: number): Operand | null => {
     const up = tok.toUpperCase();
@@ -311,12 +245,9 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
     return null;
   };
 
-  for (const l of code) {
+  for (const [ci, l] of code.entries()) {
     const opTok = l.tokens[0].toUpperCase();
-    const sigOf = SIGNATURES[opTok as Op] as string[] | undefined;
-    lineBytes[l.line] = l.tokens
-      .slice(1)
-      .reduce<number>((n, tok, i) => n + tokenBytes(tok, (sigOf?.[Math.min(i, sigOf.length - 1)] ?? 'v')[0]), ENCODING.opcode);
+    lineBytes[l.line] = lineSize(l);
     if (!(opTok in SIGNATURES)) {
       err(l.line, `Unknown instruction '${l.tokens[0]}'`);
       continue;
@@ -353,6 +284,9 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
     if (op === 'CALL' && args.length - 1 > chassis.dataStack) {
       err(l.line, `CALL passes ${args.length - 1} args but the data stack holds ${chassis.dataStack}`);
       ok = false;
+    } else if (op === 'CALL' && args.length - 1 > MAX_OPTIONAL) {
+      err(l.line, `CALL passes at most ${MAX_OPTIONAL} args (the opcode byte counts them)`);
+      ok = false;
     }
     if (op === 'LOG' && ok) {
       const tag = (args[0] as { v: number }).v;
@@ -370,8 +304,9 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
       }
     }
     if (!ok) continue;
-    lineToIp[l.line] = instrs.length;
-    instrs.push({ op, args, line: l.line });
+    const at = addrOf[ci];
+    lineToIp[l.line] = at;
+    instrs.push({ op, args, line: l.line, addr: at, size: instrBytes({ args }) });
   }
 
   let flashUsed = 0;
@@ -392,8 +327,20 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
     );
   }
 
+  let program: Program | null = null;
+  if (!errors.length) {
+    const bytes: number[] = [];
+    const indexAt = new Map<number, number>();
+    instrs.forEach((ins, i) => {
+      if (ins.addr !== bytes.length) throw new Error(`Compiler: line ${ins.line} sized ${lineBytes[ins.line]} B but encodes differently`);
+      indexAt.set(ins.addr, i);
+      bytes.push(...encodeInstr(ins));
+    });
+    program = { instrs, labels, lineToIp, code: bytes, indexAt };
+  }
+
   return {
-    program: errors.length ? null : { instrs, labels, lineToIp },
+    program,
     errors,
     flashUsed,
     lineBytes,

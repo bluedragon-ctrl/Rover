@@ -3,6 +3,7 @@ import type { SimulationEngine } from '../core/SimulationEngine';
 import { CpuState, Dir, Status } from '../core/types';
 import type { Unit } from '../core/Unit';
 import { TOOLS } from '../core/tools';
+import { formatAddr } from '../core/vm/isa';
 
 const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!);
 
@@ -22,7 +23,7 @@ export class DebuggerPanel {
       .join('');
     const stack = (arr: number[], size: number, fmt: (v: number) => string) =>
       Array.from({ length: size }, (_, i) => `<span class="slot ${i < arr.length ? 'full' : ''}">${i < arr.length ? fmt(arr[i]) : '·'}</span>`).join('');
-    const ipLine = (ip: number) => `L${prog?.instrs[ip]?.line ?? (prog?.instrs[0]?.line ?? '?')}`;
+    const ipLine = (ip: number) => `${formatAddr(ip)} L${vm.lineAt(ip) || '?'}`;
     const ctx = this.engine.portCtx;
     const ports = PORTS.map((p) => {
       const v = p.read ? p.read(u, ctx) : '—';

@@ -237,7 +237,7 @@ describe('uploads and commands (SPEC §3.9.3)', () => {
     expect(e.command(u, 'DUMP_STACKS', 'program')).toBeNull();
     expect(e.command(u, 'DUMP', 'firmware')).toBeNull();
     const [cpu, stacks, fw] = u.link.sys.map((f) => decodeDump(f.bytes));
-    expect(cpu).toMatchObject({ kind: 1, slot: 'program', ip: 3, state: 'PROG_HALTED', regs: [42, 0, 0, 0], dsDepth: 1 });
+    expect(cpu).toMatchObject({ kind: 1, slot: 'program', ip: 7, state: 'PROG_HALTED', regs: [42, 0, 0, 0], dsDepth: 1 }); // byte address after the BRK (4 + 2 + 1)
     expect(u.link.sys[0].bytes[1]).toBe(3);
     expect(stacks).toMatchObject({ kind: 2, slot: 'program', dataStack: [6] });
     expect(fw).toMatchObject({ kind: 1, slot: 'firmware' });

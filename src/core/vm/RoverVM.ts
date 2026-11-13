@@ -89,22 +89,35 @@ export class RoverVM {
     this.watchdog = watchdogTicks;
   }
 
-  /** Index of the instruction that will run next (after wrap-around). */
+  /** Byte address of the instruction that will run next (after wrap-around). */
   get nextIp(): number {
-    const n = this.program?.instrs.length ?? 0;
-    return n === 0 || this.ip >= n ? 0 : this.ip;
+    const n = this.program?.code.length ?? 0;
+    return n === 0 || this.ip >= n || this.ip < 0 ? 0 : this.ip;
+  }
+
+  /** Source line of the instruction at byte address `addr` (0 if none starts there). */
+  lineAt(addr: number): number {
+    const p = this.program;
+    const k = p?.indexAt.get(addr);
+    return k === undefined ? 0 : p!.instrs[k].line;
   }
 
   get nextLine(): number {
-    return this.program?.instrs[this.nextIp]?.line ?? 0;
+    return this.lineAt(this.nextIp);
   }
 
   /** Execute exactly one instruction. Caller guarantees state === RUNNING. */
   step(host: VmHost, watchdogTicks: number): StepResult {
     const prog = this.program;
     if (!prog || prog.instrs.length === 0) return 'endTick';
-    if (this.ip >= prog.instrs.length || this.ip < 0) this.ip = 0; // implicit main loop
-    const ins = prog.instrs[this.ip];
+    if (this.ip >= prog.code.length || this.ip < 0) this.ip = 0; // implicit main loop
+    const k = prog.indexAt.get(this.ip);
+    if (k === undefined) {
+      // Only reachable through a corrupted return address: no instruction starts here.
+      this.fault(`No instruction at address 0x${this.ip.toString(16)}`, watchdogTicks);
+      return 'endTick';
+    }
+    const ins = prog.instrs[k];
     this.lastLine = ins.line;
     this.instructionsExecuted++;
     const a = ins.args;
@@ -132,7 +145,7 @@ export class RoverVM {
       return 'endTick';
     };
 
-    let next = this.ip + 1;
+    let next = ins.addr + ins.size;
     switch (ins.op) {
       case 'MOV':
         put(a[0], val(a[1]));
@@ -197,7 +210,7 @@ export class RoverVM {
         if (this.callStack.length >= this.chassis.callStack) return stackFault('Call stack overflow (CALL)');
         if (this.dataStack.length + args.length > this.chassis.dataStack) return stackFault('Data stack overflow (CALL args)');
         this.dataStack.push(...args);
-        this.callStack.push(this.ip + 1);
+        this.callStack.push(next);
         jump(a[0]);
         return 'continue';
       }
