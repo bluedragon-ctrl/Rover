@@ -1,5 +1,5 @@
 import { PORT_CODES, PORTS } from '../core/ports';
-import { HARDWARE_OPS, OPCODE_NUMBERS, type Op } from '../core/vm/isa';
+import { HARDWARE_OPS, opcodeHex, type Op } from '../core/vm/isa';
 import { formatSig, OPCODES } from '../core/vm/Compiler';
 import type { TileDef, WorldRegistry } from '../core/WorldRegistry';
 import { BALANCE, CHASSIS_MK1, ENCODING as E } from '../core/balance';
@@ -15,6 +15,8 @@ const h2 = (n: number) => n.toString(16).toUpperCase().padStart(2, '0');
 const NOTES: Record<string, string> = {
   MOV: 'copy value', PUSH: 'push to data stack', POP: 'pop from data stack',
   ADD: 'dst += v', SUB: 'dst -= v', MUL: 'dst *= v', DIV: 'dst /= v (truncates)', MOD: 'dst = dst mod v (never negative)',
+  AND: 'dst = dst AND v, bit by bit (AND 3 keeps the lowest two bits)', OR: 'dst = dst OR v, bit by bit (sets the bits of v)',
+  SHL: 'shift dst left by v bits (SHL 2 = × 4); v clamped to 0–32', SHR: 'shift dst right by v bits, zeros come in from the left (SHR 2 = / 4 for values ≥ 0); v clamped to 0–32',
   JMP: 'jump', JEQ: 'jump if a == b', JNE: 'jump if a != b', JLT: 'jump if a < b', JGT: 'jump if a > b', JLE: 'jump if a <= b', JGE: 'jump if a >= b',
   CALL: 'push args, call', RET: 'return',
   SLEEP: 'wait N ticks', SCAN: 'ray: dest1 = tile type, dest2 = distance', STEP: 'drive [tiles] in dir', ACT: 'fire tool in hardpoint (see Tools)', PEEK: 'dest = item ID in cargo slot', USE: 'repair [system] (default SYS_HULL) by consuming the material in cargo slot (see Tools)',
@@ -29,6 +31,7 @@ const NOTES: Record<string, string> = {
 const OP_GROUPS: [string, Op[]][] = [
   ['Data', ['MOV', 'PUSH', 'POP']],
   ['Arithmetic', ['ADD', 'SUB', 'MUL', 'DIV', 'MOD']],
+  ['Bits (2-byte opcodes)', ['AND', 'OR', 'SHL', 'SHR']],
   ['Flow control', ['JMP', 'JEQ', 'JNE', 'JLT', 'JGT', 'JLE', 'JGE', 'CALL', 'RET']],
   ['Hardware (end the tick, write @STATUS)', ['SLEEP', 'SCAN', 'STEP', 'ACT', 'PEEK', 'USE', 'SNAP']],
   ['Program, log and debug', ['RUN', 'END', 'LOG', 'BRK']],
@@ -110,7 +113,9 @@ function basicsHtml(): string {
     Example: <code>JLE @BAT 20 home</code> = ${E.opcode}+${E.port}+${E.imm8}+${E.label} = ${E.opcode + E.port + E.imm8 + E.label} B.</p>
     <h4>Machine code</h4>
     <p>The listing beside the editor shows it while you type. Opcode byte = instruction number (hex column in Instructions), plus 0x20 per
-    optional operand given (<code>STEP 1 2</code> = <code>34 01 02</code>). Operand bytes: <code>00</code>–<code>0F</code> number 0–15,
+    optional operand given (<code>STEP 1 2</code> = <code>34 01 02</code>). The one-byte numbers ran out, so newer instructions
+    (the bit instructions) have a 2-byte opcode: the prefix <code>1F</code>, then their own number (<code>AND r0 3</code> =
+    <code>1F 01 10 03</code>), like the prefix bytes of real CPUs. One byte longer, just as fast. Operand bytes: <code>00</code>–<code>0F</code> number 0–15,
     <code>10</code>–<code>17</code> register r0–r7, <code>40</code>–<code>7F</code> port (hex column in Ports), <code>18</code> / <code>19</code> / <code>1A</code>
     followed by an 8 / 16 / 32-bit number; a label is its 2-byte address. Each slot starts at address 0x000:
     <code>JLE @BAT 20 home</code> with <code>home</code> at 0x02A = <code>0E 40 18 14 00 2A</code>.</p>
@@ -130,7 +135,7 @@ function basicsHtml(): string {
 function instructionsHtml(): string {
   return grouped(OPCODES as Op[], (o) => o, OP_GROUPS)
     .map(([title, ops]) => `<h4>${title}</h4><table>${ops
-      .map((op) => `<tr><td><code>${formatSig(op)}</code></td><td class="dim"><code>${h2(OPCODE_NUMBERS[op])}</code></td><td>${NOTES[op] ?? ''}${HARDWARE_OPS.has(op) && !title.startsWith('Hardware') ? ' <span class="dim">(hardware)</span>' : ''}</td></tr>`)
+      .map((op) => `<tr><td><code>${formatSig(op)}</code></td><td class="dim"><code>${opcodeHex(op)}</code></td><td>${NOTES[op] ?? ''}${HARDWARE_OPS.has(op) && !title.startsWith('Hardware') ? ' <span class="dim">(hardware)</span>' : ''}</td></tr>`)
       .join('')}</table>`)
     .join('');
 }

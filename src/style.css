@@ -73,6 +73,7 @@ main { display: flex; height: calc(100% - 44px); }
 #reference td:nth-child(2).dim { width: 28px; }
 .ref-pane[data-ref=basics] td:first-child { width: 90px; }
 .ref-pane[data-ref=instr] td:first-child { width: 42%; }
+#reference .ref-pane[data-ref=instr] td:nth-child(2).dim { width: 44px; white-space: nowrap; } /* extended opcodes: "1F 01" */
 .ref-pane[data-ref=ports] td:first-child { width: 128px; } .ref-pane[data-ref=ports] td:nth-child(3) { width: 26px; }
 .ref-pane[data-ref=tools] td:first-child { width: 150px; }
 .ref-pane[data-ref=consts] td:first-child { width: 108px; } .ref-pane[data-ref=consts] td:nth-child(3) { width: 96px; }

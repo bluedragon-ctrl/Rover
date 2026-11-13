@@ -3,7 +3,7 @@ import { MAX_LOG_TAG, SYSTEM_TAG } from '../downlink';
 import { getPort } from '../ports';
 import { Alert, Dir, LightColor, ProgState, Status, SystemId } from '../types';
 
-import { encodeInstr, immBytes, instrBytes, MAX_OPTIONAL, OPCODES, SIGNATURES, type Instr, type Op, type Operand } from './isa';
+import { encodeInstr, immBytes, instrBytes, MAX_OPTIONAL, OPCODES, opcodeSize, SIGNATURES, type Instr, type Op, type Operand } from './isa';
 
 export { HARDWARE_OPS, immBytes, instrBytes, OPCODES, operandBytes, type Instr, type Op, type Operand } from './isa';
 
@@ -178,8 +178,9 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
   };
 
   const lineSize = (l: RawLine): number => {
-    const sigOf = SIGNATURES[l.tokens[0].toUpperCase() as Op] as string[] | undefined;
-    return l.tokens.slice(1).reduce<number>((n, tok, i) => n + tokenBytes(tok, (sigOf?.[Math.min(i, sigOf.length - 1)] ?? 'v')[0]), ENCODING.opcode);
+    const op = l.tokens[0].toUpperCase() as Op;
+    const sigOf = SIGNATURES[op] as string[] | undefined;
+    return l.tokens.slice(1).reduce<number>((n, tok, i) => n + tokenBytes(tok, (sigOf?.[Math.min(i, sigOf.length - 1)] ?? 'v')[0]), sigOf ? opcodeSize(op) : ENCODING.opcode);
   };
 
   // Labels become byte addresses (SPEC §5.7.1): every slot is addressed from 0x000.
@@ -312,7 +313,7 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
     if (!ok) continue;
     const at = addrOf[ci];
     lineToIp[l.line] = at;
-    instrs.push({ op, args, line: l.line, addr: at, size: instrBytes({ args }) });
+    instrs.push({ op, args, line: l.line, addr: at, size: instrBytes({ op, args }) });
   }
 
   let flashUsed = 0;

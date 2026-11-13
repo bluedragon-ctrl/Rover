@@ -39,6 +39,41 @@ describe('RoverVM', () => {
     expect(u.vm.status).toBe(Status.ERR_INVALID);
   });
 
+  it('AND / OR work bit by bit on 32-bit values', () => {
+    const { eng, u } = setup('MOV r0 0xB6\nAND r0 0x0F\nMOV r1 0x50\nOR r1 3\nMOV r2 -1\nAND r2 0x7FFFFFFF\nSLEEP 100');
+    eng.advanceTick();
+    eng.advanceTick();
+    expect(u.vm.regs[0]).toBe(0x06);
+    expect(u.vm.regs[1]).toBe(0x53);
+    expect(u.vm.regs[2]).toBe(0x7fffffff);
+  });
+
+  it('SHL / SHR shift with counts clamped to 0–32; SHR is logical; no @STATUS', () => {
+    const run = (src: string) => {
+      const { eng, u } = setup(`MOV @POST 0\n${src}\nSLEEP 100`);
+      for (let i = 0; i < 4; i++) eng.advanceTick();
+      return u.vm;
+    };
+    expect(run('MOV r0 3\nSHL r0 6').regs[0]).toBe(192);
+    expect(run('MOV r0 0xC0\nSHR r0 6').regs[0]).toBe(3);
+    expect(run('MOV r0 -8\nSHR r0 1').regs[0]).toBe(0x7ffffffc); // zeros from the left
+    expect(run('MOV r0 1\nSHL r0 31').regs[0]).toBe(-2147483648);
+    expect(run('MOV r0 1\nSHL r0 32').regs[0]).toBe(0); // not JS's count mod 32
+    expect(run('MOV r0 -1\nSHR r0 40').regs[0]).toBe(0);
+    expect(run('MOV r0 5\nSHL r0 -3').regs[0]).toBe(5); // negative count: shift by 0
+    const vm = run('MOV r0 1\nMOV r1 2\nSHL r0 r1');
+    expect(vm.regs[0]).toBe(4);
+    expect(vm.status).toBe(Status.OK);
+  });
+
+  it('extracts and replaces a 2-bit pixel with SHR / AND / SHL / OR', () => {
+    // byte 0b11_01_10_00, pixel 1 (bits 5–4) = 1 → set to 2
+    const { eng, u } = setup(['MOV r0 0xD8', 'MOV r1 r0', 'SHR r1 4', 'AND r1 3', 'MOV r2 3', 'SHL r2 4', 'MOV r3 255', 'SUB r3 r2', 'AND r0 r3', 'MOV r2 2', 'SHL r2 4', 'OR r0 r2', 'SLEEP 100'].join('\n'));
+    for (let i = 0; i < 4; i++) eng.advanceTick();
+    expect(u.vm.regs[1]).toBe(1);
+    expect(u.vm.regs[0]).toBe(0xe8);
+  });
+
   it('handles conditional jumps', () => {
     const { eng, u } = setup('top: JGE r0 3 done\nADD r0 1\nJMP top\ndone: MOV r1 r0\nSLEEP 1000');
     for (let i = 0; i < 5; i++) eng.advanceTick();
