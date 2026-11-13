@@ -50,7 +50,7 @@ export const PORTS: PortDef[] = [
   },
   { name: 'CARGO_FREE', description: 'Number of empty cargo slots', read: (u) => u.cargo.filter((c) => c === 0).length },
   { name: 'SCIENCE_READY', description: 'Science products in the recorder waiting for the downlink', read: (u) => u.link.products.length },
-  { name: 'REC_FREE', description: 'Free bytes in the science recorder (a spectrum needs 18)', read: (u) => u.link.recFree(u.chassis.recorderBytes) },
+  { name: 'REC_FREE', description: 'Free bytes in the science recorder (a spectrum needs 18, a Mk-I photo 258)', read: (u) => u.link.recFree(u.chassis.recorderBytes) },
   { name: 'ALERT', description: 'Announced/active world event: ALERT_NONE, ALERT_ECLIPSE, ALERT_SQUALL', read: (_u, c) => c.alert().type },
   { name: 'ALERT_ETA', description: 'Ticks until the alerted event starts (0 = active or none)', read: (_u, c) => c.alert().eta },
   { name: 'SEISMIC_TYPE', description: 'Ore found by the last seismic scan (TOOL_3), 0 = none', read: (u) => u.seismicType },

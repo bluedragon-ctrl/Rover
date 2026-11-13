@@ -3,8 +3,9 @@ import { DIR_VEC, Layer, Status, SystemId } from './types';
 import type { Unit } from './Unit';
 import { productFrameBytes, ProductType } from './downlink';
 import { T } from './WorldRegistry';
+import { BALANCE } from './balance';
 
-export type ToolId = 'DRILL' | 'GRABBER' | 'SPECTROMETER' | 'SEISMIC' | 'USE_ITEM';
+export type ToolId = 'DRILL' | 'GRABBER' | 'SPECTROMETER' | 'SEISMIC' | 'USE_ITEM' | 'CAMERA';
 
 /**
  * Declarative tool table. `ACT TOOL_n arg` looks up the tool mounted in hardpoint n;
@@ -23,6 +24,8 @@ export interface ToolDef {
   description: string;
   check(e: SimulationEngine, u: Unit, arg: number, arg2?: number): Status;
   complete(e: SimulationEngine, u: Unit, arg: number, arg2?: number): Status;
+  /** Directional tools turn the rover to face `dir`, unless this is set (mast camera). */
+  keepsHeading?: boolean;
   /** World tile the tool acts on (for FX), if any. */
   target?(u: Unit, arg: number): [number, number] | null;
 }
@@ -131,6 +134,29 @@ export const TOOLS: Record<ToolId, ToolDef> = {
           break;
         }
       }
+      return Status.OK;
+    },
+  },
+  CAMERA: {
+    id: 'CAMERA',
+    name: 'Mast camera',
+    arg: 'dir',
+    ticks: BALANCE.snapTicks,
+    energy: BALANCE.snapEnergy,
+    keepsHeading: true,
+    description:
+      'SNAP <dir> [mode=1] photographs the first obstacle, item or rover within 2 tiles in <dir> (else the ground in front) into the science recorder. Needs @SUN_LIGHT ≥ 20 or the headlight aimed that way (@HEADING = dir), else the photo is dark and worth nothing. Mk-I modes: 1 grey, 2 dithered (258 B each).',
+    target: (u, d) => (validDir(d) ? adjacent(u, d) : null),
+    check(_e, u, dir, mode = 1) {
+      if (!validDir(dir) || !u.chassis.cameraModes.includes(mode)) return Status.ERR_INVALID;
+      return u.link.recFree(u.chassis.recorderBytes) < productFrameBytes(mode) ? Status.ERR_FULL : Status.OK;
+    },
+    complete(e, u, dir, mode = 1) {
+      const st = this.check(e, u, dir, mode);
+      if (st !== Status.OK) return st;
+      const shot = e.cameraSubject(u, dir);
+      e.recordProduct(u, { type: mode, subject: shot.subject, x: u.x, y: u.y, sx: shot.x, sy: shot.y, lit: e.photoLit(u, dir), credits: 0 });
+      e.stats.photosTaken++;
       return Status.OK;
     },
   },

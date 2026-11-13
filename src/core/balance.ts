@@ -47,6 +47,14 @@ export const BALANCE = {
   linkMinSignal: 20, // nothing is sent below this
   linkEnergyPerTick: 2, // per tick in which at least one byte is sent
 
+  // Camera (docs/SPEC.md §3.8.5): SNAP dir [mode]
+  snapTicks: 10,
+  snapEnergy: 200,
+  snapReach: 2, // subject: first obstacle / item / rover within this many tiles, else the ground in front
+  snapMinSunLight: 20, // @SUN_LIGHT needed for a lit photo (or the headlight aimed at the subject)
+  photoCredits: 1, // lit photo
+  photoFirstBonus: 5, // first lit photo of a subject type
+
   // Storyteller (docs/SPEC.md §3.5)
   eventEarliestTick: 1500, // grace period for new worlds
   eclipseRampTicks: 20, // per-event chances, lengths, damage: src/core/events.ts
@@ -89,6 +97,8 @@ export interface ChassisDef {
   logFifoBytes: number;
   /** Science recorder size in bytes (§3.8.5). */
   recorderBytes: number;
+  /** Camera modes `SNAP dir mode` accepts (= photo product types, §3.8.5). */
+  cameraModes: number[];
   sensorRange: number;
   cargoSlots: number;
   /** Tool mounted in each hardpoint TOOL_0..TOOL_3 (null = empty). */
@@ -110,6 +120,7 @@ export const CHASSIS_MK1: ChassisDef = {
   cyclesPerTick: 4,
   logFifoBytes: 32,
   recorderBytes: 1024,
+  cameraModes: [1, 2],
   sensorRange: 6,
   cargoSlots: 4,
   tools: ['DRILL', 'GRABBER', 'SPECTROMETER', null],
@@ -120,5 +131,5 @@ export const CHASSIS_MK1: ChassisDef = {
 
 /** Per-unit mutable copy (upgrades modify it in place, so the VM's reference stays valid). */
 export function cloneChassis(c: ChassisDef): ChassisDef {
-  return { ...c, tools: [...c.tools] };
+  return { ...c, tools: [...c.tools], cameraModes: [...c.cameraModes] };
 }

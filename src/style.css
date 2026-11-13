@@ -70,6 +70,8 @@ main { display: flex; height: calc(100% - 44px); }
 .product b span { color: #ffd23a; font-weight: 400; font-family: var(--mono); font-size: 11px; text-transform: none; }
 .product .hex { font-family: var(--mono); color: #5d7a9a; word-break: break-all; }
 .product svg.spectrum { display: block; margin: 4px 0; }
+.product img.photo { display: block; margin: 4px 0; image-rendering: pixelated; border: 1px solid var(--line); }
+.product .warn { color: #ff8a3a; }
 .product svg.spectrum text { fill: #5d7a9a; font: 8px var(--mono); }
 #compass { position: absolute; top: 8px; right: 8px; pointer-events: auto; }
 select { background: #131a26; color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; font: inherit; }

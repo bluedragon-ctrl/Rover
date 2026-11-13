@@ -4,6 +4,7 @@
  * only when mission control decodes a product. No Math.random, no float trig.
  */
 import { productFrameBytes, ProductType, scienceHeader, type ProductDesc } from './downlink';
+import { photoPayload } from './photos';
 import { hash3 } from './rng';
 import { T } from './WorldRegistry';
 
@@ -44,6 +45,12 @@ export function productPayload(seed: number, d: ProductDesc): number[] {
   switch (d.type) {
     case ProductType.SPECTRUM:
       return spectrum(seed, d);
+    case ProductType.PHOTO_GREY:
+    case ProductType.PHOTO_DITHER:
+    case ProductType.PHOTO_PALETTE:
+    case ProductType.PHOTO_HIRES:
+    case ProductType.PHOTO_RGB:
+      return photoPayload(seed, { type: d.type, subject: d.subject, sx: d.sx ?? d.x, sy: d.sy ?? d.y, lit: d.lit ?? false, tick: d.tick, seq: d.seq });
     default:
       return [];
   }

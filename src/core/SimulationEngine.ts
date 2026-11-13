@@ -10,6 +10,7 @@ import {
   encodeLog,
   encodeStackDump,
   GALLERY_KEEP,
+  isPhoto,
   productFrameBytes,
   RECEIVED_KEEP,
   SYSTEM_TAG,
@@ -81,7 +82,12 @@ export class SimulationEngine {
     repairs: 0,
     upgradesInstalled: 0,
     squallsWeathered: 0,
+    /** SNAP photos recorded / lit photos delivered completely. */
+    photosTaken: 0,
+    photosDelivered: 0,
   };
+  /** Subject tile types already delivered in a lit photo (first-of-a-kind bonus, saved). */
+  photoSubjects: number[] = [];
   /** Science credits: delivered science + goal rewards. Spent on upgrades. */
   credits = 0;
   /** Ordered upgrades: in flight (landed=false) or waiting on the ground. */
@@ -416,6 +422,33 @@ export class SimulationEngine {
     return u.link.record({ ...p, tick: this.tick }, u.chassis.recorderBytes);
   }
 
+  /** Camera subject in `dir`: first rover / obstacle / item within snapReach tiles, else the ground in front. */
+  cameraSubject(u: Unit, dir: number): { subject: number; x: number; y: number } {
+    const [dx, dy] = DIR_VEC[dir];
+    for (let d = 1; d <= BALANCE.snapReach; d++) {
+      const x = u.x + dx * d;
+      const y = u.y + dy * d;
+      const hit = this.tileAt(x, y, Layer.ACTOR) || this.tileAt(x, y, Layer.OBSTACLE) || this.tileAt(x, y, Layer.ITEM);
+      if (hit) return { subject: hit, x, y };
+    }
+    return { subject: this.world.getTile(u.x + dx, u.y + dy, Layer.TERRAIN), x: u.x + dx, y: u.y + dy };
+  }
+
+  /** Enough light for a photo in `dir`: daylight, or the headlight on and facing `dir`. */
+  photoLit(u: Unit, dir: number): boolean {
+    return this.sun.light >= BALANCE.snapMinSunLight || (u.headlight === 1 && u.heading === dir);
+  }
+
+  /** Credits for a delivered product; lit photos pay a bonus for the first of a subject type. */
+  private deliveryCredits(p: ProductDesc): number {
+    if (!isPhoto(p.type)) return p.credits;
+    if (!p.lit) return 0;
+    this.stats.photosDelivered++;
+    if (this.photoSubjects.includes(p.subject)) return BALANCE.photoCredits;
+    this.photoSubjects.push(p.subject);
+    return BALANCE.photoCredits + BALANCE.photoFirstBonus;
+  }
+
   private updateUnitPhysics(u: Unit): void {
     const vm = u.vm;
     if (vm.state === CpuState.DESTROYED) return;
@@ -599,7 +632,7 @@ export class SimulationEngine {
     u.action = { kind: 'TOOL', tool: tool.id, arg, arg2, ticksLeft: tool.ticks };
     u.vm.block();
     const t = tool.target?.(u, arg) ?? null;
-    if (tool.arg === 'dir' && arg >= 0 && arg <= 3) u.heading = arg;
+    if (tool.arg === 'dir' && !tool.keepsHeading && arg >= 0 && arg <= 3) u.heading = arg;
     this.events.emit('TOOL_USED', { unitId: u.id, tool: tool.id, x: u.x, y: u.y, targetX: t?.[0] ?? null, targetY: t?.[1] ?? null, ticks: tool.ticks });
   }
 
@@ -673,9 +706,10 @@ export class SimulationEngine {
     for (const p of delivered) {
       const g = this.galleryEntry(u, p);
       g.received = productFrameBytes(p.type);
+      g.credits = this.deliveryCredits(p);
       this.stats.framesReceived++;
       this.stats.scienceDelivered++;
-      this.credits += p.credits;
+      this.credits += g.credits;
       this.events.emit('SCIENCE_DELIVERED', g);
     }
     if (partial) this.galleryEntry(u, partial).received = u.link.recSent;
@@ -770,6 +804,9 @@ export class SimulationEngine {
       }
       case 'USE':
         this.startTool(u, TOOLS.USE_ITEM, v[0], v[1]);
+        return;
+      case 'SNAP':
+        this.startTool(u, TOOLS.CAMERA, v[0], v.length > 1 ? v[1] : 1);
         return;
       case 'PEEK': {
         const slot = v[0];

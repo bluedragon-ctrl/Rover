@@ -7,7 +7,7 @@ import { UPGRADE_BY_ID } from './upgrades';
 import { CpuState, type Status } from './types';
 import type { Unit, UnitAction, UnitMotion } from './Unit';
 
-export const SAVE_VERSION = 7;
+export const SAVE_VERSION = 8;
 
 interface UnitSave {
   id: number;
@@ -77,6 +77,8 @@ export interface SaveSnapshot {
   received: ReceivedFrame[];
   /** v5: science products received (or being received) by mission control */
   gallery: ReceivedProduct[];
+  /** v8: subject types already delivered in a lit photo (first-of-a-kind bonus) */
+  photoSubjects: number[];
   units: UnitSave[];
   chunks: ChunkSave[];
 }
@@ -134,6 +136,7 @@ export function serialize(e: SimulationEngine): SaveSnapshot {
     nextDropId: e.nextDropId,
     received: e.received.map((f) => ({ ...f, bytes: [...f.bytes] })),
     gallery: e.gallery.map((g) => ({ ...g })),
+    photoSubjects: [...e.photoSubjects],
     units: e.units.map(saveUnit),
     chunks,
   };
@@ -249,6 +252,13 @@ export function migrate(raw: unknown): SaveSnapshot {
     for (const u of out.units) u.post = 0;
     v = 7;
   }
+  if (v === 7) {
+    // v7 -> v8: camera photos (M9 slice 5). No photo taken or delivered yet.
+    out.photoSubjects = [];
+    out.stats.photosTaken = 0;
+    out.stats.photosDelivered = 0;
+    v = 8;
+  }
   if (v !== SAVE_VERSION) throw new SaveError(`Unsupported save version ${s.version}.`);
   out.version = v;
   return out;
@@ -270,6 +280,7 @@ export function deserialize(raw: unknown): SimulationEngine {
   e.nextDropId = s.nextDropId;
   e.received = s.received.map((f) => ({ ...f, bytes: [...f.bytes] }));
   e.gallery = s.gallery.map((g) => ({ ...g }));
+  e.photoSubjects = [...s.photoSubjects];
 
   for (const cs of s.chunks) {
     const c = e.world.getChunk(cs.cx, cs.cy);
