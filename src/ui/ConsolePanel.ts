@@ -65,7 +65,7 @@ export class ConsolePanel {
       </div>
       <div id="console-list"></div>
       <p class="small dim">Mission control only knows what the rover sends. <code>LOG tag [value]</code> queues a frame in the
-      ${engine.units[0]?.chassis.logFifoBytes ?? 32} B log FIFO; the dish sends ${BALANCE.linkBytesPerTick} B/tick at full signal
+      ${engine.units[0]?.chassis.logFifoBytes ?? 32} B log FIFO; the dish sends ${engine.units[0]?.chassis.linkBytesPerTick ?? BALANCE.linkBytesPerTick} B/tick at full signal
       (none below ${BALANCE.linkMinSignal}). Tags are named from your <code>CONST</code>s.
       <b>Dump</b> asks the rover for a snapshot of its CPU (sent before the log); <code>BRK</code> halts the CPU until
       <b>Continue</b>. Commands cost energy like a small upload.</p>`;

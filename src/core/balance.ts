@@ -43,7 +43,7 @@ export const BALANCE = {
   /** Dump replies that may wait for the downlink at once. */
   dumpQueueMax: 4,
   // Downlink (docs/SPEC.md §3.8.1): byte-based, shared by the log FIFO and the science recorder
-  linkBytesPerTick: 2, // at @SIGNAL_STR 100, proportional to signal
+  linkBytesPerTick: 2, // at @SIGNAL_STR 100, proportional to signal (Mk-I; chassis.linkBytesPerTick)
   linkMinSignal: 20, // nothing is sent below this
   linkEnergyPerTick: 2, // per tick in which at least one byte is sent
 
@@ -98,6 +98,8 @@ export interface ChassisDef {
   logFifoBytes: number;
   /** Science recorder size in bytes (§3.8.5). */
   recorderBytes: number;
+  /** Downlink bytes per tick at full signal (§3.8.1). */
+  linkBytesPerTick: number;
   /** Camera modes `SNAP dir mode` accepts (= photo product types, §3.8.5). */
   cameraModes: number[];
   sensorRange: number;
@@ -121,6 +123,7 @@ export const CHASSIS_MK1: ChassisDef = {
   cyclesPerTick: 4,
   logFifoBytes: 32,
   recorderBytes: 1024,
+  linkBytesPerTick: 2,
   cameraModes: [1, 2],
   sensorRange: 6,
   cargoSlots: 4,

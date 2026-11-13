@@ -590,7 +590,8 @@ export class SimulationEngine {
     if (!def) return 'unknown upgrade';
     if (u.upgrades.includes(id)) return 'installed';
     if (this.drops.some((d) => d.upgrade === id)) return 'on its way';
-    if (def.requires && !u.upgrades.includes(def.requires)) return `needs ${UPGRADE_BY_ID[def.requires]?.title ?? def.requires}`;
+    const missing = def.requires?.find((r) => !u.upgrades.includes(r));
+    if (missing) return `needs ${UPGRADE_BY_ID[missing]?.title ?? missing}`;
     if (this.credits < def.cost) return `needs ${def.cost} credits`;
     if (!u.powered) return 'rover is offline';
     return null;
@@ -737,7 +738,7 @@ export class SimulationEngine {
 
   /** Transmit this tick's bytes; completed frames and products reach mission control. */
   private updateLink(u: Unit): void {
-    const { sent, sysDone, done, delivered, partial } = u.link.pump(this.signalOf(u), BALANCE.linkMinSignal, BALANCE.linkBytesPerTick);
+    const { sent, sysDone, done, delivered, partial } = u.link.pump(this.signalOf(u), BALANCE.linkMinSignal, u.chassis.linkBytesPerTick);
     if (!sent) return;
     this.drain(u, BALANCE.linkEnergyPerTick);
     for (const f of sysDone) {
