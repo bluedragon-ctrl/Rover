@@ -9,7 +9,7 @@ import type { RoverVM } from './vm/RoverVM';
 import type { Capture, Unit, UnitAction, UnitMotion } from './Unit';
 import { fromHex, toHex } from './imaging';
 
-export const SAVE_VERSION = 14;
+export const SAVE_VERSION = 15;
 
 interface UnitSave {
   id: number;
@@ -119,6 +119,8 @@ export interface SaveSnapshot {
   gallery: ReceivedProduct[];
   /** v8: subject types already delivered in a lit photo (first-of-a-kind bonus) */
   photoSubjects: number[];
+  /** v15: camera modes already delivered as an edited photo. */
+  editedTypes: number[];
   /** v9: anomaly tiles already credited ("x,y") */
   anomalyTiles: string[];
   /** v13: what mission control sent over the uplink (Comms timeline) */
@@ -181,6 +183,7 @@ export function serialize(e: SimulationEngine): SaveSnapshot {
     received: e.received.map((f) => ({ ...f, bytes: [...f.bytes] })),
     gallery: e.gallery.map((g) => ({ ...g })),
     photoSubjects: [...e.photoSubjects],
+    editedTypes: [...e.editedTypes],
     anomalyTiles: [...e.anomalyTiles],
     sent: e.sent.map((r) => ({ ...r })),
     units: e.units.map(saveUnit),
@@ -357,6 +360,12 @@ export function migrate(raw: unknown): SaveSnapshot {
     for (const u of out.units) u.image = { mem: '', capture: null, mode: 1, edited: false };
     v = 14;
   }
+  if (v === 14) {
+    // v14 -> v15: Darkroom (M12 slice 3). No edited photo credited yet.
+    out.editedTypes = [];
+    out.stats.photosEdited = 0;
+    v = 15;
+  }
   if (v !== SAVE_VERSION) throw new SaveError(`Unsupported save version ${s.version}.`);
   out.version = v;
   return out;
@@ -379,6 +388,7 @@ export function deserialize(raw: unknown): SimulationEngine {
   e.received = s.received.map((f) => ({ ...f, bytes: [...f.bytes] }));
   e.gallery = s.gallery.map((g) => ({ ...g }));
   e.photoSubjects = [...s.photoSubjects];
+  e.editedTypes = [...s.editedTypes];
   e.anomalyTiles = [...s.anomalyTiles];
   e.sent = s.sent.map((r) => ({ ...r }));
 

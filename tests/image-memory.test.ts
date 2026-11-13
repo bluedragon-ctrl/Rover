@@ -50,6 +50,51 @@ function rover(firmware: string, opts: { program?: string; link?: boolean; seed?
 /** Pixel (x, y) of a 32×32 2-bpp picture. */
 const px = (b: ArrayLike<number>, x: number, y: number): number => (b[y * 8 + (x >> 2)] >> (6 - 2 * (x & 3))) & 3;
 
+describe('Darkroom: first-edit bonus per camera mode (M12 slice 3)', () => {
+  // Edit one byte (STB 0 255), or none, after each SNAP: mode 1, 1 again, raw 1, then (once the
+  // recorder has drained) mode 2.
+  const src = 'SNAP NORTH\nSTB 0 255\nSEND\nSNAP NORTH\nSTB 0 255\nSEND\nSNAP NORTH\nSEND\nSLEEP 600\nSNAP NORTH 2\nSTB 0 255\nSEND\nSLEEP 100000';
+
+  it('pays +editFirstBonus once per photo type for lit edited photos and completes Darkroom', () => {
+    const { e } = rover(src, { link: true });
+    const c0 = e.credits;
+    until(e, () => e.gallery.length === 4 && e.gallery[3].received === productFrameBytes(2), 4000);
+    run(e, 20); // goals are checked every 10 ticks
+    const P = BALANCE.photoCredits, S = BALANCE.photoFirstBonus, X = BALANCE.editFirstBonus;
+    expect(e.gallery.map((g) => [g.type, g.level])).toEqual([[1, Level.EDITED], [1, Level.EDITED], [1, undefined], [2, Level.EDITED]]);
+    expect(e.gallery.map((g) => g.credits)).toEqual([P + S + X, P, P, P + X]);
+    expect(e.editedTypes).toEqual([1, 2]);
+    expect(e.stats.photosEdited).toBe(3);
+    expect(e.director.completed.has('darkroom')).toBe(true);
+    const darkroom = 15;
+    expect(e.credits - c0).toBeGreaterThanOrEqual(P * 4 + S + X * 2 + darkroom);
+  });
+
+  it('dark and drawn pictures earn no edit bonus', () => {
+    const { e } = rover('ERASE\nSTB 0 255\nSEND 1\nSLEEP 100000', { link: true });
+    until(e, () => e.gallery.length === 1 && e.gallery[0].received === productFrameBytes(1), 3000);
+    expect(e.gallery[0]).toMatchObject({ level: Level.DRAWN, credits: 0 });
+    expect(e.editedTypes).toEqual([]);
+    expect(e.stats.photosEdited).toBe(0);
+  });
+
+  it('saves the credited modes and migrates v14 saves', () => {
+    const { e } = rover(src, { link: true });
+    until(e, () => e.editedTypes.length === 1, 4000);
+    const back = deserialize(JSON.parse(JSON.stringify(serialize(e))));
+    expect(back.editedTypes).toEqual([1]);
+    expect(back.stats.photosEdited).toBe(1);
+    const v14 = serialize(e) as unknown as Record<string, any>;
+    v14.version = 14;
+    delete v14.editedTypes;
+    delete v14.stats.photosEdited;
+    expect(SAVE_VERSION).toBe(15);
+    const m = migrate(v14);
+    expect(m.editedTypes).toEqual([]);
+    expect(m.stats.photosEdited).toBe(0);
+  });
+});
+
 describe('image memory instructions (SPEC §3.8.7)', () => {
   it('encode as LDB 1D, STB 1E, SEND 1F 05, ERASE 1F 06 and decode back', () => {
     const r = compile('LDB r0 r1\nSTB 5 r0\nSEND\nSEND 2\nERASE', CHASSIS_MK1, consts);
@@ -213,7 +258,7 @@ describe('image memory instructions (SPEC §3.8.7)', () => {
     const v13 = serialize(e) as unknown as { version: number; units: Record<string, unknown>[] };
     v13.version = 13;
     for (const u of v13.units) delete u.image;
-    expect(SAVE_VERSION).toBe(14);
+    expect(SAVE_VERSION).toBeGreaterThanOrEqual(14);
     expect(migrate(v13).units[0].image).toEqual({ mem: '', capture: null, mode: 1, edited: false });
     const back = deserialize(v13).units[0];
     expect(back.img).toHaveLength(256);

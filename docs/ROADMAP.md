@@ -23,7 +23,7 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | ✅ slices 1–6 done (link layer, `LOG`, Console tab; recorder, spectra, Gallery tab; dumps, `BRK`, admin-only debugger; `@POST` display; camera + photos; upgrades, camera modes 3–5, fossil anomalies; save v9) |
 | **M10** | **Firmware + program slot (SPEC §3.9)** | 🚧 slice 1 (core, save v10) done; slice 2 (machine code + byte addresses, save v11, Code tab / Console redesign, listing pane) in review |
 | M11 | User interface review (after M10) | 🚧 Comms tab, Code tab dump box, Reference → Radio, Mission events: default since 2026-11-13 (save v13); `BRK` reports itself |
-| M12 | Image memory: `SNAP` → `LDB` / `STB` → `SEND` (SPEC §3.8.7, guide [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md)) | 🚧 slices 0–2 done (bit instructions; image memory in the core, save v14; templates, Reference → Image, Gallery labels + hex view, `SNAP` warning); slice 3 (teaching goal) next |
+| M12 | Image memory: `SNAP` → `LDB` / `STB` → `SEND` (SPEC §3.8.7, guide [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md)) | ✅ done (bit instructions; image memory in the core, save v14; templates, Reference → Image, Gallery labels + hex view, `SNAP` warning; goal *Darkroom* + first-edit bonus per camera mode, save v15) |
 
 ## Done: Flash measured in bytes
 
@@ -424,7 +424,7 @@ what the top bar shows, discoverability for beginners. Proposals with screenshot
       teaching event first.
 - [ ] Known: the tab bar is wider than the default side panel (the Admin tab is cut off).
 
-## M12 — Image memory (planned)
+## M12 — Image memory (done)
 
 Owner idea (2026-11-13): let advanced players work with picture memory themselves (their own
 pictures, changed photos), reflecting real techniques, but keep the model simple:
@@ -496,8 +496,10 @@ Slices:
        memory address; built on opening, stays open across refreshes; `hexDump`). Code tab
        warning *takes photos but never sends them* (`snapsWithoutSend`: `SNAP` and no
        `SEND` in either slot).
-3. [ ] **Goals.** A teaching goal (*Darkroom*: deliver an edited photo). Drawn pictures
-       earn nothing for now (owner, 2026-11-13), so no *Postcard home* reward.
+3. [x] **Goals.** Teaching goal *Darkroom* (deliver a lit edited photo, reward 15). Every
+       kind of edit is rewarded the first time (owner, 2026-11-13): a lit edited photo
+       earns +5 (`editFirstBonus`) the first time in each camera mode (`editedTypes`,
+       save v15). Drawn pictures earn nothing for now, so no *Postcard home* reward.
 
 Open (decide during slice 1 or in playtests):
 - ~~`plot` needs 103 B on Mk-I: bit instructions?~~ → added (slice 0). Still open: `XOR` /
@@ -633,3 +635,4 @@ window with a fixed dish?
 | 2026-11-13 | `claude/gallant-bell-hb1kyd` (3) | M12 slice 1: image memory in the core (`SNAP` into memory, `LDB` 1D / `STB` 1E, `SEND` 1F 05, raw / edited / drawn levels in the science header, credits per capture, save v14); minimal Gallery / Reference updates; tests run the six guide examples from the Markdown. |
 | 2026-11-13 | `claude/gallant-bell-hb1kyd` (4) | M12 slice 1 review: `SEND` costs 10 energy; image memory non-volatile (kept through power-off), cleared only by `SNAP` or the new `ERASE` (`1F 06`); guide *Line* / *Memory map* use `ERASE`; no rewards for drawn pictures. |
 | 2026-11-13 | `claude/gallant-bell-hb1kyd` (5) | M12 slice 2: six *Image: …* program templates (= the guide's examples, test-enforced), Reference → Image sub-tab, Gallery *raw / edited / drawn* chips and hex view, Code tab warning for `SNAP` without `SEND`. |
+| 2026-11-13 | `claude/gallant-bell-hb1kyd` (6) | M12 slice 3: goal *Darkroom* (a lit edited photo, 15 cr); first-edit bonus +5 per camera mode (`editedTypes`, save v15). M12 complete. |

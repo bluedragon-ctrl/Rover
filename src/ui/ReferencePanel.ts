@@ -380,7 +380,7 @@ weight:   64      16      4       1</pre>
       <tr><td>labels</td><td>The Gallery labels what arrived: <b>raw</b> (sent as the camera took it), <b>edited</b> (changed with <code>STB</code>),
         <b>drawn</b> (no camera picture behind it). The label travels in the header byte (Radio).</td></tr>
       <tr><td>credits</td><td>Only the first <code>SEND</code> after a <code>SNAP</code>, of the same type, earns photo credits, edited or not.
-        Drawn pictures earn nothing. Anomaly flags are checked against the real tile.</td></tr>
+        The first lit <b>edited</b> photo in each camera mode earns +${BALANCE.editFirstBonus} more (goal <i>Darkroom</i>). Drawn pictures earn nothing. Anomaly flags are checked against the real tile.</td></tr>
       <tr><td>speed</td><td>Touching every byte costs about 6 cycles each: ~400 ticks for a whole 32×32 picture on Mk-I. Programs run in time slices, so long loops just take longer.</td></tr>
     </table>
     <h4>Examples (Code tab → Program → template)</h4>
