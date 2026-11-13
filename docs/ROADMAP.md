@@ -17,7 +17,7 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | M5 | Tools, cargo, spectrometer, science, first goals | ✅ done |
 | M6 | Save/load + autosave, storyteller with prerequisites & teaching events, subsystem damage, material repairs, admin console | ✅ done |
 | M7 | Upgrades bought with credits, delivered as supply crates, seismic scanner, save v2 | ✅ done |
-| **M8** | **Visual overhaul (SPEC §7)** | 🚧 in progress: asset preview, indicator lamps, **game renderer switched to v2**, frame-time HUD + geometry baseline, pan leash; performance fine on PC, remaining items (LOD, fat lines, zoom range, atmosphere) deferred to the next visual pass |
+| **M8** | **Visual overhaul (SPEC §7)** | 🚧 in progress: asset preview, indicator lamps, **game renderer switched to v2**, frame-time HUD + geometry baseline, pan leash, **performance pass** (fog patching, culling, MSAA, merged rover, adaptive resolution), **symbolic ground tiles**; remaining items (fat lines, zoom range, atmosphere) deferred to the next visual pass |
 | M8.1 | Radar `SCAN` vs. light-limited operator view; headlight cone; `@HEADING` | ✅ done |
 | Flash bytes | Program size in machine-code bytes instead of lines (SPEC §5.7) | ✅ done; the byte gutter became the M10 listing pane |
 | **M9** | **Downlink, debug log & science imaging (SPEC §3.8)** | ✅ slices 1–6 done (link layer, `LOG`, Console tab; recorder, spectra, Gallery tab; dumps, `BRK`, admin-only debugger; `@POST` display; camera + photos; upgrades, camera modes 3–5, fossil anomalies; save v9) |
@@ -130,8 +130,45 @@ tests must stay untouched. Do it in small PRs, checking frame time at each step.
 - [x] **Bloom:** `PostFx` (threshold bloom keeps the grid crisp), B toggles it.
 - [ ] **Fat lines:** `LineSegments2` + `LineMaterial` for rover, ore, crates and FX;
       width scales with zoom. Keep 1 px for the terrain grid (cost).
-- [ ] **LOD by zoom:** far = grid + silhouettes; near = pebbles, rock strata, detailed rover
-      (wheels turning while driving, suspension bounce, panel hinges, dish ribs).
+- [x] **Performance pass** (2026-11-13, owner-approved list; seed 1, headless Chromium):
+      - Chunk builds into typed arrays, compact 24-byte vertices (`col` Uint16×4 = rgb +
+        visibility flag, `tile` Int16×2): build ~8.1 → ~1.2 ms, chunk memory −33%.
+      - **Fog changes no longer rebuild chunks:** newly mapped tiles get their visibility
+        flags patched in place (`ChunkPool.patch`, per-tile vertex ranges). Driving went from
+        ~1.3 rebuilds per step (6–17 ms each) to none; only chunks scrolling into view build.
+      - Hidden terrain culled per vertex (no fragment `discard`); chunks frustum-culled and
+        skipped beyond the fog.
+      - Rover: static parts merged per rigid node (`RigMerge`), lamps/@POST in one
+        recoloured mesh (`ColorCells`): 88 → ~40 draw calls per rover.
+      - Dust and squall animated in shaders; per-frame allocations removed.
+      - Look changes: 4× MSAA under bloom (lines were aliased whenever bloom was on), soft
+        round dust motes, quarter-resolution bloom (slightly softer), adaptive pixel ratio
+        (`AdaptiveResolution`, `?dpr=N` pins it), far-zoom LOD, ~30 fps while paused and idle.
+      - Result, zoom 14 / 60: draw calls 153 → 79 / 252 → 133, lines drawn 139k → 67k /
+        444k → 104k.
+      - Tried and dropped: nearer fog (D) — the visible chunks sit well inside the fog at every
+        zoom, so it saved nothing measurable.
+- [x] ~~**LOD by zoom (terrain)**~~: removed with the symbolic tiles (nothing small left to
+      drop). Rover detail levels still open (wheels, hinges, dish ribs).
+- [x] **Symbolic ground tiles (owner-approved 2026-11-13, in the game).** The map is an
+      orbital scan read through a legend, not scenery; low 3D symbols say what matters for
+      driving (owner: low-poly 3D, rover keeps its detailed model). `drawTileVec`
+      (`VectorFactory.ts`), reviewed in `preview.html` first.
+      - Cliff wall → pyramid (height by variant); neighbouring walls join with ridgelines to
+        a saddle on the shared edge (`RIDGE` mask), so clusters read as ranges.
+      - Rough gravel → 3 flat hatch strokes (was 3 pebble prisms); flat sand → no ripples.
+      - Ore deposits sunk into the ground (owner: nothing floats): a dark pit with a lit rim,
+        the marker half buried in it — iron a diamond, silicon an upright hex crystal (marker
+        differs by shape, not only colour).
+      - Acid vent → warning ring, rim and glowing pit. Pickups unchanged.
+      - Pyramid faces shaded by direction so they read in the top-down view.
+      - Ridges across chunk edges: `ChunkPool.ridgeMask` reads the neighbour chunk if loaded,
+        else the generator (walls never change), so a chunk loading next door needs no
+        rebuild (`tests/render-budget.test.ts`).
+      - A mapped cliff draws its ridge toward an unmapped cliff next door: kept on purpose as
+        a hint that the range continues (owner: fits the orbital scan).
+      - Seed 1, 5×5 chunks: line verts 204k → 102k, fill tris 72k → 21k (budget test
+        tightened); far-zoom LOD removed.
 - [ ] **Zoom range** 0.15×–8×, zoom to cursor; far zoom switches to a minimap-like style.
 - [x] **Camera:** perspective orbit camera, smooth follow, rotate with right-drag; the
       compass rotates with it (done in the renderer switch).
@@ -409,6 +446,12 @@ window with a fixed dish?
   living tile costs credits or reputation). Visuals (3D markers, photo scenes) go through
   the preview first, as always.
 
+- **Orbital pre-survey + sky (idea, owner liked it 2026-11-13; after symbolic tiles).** The
+  view is a satellite scan, so unexplored tiles could show coarse orbital data (e.g. faint
+  mountain outlines only, no ore or items) while the rover's sensors fill in the detail.
+  Changes what the player knows before exploring (fog rules in `src/core/`), so it is a
+  gameplay decision; pair it with a visible sky (horizon, orbiting satellite passes).
+
 - More storyteller events using the catalogue: dust devils that push the rover, solar
   flares that scramble the uplink, ore-rich meteor falls (reward events), distress beacon
   missions. Teaching variants first.
@@ -448,5 +491,8 @@ window with a fixed dish?
 | 2026-11-13 | `ccr-1e08ca42-e1n32b` | M9 slice 6: downlink/camera upgrades (recorder 2/4 KB, amplifier, trace buffer, camera modes 3–5), fossil anomalies (preview reviewed, subtle look), gallery flagging, goal *Anomaly hunter*, save v9. M9 complete. |
 | 2026-11-13 | `ccr-1e08ca42-e1n32b` (2) | Docs: rare local fauna and flora noted as planned future exploration content (Backlog). |
 | 2026-11-13 | `ccr-d9e2f47d-6jnxk7` | M10 detailed plan with the owner (Mk-I 256 B, two sources, writable `@PROG_STATE`, dumps per slot); slice 1 core: `RUN`/`END`, program context and slices, program upload, Run again, per-slot dumps, default firmware 136 B + 4 programs, save v10. |
+| 2026-11-13 | `ccr-2bb4c6cf-qz99l5` | M8 performance pass: compact chunk vertices, in-place fog patching, vertex-shader culling, frustum culling, MSAA under bloom, merged rover rig, shader dust/squall, quarter-res bloom, adaptive pixel ratio, far-zoom LOD, idle throttle. |
+| 2026-11-13 | `ccr-2bb4c6cf-qz99l5` (2) | Proposal in preview: symbolic ground tiles (pyramids with ridgelines, hatched gravel, ore markers, vent rings), `?style=symbolic`; orbital pre-survey idea in Backlog. |
+| 2026-11-13 | `ccr-2bb4c6cf-qz99l5` (3) | Symbolic ground tiles approved and switched on in the game (ore sunk into pits, no floating markers); cross-chunk ridges, far-zoom LOD removed, geometry budget halved. |
 | 2026-11-13 | `m10-slice2` | M10 slice 2: machine code (opcode/port tables, encoder/decoder, byte-address IPs, save v11), Code tab redesign (Program/Firmware slots, Upload program, Compile, flash bar, no-`RUN` warning), Console redesign (slot switch, Run again, merged tags, program dumps), Reference machine-code columns, listing pane in preview review; new rovers ship the default firmware. |
 | 2026-11-13 | `m10-slice2` (2) | Listing pane approved by the owner; enabled in the game by default (`?listing=0` hides it). |
