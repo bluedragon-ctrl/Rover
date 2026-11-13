@@ -159,6 +159,19 @@ export const PORTS: PortDef[] = [
   },
 ];
 
+/**
+ * Fixed machine-code port numbers 0–63 (SPEC §5.7.1): the operand byte `01pppppp`.
+ * Append only: a port keeps its number forever, also if it moves in PORTS.
+ */
+export const PORT_CODES: readonly string[] = [
+  'BAT', 'HULL', 'SOLAR_HEALTH', 'ANTENNA_HEALTH', 'X', 'Y', 'STATUS', 'TICK',
+  'GROUND', 'GROUND_HAZARD', 'CARGO_FREE', 'SCIENCE_READY', 'REC_FREE', 'ALERT', 'ALERT_ETA', 'SEISMIC_TYPE',
+  'SEISMIC_DIST', 'DROPS', 'DROP_X', 'DROP_Y', 'SENSOR_RANGE', 'HEADING', 'SUN_AZIMUTH', 'SUN_ELEV',
+  'SUN_LIGHT', 'SOLAR_OPEN', 'SOLAR_ANGLE', 'ORBIT_AZIMUTH', 'ANTENNA_ANGLE', 'SIGNAL_STR', 'TX_DATA', 'LOG_FREE',
+  'LOG_LOST', 'LIGHT_COLOR', 'LIGHT_BLINK', 'IND1', 'IND2', 'IND3', 'POST', 'PROG_STATE', 'PROG_RESULT',
+  'HEADLIGHT',
+];
+
 const byName = new Map(PORTS.map((p) => [p.name, p]));
 
 export function getPort(name: string): PortDef | undefined {

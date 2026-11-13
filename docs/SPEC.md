@@ -379,7 +379,7 @@ kind 1 = science frame   size = 0; followed by 1 sequence byte, then the product
 * **Dump replies** are taken the moment the command arrives and wait in their own queue,
   sent **before the log FIFO** (a third virtual channel; it may preempt a log frame or a
   product between bytes). On air: `F8` (kind 1, tag 15), dump kind, payload length, payload.
-  * *Dump* (kind 1): IP of the next instruction 2 B, `@STATUS` 1 B, CPU state 1 B
+  * *Dump* (kind 1): IP (byte address) of the next instruction 2 B, `@STATUS` 1 B, CPU state 1 B
     (0 `RUNNING`, 1 `BLOCKED`, 2 `HALTED`, 3 `FAULT`), each installed register 4 B, data-stack
     depth 1 B, call-stack depth 1 B: 22 B payload on Mk-I (25 B on air, ~13 ticks at full
     signal), 38 B with 8 registers. Example: `F8 01 16 00 09 00 02 …`.
@@ -387,7 +387,8 @@ kind 1 = science frame   size = 0; followed by 1 sequence byte, then the product
     + 2 B (return IP) per entry.
   * The Console shows a dump as a **snapshot with the tick it was taken**, never as a live
     view, with IPs turned into source lines of the uploaded program:
-    `DUMP (snapshot t254): next L13 · HALTED · @STATUS OK · r0=20 … · stacks 3/0`.
+    `FIRMWARE DUMP (snapshot t254): next fw:0x02A (L13) · HALTED · @STATUS OK · r0=20 … · stacks 3/0`
+    (byte addresses since M10, §5.7.1).
     Dumps are system frames: they do not count toward goals.
 * **`BRK`** (1 cycle, 1 byte, compute, no `@STATUS`): the CPU enters `HALTED`; the IP
   already points past the `BRK`. Actuators keep moving to their targets, the transmitter
@@ -490,7 +491,8 @@ gallery keeps the last 100 products (saved). Old saves: science points still wai
 ## 3.9 Firmware and programs **[M10]**
 
 Design agreed with the owner (2026-11-12, details 2026-11-13). Slice 1 built the rules
-below in the core; the editor and Console controls follow in slice 2 **[M10, planned]**.
+below in the core; slice 2 the Code tab (Program / Firmware slots, listing) and the Console
+controls.
 
 The rover runs two pieces of code on its one CPU, like a spacecraft's flight software
 running uplinked command sequences, or a small OS starting user programs:
@@ -551,13 +553,21 @@ running uplinked command sequences, or a small OS starting user programs:
   `PROG_READY`. Uploading an empty program erases it (`PROG_NONE`).
 * **Upload firmware**: as §3.3 (base 500 + 12 × firmware bytes, hard reboot); rejected if
   firmware + program would not fit the flash.
-* **Console**: a **Firmware / Program** switch selects the slot for *Dump*, *Dump stacks*
-  and *Continue*. Program dumps are kinds 3 and 4, laid out like kinds 1 and 2 (§3.8.4)
+* **Code tab**: a **Program** (default) / **Firmware** (advanced) switch, each slot with its
+  own editor and templates (programs: First steps, Explorer, Prospector, Fetch; firmware:
+  Default firmware and the pre-M10 all-in-one examples), *Upload program* or *Upload
+  firmware & reboot*, *Compile*, a flash bar `firmware 136 + program 46 = 182 / 256 B` (the
+  edited slot counts its draft, the other slot what is on the rover), and a warning when
+  the firmware has no `RUN`. New rovers ship the default firmware and no program (the
+  Program slot shows *First steps* as an unsent draft).
+* **Console**: Uplink and Downlink panels. A **Firmware / Program** switch selects the slot for *Dump*, *Dump stacks*
+  and *Continue*; downlink filters All / Log / Dumps / System. Program dumps are kinds 3 and 4, laid out like kinds 1 and 2 (§3.8.4)
   with `@PROG_STATE` in the CPU-state byte. *Run again* (an uplinked command, paid like a
   dump) restarts the program from the top, like the firmware writing `PROG_READY`;
   rejected if there is no program.
 * The Console decodes log tags with both slots' `CONST` names; a tag both slots name
-  differently shows both (`T_BAT|T_X`).
+  differently shows both (`T_BAT|T_X`), with lines per slot (`(fw L12, prog L3)`). Dumps
+  show their slot: `PROGRAM DUMP (snapshot t254): next prog:0x02A (L13) · PROG_HALTED · …`.
 
 ### 3.9.4 Default firmware
 
@@ -740,27 +750,40 @@ above 15 or `CONST SPEED 90` is 2. Examples: `RET` = 1, `MOV r0 r1` = 3,
 `JLE @BAT 20 home` = 1 + 1 + 2 + 2 = 6. The compiler reports the size per line and the
 first line that no longer fits.
 
-#### 5.7.1 Machine code and the listing **[M10, planned]**
+#### 5.7.1 Machine code and the listing **[M10]**
 
 Decided with the owner (2026-11-13): the compiler emits real bytes, and the player can
 **Compile** (free, on the ground) to see an assembler listing (address, hex bytes,
 source line) and the final byte count of each slot.
 
-* **Opcode byte**: a fixed table (`MOV` 01, `PUSH` 02, … `BRK` 1A, `RUN` 1B, `END` 1C, in
-  §5.4 order); new instructions get new numbers, old ones never change.
+* **Opcode byte** `kkknnnnn`: `nnnnn` is the instruction from a fixed table (`MOV` 01,
+  `PUSH` 02, … `BRK` 1A, `RUN` 1B, `END` 1C, in §5.4 order; the Reference tab lists them);
+  new instructions get new numbers (up to 1F), old ones never change. `kkk` counts the
+  optional operands present (`STEP d [n]`, `END [v]`, the arguments of `CALL`), because a
+  short-immediate or register byte looks like an opcode: `STEP 1` = `14 01`,
+  `STEP 1 2` = `34 01 02`, `END 1` = `3C 01`. Hence `CALL` passes at most 7 arguments.
 * **Operand byte**: `0000vvvv` short immediate 0–15 · `00010rrr` register r0–r7 ·
-  `01pppppp` port (fixed port numbers, 0–63) · `00011000` / `00011001` / `00011010`
-  followed by an 8 / 16 / 32-bit big-endian immediate. Other values are invalid.
+  `01pppppp` port (fixed port numbers 0–63, `PORT_CODES` in `ports.ts`: `@BAT` = 0 → `40`;
+  the Reference tab lists them) · `00011000` / `00011001` / `00011010` followed by an
+  8 / 16 / 32-bit big-endian two's-complement immediate. Other values are invalid.
 * **Label reference**: 2 raw bytes, the big-endian byte address of the target (no operand
   byte; the instruction says where a label goes).
 * Sizes are exactly the table above. Example: `JLE @BAT 20 home` with `home` at 0x2A →
   `0E 40 18 14 00 2A`.
-* **Addresses are byte addresses everywhere**: listing, dumps (`next 0x2A (L13)`),
-  return addresses on the call stack, the debugger. The VM still executes decoded
-  instructions (same cycle costs).
+* **Addresses are byte addresses everywhere**: listing, dumps
+  (`next prog:0x02A (L13)`), return addresses on the call stack, the debugger. The VM still
+  executes decoded instructions (same cycle costs); running past the last byte wraps to
+  0x000. A return address that does not start an instruction (only a corrupted one could)
+  faults. Saves before v11 stored instruction indices; loading converts them.
 * **Each slot starts at 0x000** (own address space): a firmware change never moves the
-  program, so it never has to be re-uploaded. The listing labels addresses `fw:0x2A` /
-  `prog:0x10`; the total shows `firmware 136 + program 46 = 182 / 256 B`.
+  program, so it never has to be re-uploaded. The listing labels addresses `fw:0x02A` /
+  `prog:0x010`; the total shows `firmware 136 + program 46 = 182 / 256 B`.
+* **The listing** (Code tab, below the editor): one row per instruction, label and
+  directive (comments and blank lines are left out); address | up to 6 hex bytes (longer
+  instructions continue on the next row) | source. Kept in sync while typing (a slot with
+  errors still lists, with estimated sizes and `??` bytes); clicking a row jumps to its
+  line, the cursor's line is highlighted, and so is the admin debugger's next line.
+  *Compile* (free) logs the slot's size and address range and the flash total.
 
 ## 6. Milestones
 

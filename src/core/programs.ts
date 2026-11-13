@@ -1,6 +1,6 @@
 /** Firmware and programs shipped with the game. */
 
-/** Pre-installed on every new rover: stationary self-management. */
+/** Pre-M10 factory firmware (retired in M10 slice 2: new rovers ship DEFAULT_FIRMWARE). Kept for tests. */
 export const FACTORY_IDLE = `; FACTORY FIRMWARE: stationary self-management.
 ; Keeps the solar array on the sun (stowed during squalls), keeps the
 ; dish on the relay orbiter and logs a battery heartbeat.
@@ -138,6 +138,7 @@ idle:   MOV @LIGHT_COLOR BLUE
         SLEEP 50
 `;
 
+/** Pre-M10 all-in-one firmwares (tests; the UI offers FIRMWARE_TEMPLATES). */
 export const TEMPLATES: Record<string, string> = {
   'Factory idle': FACTORY_IDLE,
   Explorer: DEMO_EXPLORER,
@@ -329,4 +330,15 @@ export const PROGRAM_TEMPLATES: Record<string, string> = {
   Explorer: PROGRAM_EXPLORER,
   Prospector: PROGRAM_PROSPECTOR,
   'Fetch supply crate': PROGRAM_FETCH,
+};
+
+/**
+ * Firmware examples (M10, Code tab Firmware slot): the default firmware, then the
+ * pre-M10 all-in-one firmwares, which do everything themselves and never RUN a program.
+ */
+export const FIRMWARE_TEMPLATES: Record<string, string> = {
+  'Default firmware': DEFAULT_FIRMWARE,
+  'All-in-one Explorer (no RUN)': DEMO_EXPLORER,
+  'All-in-one Prospector (no RUN)': PROSPECTOR,
+  'All-in-one Fetch (no RUN)': FETCH_SUPPLY,
 };

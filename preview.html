@@ -27,12 +27,6 @@
       #stats { top: 10px; right: 10px; white-space: pre; color: #7d8ca3; }
       #labels { position: absolute; inset: 0; pointer-events: none; z-index: 6; }
       #labels div { position: absolute; transform: translate(-50%, -100%); font-size: 10px; color: #cbd5e1; background: rgba(5, 9, 16, 0.7); border: 1px solid rgba(56, 189, 248, 0.25); padding: 0 4px; border-radius: 3px; white-space: nowrap; }
-      #editor { top: 70px; left: 10px; bottom: 120px; width: 440px; display: flex; flex-direction: column; gap: 6px; padding: 6px; --mono: ui-monospace, 'JetBrains Mono', Menlo, monospace; }
-      #editor[hidden] { display: none; }
-      #editor-cm { flex: 1; min-height: 0; overflow: hidden; border-radius: 4px; }
-      #editor-cm .cm-editor { height: 100%; }
-      #editor-flash { text-align: right; color: #cbd5e1; }
-      #editor-flash.over { color: #f87171; }
       #photolab { position: absolute; inset: 0; z-index: 20; overflow: auto; background: #050910; padding: 14px; }
       #photolab[hidden] { display: none; }
       .pl-head { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; margin-bottom: 12px; }
@@ -46,6 +40,10 @@
       .pl-name { padding-top: 4px; }
       .pl-cell canvas { display: block; border: 1px solid var(--line); border-radius: 3px; }
       .pl-cell pre { margin: 3px 0 0; font-size: 9.5px; line-height: 1.25; color: #9fb3c8; }
+      .ui-lab { display: flex; gap: 16px; align-items: stretch; height: calc(100vh - 150px); }
+      .ui-side { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 6px; background: #0b0f17; }
+      .ui-side .tabpane { overflow: hidden; }
+      .ui-log { height: 70px; overflow: auto; color: #7d8ca3; margin: 8px 0 0; font-size: 11px; }
       .pl-na { height: 112px; display: flex; align-items: center; justify-content: center; border: 1px dashed var(--line); }
     </style>
   </head>
@@ -59,7 +57,6 @@
     <div class="panel" id="stats"></div>
     <div class="panel" id="controls"></div>
     <div id="photolab" hidden></div>
-    <div class="panel" id="editor" hidden><div id="editor-cm"></div><div id="editor-flash"></div></div>
     <script type="module" src="/src/preview/preview.ts"></script>
   </body>
 </html>

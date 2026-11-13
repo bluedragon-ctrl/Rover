@@ -8,7 +8,7 @@ import { CpuState, ProgState, type Status } from './types';
 import type { RoverVM } from './vm/RoverVM';
 import type { Unit, UnitAction, UnitMotion } from './Unit';
 
-export const SAVE_VERSION = 10;
+export const SAVE_VERSION = 11;
 
 interface UnitSave {
   id: number;
@@ -53,6 +53,8 @@ interface VmSave {
   faultReason: string;
   watchdog: number;
   instructionsExecuted: number;
+  /** Set by the v10 -> v11 migration: `ip` and `callStack` are instruction indices, not byte addresses. */
+  legacyIndex?: boolean;
 }
 
 function saveVm(vm: RoverVM): VmSave {
@@ -70,10 +72,13 @@ function saveVm(vm: RoverVM): VmSave {
 }
 
 function loadVm(vm: RoverVM, s: VmSave): void {
-  vm.ip = s.ip;
+  // Before v11 an IP was an instruction index; now it is a byte address (SPEC §5.7.1).
+  const instrs = vm.program?.instrs ?? [];
+  const addr = (i: number) => (!s.legacyIndex ? i : i >= 0 && i < instrs.length ? instrs[i].addr : (vm.program?.code.length ?? 0));
+  vm.ip = addr(s.ip);
   vm.regs.set(s.regs);
   vm.dataStack = [...s.dataStack];
-  vm.callStack = [...s.callStack];
+  vm.callStack = s.callStack.map(addr);
   vm.state = s.state;
   vm.status = s.status;
   vm.faultReason = s.faultReason;
@@ -296,6 +301,15 @@ export function migrate(raw: unknown): SaveSnapshot {
       u.program = { source: '', vm: ctx, state: ProgState.PROG_NONE, result: 0, slice: -1 };
     }
     v = 10;
+  }
+  if (v === 10) {
+    // v10 -> v11: machine code (M10 slice 2). IPs and return addresses become byte
+    // addresses; they are converted after the program is compiled again (loadVm).
+    for (const u of out.units) {
+      u.vm.legacyIndex = true;
+      u.program.vm.legacyIndex = true;
+    }
+    v = 11;
   }
   if (v !== SAVE_VERSION) throw new SaveError(`Unsupported save version ${s.version}.`);
   out.version = v;

@@ -95,6 +95,6 @@ describe('Compiler', () => {
 
   it('allows labels on the same line as an instruction', () => {
     const r = c('a: MOV r0 1\nb: JMP a');
-    expect(r.program!.labels).toEqual({ A: 0, B: 1 });
+    expect(r.program!.labels).toEqual({ A: 0, B: 3 }); // byte addresses: MOV r0 1 is 3 B
   });
 });

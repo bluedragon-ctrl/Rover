@@ -37,6 +37,7 @@
         <div id="toasts"></div>
         <div id="event-banner"></div>
       </section>
+      <div id="side-resize" title="Drag to resize the side panel"></div>
       <aside id="side">
         <div class="tabs">
           <button class="tab active" data-tab="code">Code</button>
@@ -48,16 +49,7 @@
           <button class="tab" data-tab="admin">Admin</button>
         </div>
         <div class="tabpane active" id="tab-code">
-          <div class="toolbar">
-            <button id="btn-upload" class="primary" title="Ctrl+Enter">Upload &amp; reboot</button>
-            <button id="btn-revert" title="Load the firmware currently on the rover">Revert</button>
-            <select id="template" title="Load a firmware template into the editor"><option value="">Templates…</option></select>
-            <span id="flash" class="small"></span>
-          </div>
-          <div class="toolbar small dim">
-            <span id="upload-cost"></span>
-          </div>
-          <div id="editor"></div>
+          <div id="code-ws"></div>
           <div id="debugger-wrap" hidden>
             <div class="admin-banner small">ADMIN · live debugger: shows what mission control cannot know. Players use the Console (log, dumps).</div>
             <div id="debugger"></div>
