@@ -4,7 +4,7 @@ import { PORT_CODES, PORTS } from '../src/core/ports';
 import { DEFAULT_FIRMWARE, FACTORY_IDLE, PROGRAM_TEMPLATES, TEMPLATES } from '../src/core/programs';
 import { deserialize, serialize } from '../src/core/SaveManager';
 import { SimulationEngine } from '../src/core/SimulationEngine';
-import { compile, type Program } from '../src/core/vm/Compiler';
+import { compile, romLabels, type Program } from '../src/core/vm/Compiler';
 import { decodeProgram, encodeInstr, EXT_OPCODE_NUMBERS, EXT_PREFIX, formatAddr, OPCODE_NUMBERS, OPCODES, opcodeHex } from '../src/core/vm/isa';
 import { createDefaultRegistry } from '../src/core/WorldRegistry';
 
@@ -18,17 +18,21 @@ const prog = (src: string, slot: 'firmware' | 'program' = 'firmware'): Program =
 const bytesOf = (src: string) => hex(prog(src).code);
 
 describe('machine code (SPEC §5.7.1)', () => {
-  it('has fixed opcode numbers in §5.4 order: MOV 01 … BRK 1A, RUN 1B, END 1C', () => {
+  it('has fixed opcode numbers: MOV 01 … RET 11, WAIT 12 and LDF 13 (M14 reused two freed numbers), LOG 19, BRK 1A, END 1C', () => {
     const base = OPCODES.filter((op) => !(op in EXT_OPCODE_NUMBERS));
-    expect(base.map((op) => OPCODE_NUMBERS[op])).toEqual(base.map((_, i) => i + 1));
-    expect([OPCODE_NUMBERS.MOV, OPCODE_NUMBERS.JLE, OPCODE_NUMBERS.BRK, OPCODE_NUMBERS.RUN, OPCODE_NUMBERS.END]).toEqual([0x01, 0x0e, 0x1a, 0x1b, 0x1c]);
+    expect(Object.fromEntries(base.map((op) => [op, OPCODE_NUMBERS[op]]))).toEqual({
+      MOV: 0x01, PUSH: 0x02, POP: 0x03, ADD: 0x04, SUB: 0x05, MUL: 0x06, DIV: 0x07, MOD: 0x08,
+      JMP: 0x09, JEQ: 0x0a, JNE: 0x0b, JLT: 0x0c, JGT: 0x0d, JLE: 0x0e, JGE: 0x0f, CALL: 0x10, RET: 0x11,
+      WAIT: 0x12, LDF: 0x13, LOG: 0x19, BRK: 0x1a, END: 0x1c, LDB: 0x1d, STB: 0x1e,
+    });
   });
 
   it('gives every instruction exactly one opcode; LDB 1D, STB 1E, 1F is the extension prefix', () => {
     for (const op of OPCODES) expect((OPCODE_NUMBERS[op] === undefined) !== (EXT_OPCODE_NUMBERS[op] === undefined)).toBe(true);
     const base = Object.values(OPCODE_NUMBERS);
     expect(Math.max(...base)).toBe(0x1e);
-    expect([OPCODE_NUMBERS.LDB, OPCODE_NUMBERS.STB, EXT_OPCODE_NUMBERS.SEND]).toEqual([0x1d, 0x1e, 0x05]);
+    expect([OPCODE_NUMBERS.LDB, OPCODE_NUMBERS.STB]).toEqual([0x1d, 0x1e]);
+    expect(Object.keys(EXT_OPCODE_NUMBERS)).toEqual(['AND', 'OR', 'SHL', 'SHR']); // M14: SEND, ERASE (05, 06) and LDF (07) left
     expect(EXT_PREFIX).toBe(0x1f);
     expect([EXT_OPCODE_NUMBERS.AND, EXT_OPCODE_NUMBERS.OR, EXT_OPCODE_NUMBERS.SHL, EXT_OPCODE_NUMBERS.SHR]).toEqual([1, 2, 3, 4]);
     expect(opcodeHex('AND')).toBe('1F 01');
@@ -85,12 +89,14 @@ describe('machine code (SPEC §5.7.1)', () => {
   });
 
   it('counts optional operands in the top bits of the opcode byte', () => {
-    expect(bytesOf('STEP 1')).toBe('14 01');
-    expect(bytesOf('STEP 1 2')).toBe('34 01 02');
+    expect(bytesOf('LOG 2')).toBe('19 02');
+    expect(bytesOf('LOG 2 r0')).toBe('39 02 10');
     expect(bytesOf('f: CALL f 1 2 r0')).toBe('70 00 00 01 02 10');
+    const step = romLabels().STEP; // a ROM routine is a label at 0xF000 and up
+    expect(bytesOf('CALL STEP 1 2')).toBe(`50 ${hex([step >> 8, step & 255])} 01 02`);
     expect(hex(prog('END', 'program').code)).toBe('1C');
     expect(hex(prog('END 1', 'program').code)).toBe('3C 01');
-    expect(decodeProgram([0x14, 0x01, 0x34, 0x01, 0x02]).map((d) => d.args.length)).toEqual([1, 2]);
+    expect(decodeProgram([0x19, 0x02, 0x39, 0x02, 0x10]).map((d) => d.args.length)).toEqual([1, 2]);
   });
 
   it('limits CALL to 7 arguments (3 bits in the opcode byte)', () => {
@@ -137,17 +143,17 @@ describe('byte addresses in the VM', () => {
   it('CALL pushes the byte address after the CALL; RET returns there', () => {
     const e = new SimulationEngine({ seed: 3 });
     const u = e.spawnUnit('t');
-    e.upload(u, 'MOV r0 300\nCALL f\nSLEEP 100\nf: BRK\nRET', { factory: true });
+    e.upload(u, 'MOV r0 300\nCALL f\nCALL SLEEP 100\nf: BRK\nRET', { factory: true });
     e.advanceTick();
     expect(u.vm.callStack).toEqual([5 + 3]);
-    expect(u.vm.nextIp).toBe(5 + 3 + 3 + 1); // after the BRK
+    expect(u.vm.nextIp).toBe(5 + 3 + 5 + 1); // after the BRK (CALL SLEEP 100: opcode, label, 100)
     expect(u.vm.nextLine).toBe(5);
   });
 });
 
 describe('save v11', () => {
   it('converts v10 instruction-index IPs and return addresses to byte addresses', () => {
-    const src = 'MOV r0 300\nloop: CALL f\nSLEEP 2\nJMP loop\nf: ADD r0 1\nSLEEP 1\nRET';
+    const src = 'MOV r0 300\nloop: CALL f\nMOV @TIMER 2\nWAIT @TIMER\nJMP loop\nf: ADD r0 1\nMOV @TIMER 1\nWAIT @TIMER\nRET';
     const make = () => {
       const e = new SimulationEngine({ seed: 5 });
       e.upload(e.spawnUnit('t'), src, { factory: true });

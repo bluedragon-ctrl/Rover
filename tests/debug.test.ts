@@ -70,7 +70,7 @@ describe('BRK and HALTED (SPEC §3.8.4)', () => {
     expect(before - u.energy).toBe(e.commandCost(u));
     run(e, 1);
     expect(u.vm.regs[2]).toBe(1); // ran the instruction after BRK
-    const { e: e2, u: u2 } = rover('loop: SLEEP 5\nJMP loop');
+    const { e: e2, u: u2 } = rover('loop: CALL SLEEP 5\nJMP loop');
     const b = u2.energy;
     expect(e2.command(u2, 'CONTINUE')).toBeNull();
     expect(b - u2.energy).toBe(e2.commandCost(u2));
@@ -80,7 +80,7 @@ describe('BRK and HALTED (SPEC §3.8.4)', () => {
   it('an upload ends the halt (hard reboot)', () => {
     const { e, u } = rover(HALT_SRC);
     run(e, 2);
-    e.upload(u, 'MOV r3 9\nSLEEP 100', factory);
+    e.upload(u, 'MOV r3 9\nCALL SLEEP 100', factory);
     run(e, 1);
     expect(u.vm.state).toBe(CpuState.BLOCKED);
     expect(u.vm.regs[3]).toBe(9);
@@ -120,7 +120,7 @@ describe('memory dumps (SPEC §3.8.4)', () => {
   });
 
   it('rejects commands without power, without energy, or with a full dump queue', () => {
-    const { e, u } = rover('loop: SLEEP 50\nJMP loop');
+    const { e, u } = rover('loop: CALL SLEEP 50\nJMP loop');
     for (let i = 0; i < BALANCE.dumpQueueMax; i++) expect(e.command(u, 'DUMP')).toBeNull();
     const before = u.energy;
     expect(e.command(u, 'DUMP')).toMatch(/already waiting/);
@@ -133,7 +133,7 @@ describe('memory dumps (SPEC §3.8.4)', () => {
   });
 
   it('costs more at weak signal; free with the admin free-upload cheat', () => {
-    const { e, u } = rover('SLEEP 100');
+    const { e, u } = rover('CALL SLEEP 100');
     expect(e.commandCost(u)).toBe(BALANCE.dumpEnergy);
     u.antennaHealth = 25;
     expect(e.commandCost(u)).toBe(BALANCE.dumpEnergy * 4);
@@ -152,7 +152,7 @@ describe('memory dumps (SPEC §3.8.4)', () => {
 
   it('save while a dump is on the air, load, continue == uninterrupted run', () => {
     const make = () => {
-      const { e, u } = rover('CONST T 2\nloop: LOG T @TICK\nSLEEP 9\nBRK\nJMP loop', 13);
+      const { e, u } = rover('CONST T 2\nloop: LOG T @TICK\nCALL SLEEP 9\nBRK\nJMP loop', 13);
       u.antennaHealth = 75;
       e.command(u, 'DUMP');
       e.command(u, 'DUMP_STACKS');
@@ -172,7 +172,7 @@ describe('memory dumps (SPEC §3.8.4)', () => {
   });
 
   it('migrates v5 saves to an empty dump queue', () => {
-    const { e } = rover('SLEEP 10');
+    const { e } = rover('CALL SLEEP 10');
     const v5 = serialize(e) as unknown as Record<string, any>;
     v5.version = 5;
     for (const u of v5.units) {

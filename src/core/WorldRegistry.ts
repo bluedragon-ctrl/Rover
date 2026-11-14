@@ -19,7 +19,7 @@ export interface TileDef {
   hazardDamage?: number;
   /** 0 none, 1 mild, 2 severe. Reported by @GROUND_HAZARD. */
   hazardLevel?: number;
-  /** Obstacle/actor layers: blocks STEP. */
+  /** Obstacle/actor layers: blocks the drive. */
   blocksMove?: boolean;
   /** Which tool collects this tile into cargo. */
   tool?: 'DRILL' | 'GRABBER';

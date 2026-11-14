@@ -306,7 +306,7 @@ export class ThreeScene {
         dishRel: bearing(u.antennaAngle),
         solarHealth: u.solarHealth,
         dishHealth: u.antennaHealth,
-        cpu: dead ? 'off' : fault ? 'fault' : u.action?.kind === 'WAIT' ? 'idle' : 'run',
+        cpu: dead ? 'off' : fault ? 'fault' : u.cpu.state === CpuState.BLOCKED && !u.action ? 'idle' : 'run',
         indicators: fillIndicators(v.indicators, u.indicators, dead),
         // Dark while powered off. The operator's view is centred on the rover, so its
         // display is always in view.

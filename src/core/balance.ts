@@ -62,12 +62,12 @@ export const BALANCE = {
   linkMinSignal: 20, // nothing is sent below this
   linkEnergyPerTick: 2, // per tick in which at least one byte is sent
 
-  // Camera (docs/SPEC.md §3.8.5): SNAP dir [mode]
+  // Camera (docs/SPEC.md §3.8.5): @CAM dir, @CAM_MODE (the ROM's SNAP dir mode)
   snapTicks: 10,
   snapEnergy: 200,
-  sendTicks: 1, // SEND (M12, §3.8.7): image memory → recorder
+  sendTicks: 1, // @SEND (M12, §3.8.7): image memory → recorder
   sendEnergy: 10, // a small cost (= a SCAN); the transmitter pays per byte on top
-  eraseTicks: 2, // ERASE (M12, §3.8.7): zero image memory on request, like a flash erase
+  eraseTicks: 2, // @ERASE (M12, §3.8.7): zero image memory on request, like a flash erase
   eraseEnergy: 10,
   snapReach: 2, // subject: first obstacle / item / rover within this many tiles, else a landscape
   horizonRange: 16, // landscape: obstacles up to this far shape the skyline
@@ -99,7 +99,7 @@ export const BALANCE = {
  */
 export const ENCODING = {
   opcode: 1,
-  extOpcode: 2, // extension prefix 1F + the instruction's number (AND, OR, SHL, SHR, SEND, ERASE)
+  extOpcode: 2, // extension prefix 1F + the instruction's number (AND, OR, SHL, SHR)
   register: 1, // operand byte: addressing mode + register index
   port: 1, // operand byte: addressing mode + port number
   shortImm: 1, // 0..shortImmMax packed into the operand byte itself
@@ -154,9 +154,9 @@ export const CHASSIS_MK1: ChassisDef = {
   flashBytes: 512, // shared by firmware and program (128 before M10, 256 before M14)
   ramBytes: 64, // M14
   registers: 4,
-  dataStack: 8,
+  dataStack: 16, // M14 (was 8): ROM calls push their arguments
   callStack: 8,
-  cyclesPerTick: 4,
+  cyclesPerTick: 8, // M14 (was 4): device code is a few instructions longer than the old hardware instructions
   logFifoBytes: 32,
   recorderBytes: 1024,
   linkBytesPerTick: 2,

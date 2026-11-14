@@ -13,28 +13,28 @@ function setup(src: string) {
 
 describe('indicator lamps @IND1..@IND3', () => {
   it('are set by code with colour constants, clamped, readable, and cost nothing', () => {
-    const { eng, u } = setup('MOV @IND1 RED\nMOV @IND2 99\nMOV @IND3 -5\nMOV r0 @IND1\nSLEEP 100');
+    const { eng, u } = setup('MOV @IND1 RED\nMOV @IND2 99\nMOV @IND3 -5\nMOV r0 @IND1\nCALL SLEEP 100');
     const before = u.energy;
     eng.advanceTick();
     expect(u.indicators).toEqual([LightColor.RED, LightColor.AMBER, LightColor.OFF]);
     expect(u.vm.regs[0]).toBe(LightColor.RED);
     // Only passive drain/charge happened: same as an idle rover's tick.
-    const idle = setup('SLEEP 100');
+    const idle = setup('CALL SLEEP 100');
     idle.eng.advanceTick();
     expect(before - u.energy).toBe(before - idle.u.energy);
   });
 
   it('survive a reboot (physical state) and a save/load', () => {
-    const { eng, u } = setup('MOV @IND2 BLUE\nSLEEP 100');
+    const { eng, u } = setup('MOV @IND2 BLUE\nCALL SLEEP 100');
     eng.advanceTick();
-    eng.upload(u, 'SLEEP 100', { factory: true });
+    eng.upload(u, 'CALL SLEEP 100', { factory: true });
     expect(u.indicators[1]).toBe(LightColor.BLUE);
     const l = deserialize(JSON.parse(JSON.stringify(serialize(eng))));
     expect(l.units[0].indicators).toEqual([0, LightColor.BLUE, 0]);
   });
 
   it('v2 saves migrate with dark indicators', () => {
-    const { eng } = setup('SLEEP 100');
+    const { eng } = setup('CALL SLEEP 100');
     const v2 = serialize(eng) as unknown as Record<string, unknown>;
     v2.version = 2;
     for (const us of v2.units as Record<string, unknown>[]) delete us.indicators;
@@ -88,7 +88,7 @@ describe('@POST display (SPEC §3.8.3)', () => {
     expect([u.vm.regs[0], u.vm.regs[1], u.vm.regs[2]]).toEqual([0x1f, 255, 0]);
     expect(u.post).toBe(0xa5);
     expect(u.vm.status).toBe(Status.ERR_FULL); // @POST writes do not touch @STATUS
-    e.upload(u, 'SLEEP 100', { factory: true });
+    e.upload(u, 'CALL SLEEP 100', { factory: true });
     expect(u.post).toBe(0xa5); // physical: survives the reboot
   });
 

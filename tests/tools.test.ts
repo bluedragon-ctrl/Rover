@@ -21,7 +21,7 @@ const run = (eng: SimulationEngine, n: number) => {
 
 describe('drill (TOOL_0)', () => {
   it('mines an adjacent ore vein into cargo after 8 ticks', () => {
-    const { eng, u } = setup('ACT TOOL_0 EAST\nMOV r0 @STATUS\nPEEK 0 -> r1\nMOV r2 @CARGO_FREE\nSLEEP 1000', (e) =>
+    const { eng, u } = setup('CALL ACT TOOL_0 EAST\nMOV r0 @STATUS\nLDB r1 [CARGO+0]\nMOV r2 @CARGO_FREE\nCALL SLEEP 1000', (e) =>
       e.world.setTile(1, 0, Layer.OBSTACLE, T.IRON_ORE),
     );
     run(eng, TOOLS.DRILL.ticks - 1);
@@ -33,7 +33,7 @@ describe('drill (TOOL_0)', () => {
   });
 
   it('rejects non-ore targets and full cargo', () => {
-    const { eng, u } = setup('ACT TOOL_0 EAST\nMOV r0 @STATUS\nACT TOOL_0 NORTH\nMOV r1 @STATUS\nSLEEP 1000', (e) => {
+    const { eng, u } = setup('CALL ACT TOOL_0 EAST\nMOV r0 @STATUS\nCALL ACT TOOL_0 NORTH\nMOV r1 @STATUS\nCALL SLEEP 1000', (e) => {
       e.world.setTile(1, 0, Layer.OBSTACLE, T.CLIFF_WALL);
       e.world.setTile(0, 1, Layer.OBSTACLE, T.SILICON_ORE);
     });
@@ -47,7 +47,7 @@ describe('drill (TOOL_0)', () => {
 describe('grabber, spectrometer, USE', () => {
   it('grabs a sample, analyzes it and the downlink delivers the spectrum', () => {
     const { eng, u } = setup(
-      'ACT TOOL_1 WEST\nACT TOOL_2 0\nMOV r0 @SCIENCE_READY\nMOV r2 @REC_FREE\nMOV @ANTENNA_ANGLE @ORBIT_AZIMUTH\nSLEEP 80\nMOV r1 @SCIENCE_READY\nSLEEP 1000',
+      'CALL ACT TOOL_1 WEST\nCALL ACT TOOL_2 0\nMOV r0 @SCIENCE_READY\nMOV r2 @REC_FREE\nMOV @ANTENNA_ANGLE @ORBIT_AZIMUTH\nCALL SLEEP 80\nMOV r1 @SCIENCE_READY\nCALL SLEEP 1000',
       (e) => e.world.setTile(-1, 0, Layer.ITEM, T.SAMPLE),
     );
     run(eng, 40);
@@ -65,7 +65,7 @@ describe('grabber, spectrometer, USE', () => {
   });
 
   it('spectrometer refuses empty slots and repair kits; USE repairs the hull', () => {
-    const { eng, u } = setup('ACT TOOL_2 1\nMOV r0 @STATUS\nACT TOOL_2 0\nMOV r1 @STATUS\nUSE 0\nMOV r2 @STATUS\nSLEEP 1000');
+    const { eng, u } = setup('CALL ACT TOOL_2 1\nMOV r0 @STATUS\nCALL ACT TOOL_2 0\nMOV r1 @STATUS\nCALL USE 0 SYS_HULL\nMOV r2 @STATUS\nCALL SLEEP 1000');
     u.cargo[0] = T.REPAIR_KIT;
     u.hull = 50;
     run(eng, 15);
@@ -75,13 +75,13 @@ describe('grabber, spectrometer, USE', () => {
   });
 
   it('empty hardpoint gives ERR_NO_TOOL, bad slot ERR_INVALID, bad PEEK ERR_INVALID', () => {
-    const { eng, u } = setup('ACT TOOL_3\nMOV r0 @STATUS\nACT 9\nMOV r1 @STATUS\nPEEK 7 r2\nSLEEP 1000');
+    const { eng, u } = setup('CALL ACT TOOL_3 0\nMOV r0 @STATUS\nCALL ACT 9 0\nMOV r1 @STATUS\nLDB r2 [CARGO+7]\nCALL SLEEP 1000');
     run(eng, 4);
     expect([u.vm.regs[0], u.vm.regs[1]]).toEqual([Status.ERR_NO_TOOL, Status.ERR_INVALID]);
   });
 
   it('tools work with the solar array open (only STEP is locked)', () => {
-    const { eng, u } = setup('MOV @SOLAR_OPEN 1\nSLEEP 25\nACT TOOL_0 EAST\nMOV r0 @STATUS\nSLEEP 1000', (e) =>
+    const { eng, u } = setup('MOV @SOLAR_OPEN 1\nCALL SLEEP 25\nCALL ACT TOOL_0 EAST\nMOV r0 @STATUS\nCALL SLEEP 1000', (e) =>
       e.world.setTile(1, 0, Layer.OBSTACLE, T.IRON_ORE),
     );
     run(eng, 40);
@@ -100,7 +100,7 @@ describe('goals', () => {
   });
 
   it('all templates compile', () => {
-    const { eng, u } = setup('SLEEP 1');
+    const { eng, u } = setup('CALL SLEEP 1');
     for (const [name, src] of Object.entries(TEMPLATES)) expect(eng.compileFor(u, src).errors, name).toEqual([]);
   });
 

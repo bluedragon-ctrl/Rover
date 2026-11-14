@@ -55,8 +55,9 @@ export const UPGRADES: UpgradeDef[] = [
       u.prog.resizeRegisters(8);
     },
   },
-  { id: 'CPU_6', title: 'CPU overclock I', description: 'Compute cycles per tick 4 → 6.', cost: 50, apply: (c) => (c.cyclesPerTick = 6) },
-  { id: 'CPU_8', title: 'CPU overclock II', description: 'Compute cycles per tick 6 → 8.', cost: 100, requires: ['CPU_6'], apply: (c) => (c.cyclesPerTick = 8) },
+  // Ids kept for saves: CPU_6 = 12 cycles, CPU_8 = 16 cycles (M14; 6 / 8 before).
+  { id: 'CPU_6', title: 'CPU overclock I', description: 'Compute cycles per tick 8 → 12.', cost: 50, apply: (c) => (c.cyclesPerTick = 12) },
+  { id: 'CPU_8', title: 'CPU overclock II', description: 'Compute cycles per tick 12 → 16.', cost: 100, requires: ['CPU_6'], apply: (c) => (c.cyclesPerTick = 16) },
   {
     id: 'CARGO_6',
     title: 'Cargo racks',
@@ -69,12 +70,12 @@ export const UPGRADES: UpgradeDef[] = [
   },
   { id: 'BATTERY_150', title: 'Battery pack', description: 'Battery capacity +50 % (@BAT is still 0–100 %).', cost: 60, apply: (c) => (c.batteryCapacity = 150_000) },
   { id: 'SOLAR_PLUS', title: 'High-efficiency cells', description: 'Solar output +25 %.', cost: 50, apply: (c) => (c.solarPercent = 125) },
-  { id: 'LIDAR_8', title: 'Long-range radar', description: 'SCAN range 6 → 8 tiles, day and night.', cost: 40, apply: (c) => (c.sensorRange = 8) },
+  { id: 'LIDAR_8', title: 'Long-range radar', description: 'Radar range 6 → 8 tiles, day and night.', cost: 40, apply: (c) => (c.sensorRange = 8) },
   { id: 'ARMOR', title: 'Hull plating', description: 'Squalls wear the hull half as fast.', cost: 60, apply: (c) => (c.hullArmor = 2) },
   {
     id: 'SEISMIC',
     title: 'Seismic scanner (TOOL_3)',
-    description: 'ACT TOOL_3 dir: finds the nearest ore vein up to 12 tiles away, through walls. Results in @SEISMIC_TYPE / @SEISMIC_DIST.',
+    description: 'CALL ACT TOOL_3 dir: finds the nearest ore vein up to 12 tiles away, through walls. Results in @SEISMIC_TYPE / @SEISMIC_DIST.',
     cost: 80,
     apply: (c) => (c.tools[3] = 'SEISMIC'),
   },
@@ -83,9 +84,9 @@ export const UPGRADES: UpgradeDef[] = [
   { id: 'REC_4K', title: 'Recorder 4 KB', description: 'Science recorder 2048 → 4096 bytes.', cost: 80, requires: ['REC_2K'], apply: (c) => (c.recorderBytes = 4096) },
   { id: 'LINK_3', title: 'High-gain amplifier', description: 'Downlink 2 → 3 bytes per tick at full signal (same energy per tick).', cost: 60, apply: (c) => (c.linkBytesPerTick = 3) },
   { id: 'TRACE_64', title: 'Trace buffer', description: 'Log FIFO 32 → 64 bytes.', cost: 30, apply: (c) => (c.logFifoBytes = 64) },
-  { id: 'CAM_COLOUR', title: 'Colour filter wheel', description: 'SNAP dir 3: 32×32 photo, 16-colour planet palette (514 B).', cost: 60, apply: (c) => addMode(c, 3) },
-  { id: 'CAM_HIRES', title: 'Hi-res sensor', description: 'SNAP dir 4: 64×64 grey photo, dithered (1026 B).', cost: 80, requires: ['REC_2K'], apply: (c) => addMode(c, 4) },
-  { id: 'CAM_RGB', title: 'Colour sensor', description: 'SNAP dir 5: 32×32 photo, 8 bpp RGB332 (1026 B).', cost: 100, requires: ['CAM_COLOUR', 'REC_2K'], apply: (c) => addMode(c, 5) },
+  { id: 'CAM_COLOUR', title: 'Colour filter wheel', description: 'Camera mode 3 (CALL SNAP dir 3): 32×32 photo, 16-colour planet palette (514 B).', cost: 60, apply: (c) => addMode(c, 3) },
+  { id: 'CAM_HIRES', title: 'Hi-res sensor', description: 'Camera mode 4: 64×64 grey photo, dithered (1026 B).', cost: 80, requires: ['REC_2K'], apply: (c) => addMode(c, 4) },
+  { id: 'CAM_RGB', title: 'Colour sensor', description: 'Camera mode 5: 32×32 photo, 8 bpp RGB332 (1026 B).', cost: 100, requires: ['CAM_COLOUR', 'REC_2K'], apply: (c) => addMode(c, 5) },
 ];
 
 export const UPGRADE_BY_ID: Record<string, UpgradeDef> = Object.fromEntries(UPGRADES.map((u) => [u.id, u]));

@@ -87,17 +87,17 @@ describe('VAR: named RAM', () => {
   });
 
   it('firmware and program share RAM: an absolute address is a mailbox between them', () => {
-    const { e, u } = rover('CONST BOX 20\nSTB [BOX] 99\nloop: RUN 5\nLDB r1 [BOX]\nSLEEP 1000', 'LDB r0 [20]\nADD r0 1\nSTB [20] r0\nEND r0');
+    const { e, u } = rover('CONST BOX 20\nSTB [BOX] 99\nloop: CALL RUN 5\nLDB r1 [BOX]\nCALL SLEEP 1000', 'LDB r0 [20]\nADD r0 1\nSTB [20] r0\nEND r0');
     run(e, 5);
     expect(u.progResult).toBe(100);
     expect(u.vm.regs[1]).toBe(100);
   });
 
   it('RAM is zero after a hard reboot, and grows with RAM upgrades', () => {
-    const { e, u } = rover('STB [5] 42\nSLEEP 1000');
+    const { e, u } = rover('STB [5] 42\nCALL SLEEP 1000');
     run(e, 1);
     expect(u.ram[5]).toBe(42);
-    e.upload(u, 'SLEEP 1000', { factory: true });
+    e.upload(u, 'CALL SLEEP 1000', { factory: true });
     expect(u.ram[5]).toBe(0);
     u.ram[3] = 7;
     UPGRADE_BY_ID.RAM_128.apply(u.chassis, u);
@@ -106,7 +106,7 @@ describe('VAR: named RAM', () => {
   });
 
   it('a RAM upgrade does not move the installed firmware VARs (save, load and continue stay identical)', () => {
-    const fw = 'VAR count\nloop: LDB r0 [count]\nADD r0 1\nSTB [count] r0\nSLEEP 3\nJMP loop';
+    const fw = 'VAR count\nloop: LDB r0 [count]\nADD r0 1\nSTB [count] r0\nCALL SLEEP 3\nJMP loop';
     const make = () => {
       const r = rover(fw);
       run(r.e, 10);
@@ -131,7 +131,7 @@ describe('VAR: named RAM', () => {
 
 describe('the data address space', () => {
   it('cargo is read-only memory at CARGO; unmapped addresses and writes to cargo fault', () => {
-    const { e, u } = rover('LDB r0 [CARGO+1]\nLDB r1 [CARGO]\nSLEEP 1000');
+    const { e, u } = rover('LDB r0 [CARGO+1]\nLDB r1 [CARGO]\nCALL SLEEP 1000');
     u.cargo[1] = T.IRON_ORE;
     run(e, 1);
     expect([u.vm.regs[0], u.vm.regs[1]]).toEqual([T.IRON_ORE, 0]);
@@ -140,7 +140,7 @@ describe('the data address space', () => {
       ['LDB r0 [64]', /No memory at 0x040/], // past the end of the 64 B RAM
       ['LDB r0 [CARGO+4]', /No memory at 0x604/], // only 4 cargo slots
     ] as const) {
-      const r = rover(`${src}\nSLEEP 1000`);
+      const r = rover(`${src}\nCALL SLEEP 1000`);
       run(r.e, 1);
       expect(r.u.vm.state).toBe(CpuState.FAULT);
       expect(r.u.vm.faultReason).toMatch(why);
@@ -148,7 +148,7 @@ describe('the data address space', () => {
   });
 
   it('a program that runs off its memory faults back to the firmware, which keeps running', () => {
-    const { e, u } = rover('loop: RUN 50\nJEQ @PROG_STATE PROG_READY loop\nSLEEP 1000', 'MOV r0 0\nl: STB [r0] 1\nADD r0 1\nJMP l');
+    const { e, u } = rover('loop: CALL RUN 50\nJEQ @PROG_STATE PROG_READY loop\nCALL SLEEP 1000', 'MOV r0 0\nl: STB [r0] 1\nADD r0 1\nJMP l');
     run(e, 100);
     expect(u.progState).toBe(ProgState.PROG_FAULT);
     expect(u.prog.faultReason).toMatch(/No memory at 0x040 \(STB\)/);
@@ -162,23 +162,23 @@ describe('DATA and LDF: constant data in Flash', () => {
     const r = c(src);
     expect(r.errors).toEqual([]);
     const p = r.program!;
-    expect(p.codeBytes).toBe(12); // two LDF: 2-byte opcode + register + [address] 3 B
+    expect(p.codeBytes).toBe(10); // two LDF: opcode + register + [address] 3 B
     expect(p.labels.START).toBe(0); // code starts at 0: DATA moved behind it
-    expect(p.labels.TAB).toBe(12);
-    expect(p.labels.MORE).toBe(15);
-    expect(hex(p.code.slice(12))).toBe('0A 14 FF FF 01');
-    expect(r.flashUsed).toBe(17);
+    expect(p.labels.TAB).toBe(10);
+    expect(p.labels.MORE).toBe(13);
+    expect(hex(p.code.slice(10))).toBe('0A 14 FF FF 01');
+    expect(r.flashUsed).toBe(15);
     expect(c('DATA 256').errors[0].message).toMatch(/does not fit in a byte/);
     expect(c('DATA').errors[0].message).toMatch(/DATA expects/);
   });
 
   it('the CPU wraps at the end of the code, never runs into data, and LDF past the slot faults', () => {
-    const { e, u } = rover('ADD r0 1\nLDF r1 [tab]\nSLEEP 1\ntab: DATA 42');
+    const { e, u } = rover('ADD r0 1\nLDF r1 [tab]\nCALL SLEEP 1\ntab: DATA 42');
     run(e, 6);
     expect(u.vm.regs[1]).toBe(42);
     expect(u.vm.regs[0]).toBeGreaterThan(1); // looped back to the top
     expect(u.vm.state).not.toBe(CpuState.FAULT);
-    const bad = rover('LDF r0 [100]\nSLEEP 10');
+    const bad = rover('LDF r0 [100]\nCALL SLEEP 10');
     run(bad.e, 1);
     expect(bad.u.vm.faultReason).toMatch(/No Flash at 0x064/);
   });
@@ -187,14 +187,14 @@ describe('DATA and LDF: constant data in Flash', () => {
     const src = 'route: DATA 1 2 3\nLDF r0 [route]\nEND r0';
     const r = c(src, 'program');
     const text = listingText(buildListing(src, r, 'program'));
-    expect(text.split('\n')[0]).toMatch(/^prog:0x008 +01 02 03 +route: DATA 1 2 3$/);
-    expect(text.split('\n')[1]).toMatch(/^prog:0x000 +1F 07 10 1C 00 08 +LDF r0 \[route\]$/);
+    expect(text.split('\n')[0]).toMatch(/^prog:0x007 +01 02 03 +route: DATA 1 2 3$/);
+    expect(text.split('\n')[1]).toMatch(/^prog:0x000 +13 10 1C 00 07 +LDF r0 \[route\]$/); // M14: LDF is opcode 13
   });
 });
 
 describe('save v17', () => {
   it('saves RAM', () => {
-    const { e } = rover('STB [7] 9\nSLEEP 1000');
+    const { e } = rover('STB [7] 9\nCALL SLEEP 1000');
     run(e, 2);
     const b = deserialize(JSON.parse(JSON.stringify(serialize(e))));
     expect(b.units[0].ram[7]).toBe(9);
@@ -204,7 +204,7 @@ describe('save v17', () => {
     expect(migrateImageMemory('loop:   LDB r1 r0       ; read\n  STB r0 r1\nLDB r2 [IMG]\n; LDB in a comment')).toBe(
       'loop:   LDB r1 [IMG+r0]       ; read\n  STB [IMG+r0] r1\nLDB r2 [IMG]\n; LDB in a comment',
     );
-    const { e } = rover(DEFAULT_FIRMWARE, 'SLEEP 1');
+    const { e } = rover(DEFAULT_FIRMWARE, 'CALL SLEEP 1');
     run(e, 3);
     const v16 = JSON.parse(JSON.stringify(serialize(e)));
     v16.version = 16;

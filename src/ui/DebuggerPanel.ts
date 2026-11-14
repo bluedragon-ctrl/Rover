@@ -17,7 +17,7 @@ export class DebuggerPanel {
   /** `slot`: the context to show (the Code tab's slot). */
   update(u: Unit, slot: Slot = 'firmware'): void {
     const vm = slot === 'program' ? u.prog : u.vm;
-    const ctx0 = slot === 'program' ? `PROGRAM${u.slice >= 0 ? ` · slice ${u.slice}t left` : ''}` : `FIRMWARE${u.slice >= 0 ? ' · waiting in RUN' : ''}`;
+    const ctx0 = slot === 'program' ? `PROGRAM${u.slice > 0 ? ` · slice ${u.slice}t left` : u.slice === 0 ? ' · no time limit' : ''}` : `FIRMWARE${u.slice >= 0 ? ' · in CALL PROGRAM' : ''}`;
     const progCls: Record<number, string> = { [ProgState.PROG_RUNNING]: 'ok', [ProgState.PROG_READY]: 'info', [ProgState.PROG_HALTED]: 'warn', [ProgState.PROG_FAULT]: 'bad' };
     const stateText = slot === 'program' ? ProgState[u.progState] : vm.state;
     const stateClass =
@@ -33,10 +33,14 @@ export class DebuggerPanel {
       const v = p.read ? p.read(u, ctx) : '—';
       return `<div class="kv" title="${esc(p.description)}"><span>@${p.name}${p.write ? '<i>w</i>' : ''}</span><b>${v}</b></div>`;
     }).join('');
-    let action = 'idle';
-    if (u.action?.kind === 'WAIT') action = `waiting ${u.action.ticksLeft}t`;
-    else if (u.action?.kind === 'TOOL') action = `${u.action.tool} ${u.action.ticksLeft}t`;
-    else if (u.action?.kind === 'STEP') action = `STEP ${Dir[u.action.dir]} (${u.action.tilesLeft} left, ${u.action.ticksLeft}t)`;
+    // M14 devices: what is working right now.
+    const busy: string[] = [];
+    if (u.action?.kind === 'TOOL') busy.push(`${u.action.tool} ${u.action.ticksLeft}t`);
+    else if (u.action?.kind === 'STEP') busy.push(`drive ${Dir[u.action.dir]} (${u.action.tilesLeft} left, ${u.action.ticksLeft}t${u.action.stop ? ', stopping' : ''})`);
+    if (u.radarTicks) busy.push(`radar ${Dir[u.radarDir]}`);
+    if (u.imgOp) busy.push(`${u.imgOp.kind} ${u.imgOp.ticksLeft}t`);
+    if (vm.timer) busy.push(`timer ${vm.timer}t`);
+    const action = busy.length ? busy.join(' · ') : 'devices idle';
     const batPct = (u.energy * 100) / u.chassis.batteryCapacity;
 
     const html = `

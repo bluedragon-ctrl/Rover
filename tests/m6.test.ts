@@ -11,7 +11,7 @@ const factory = { factory: true };
 const run = (e: SimulationEngine, n: number) => {
   for (let i = 0; i < n; i++) e.advanceTick();
 };
-function rover(src = 'SLEEP 100000', seed = 3) {
+function rover(src = 'CALL SLEEP 100000', seed = 3) {
   const e = new SimulationEngine({ seed });
   const u = e.spawnUnit('t');
   expect(e.upload(u, src, factory).errors).toEqual([]);
@@ -20,7 +20,7 @@ function rover(src = 'SLEEP 100000', seed = 3) {
 
 describe('subsystems & material repairs', () => {
   it('a damaged array charges proportionally less', () => {
-    const { e, u } = rover('MOV @SOLAR_OPEN 1\nMOV @SOLAR_ANGLE @SUN_AZIMUTH\nSLEEP 100000');
+    const { e, u } = rover('MOV @SOLAR_OPEN 1\nMOV @SOLAR_ANGLE @SUN_AZIMUTH\nCALL SLEEP 100000');
     run(e, 80);
     const full = u.lastSolarGain;
     u.solarHealth = 50;
@@ -39,7 +39,7 @@ describe('subsystems & material repairs', () => {
 
   it('repairs consume the right material from cargo', () => {
     const { e, u } = rover(
-      'USE 0 SYS_SOLAR\nMOV r0 @STATUS\nUSE 1 SYS_SOLAR\nMOV r1 @STATUS\nUSE 1 SYS_HULL\nMOV r2 @STATUS\nUSE 2 SYS_ANTENNA\nMOV r3 @STATUS\nSLEEP 100000',
+      'CALL USE 0 SYS_SOLAR\nMOV r0 @STATUS\nCALL USE 1 SYS_SOLAR\nMOV r1 @STATUS\nCALL USE 1 SYS_HULL\nMOV r2 @STATUS\nCALL USE 2 SYS_ANTENNA\nMOV r3 @STATUS\nCALL SLEEP 100000',
     );
     u.cargo = [T.IRON_ORE, T.SILICON_ORE, T.REPAIR_KIT, 0];
     u.solarHealth = 50;
@@ -65,7 +65,7 @@ describe('storyteller events', () => {
   };
 
   it('nothing happens until the prerequisites (First contact) are met', () => {
-    const { ev } = starts(42, 'SLEEP 100000', 6);
+    const { ev } = starts(42, 'CALL SLEEP 100000', 6);
     expect(ev).toEqual([]);
   });
 
@@ -95,7 +95,7 @@ describe('storyteller events', () => {
   });
 
   it('eclipses darken the sky to their minimum and show on @ALERT', () => {
-    const { e, u } = rover('MOV r0 @ALERT\nMOV r1 @SUN_LIGHT\nSLEEP 1');
+    const { e, u } = rover('MOV r0 @ALERT\nMOV r1 @SUN_LIGHT\nCALL SLEEP 1');
     run(e, 300);
     const day = e.sun.light;
     e.director.triggerNow('PARTIAL_ECLIPSE');
@@ -112,9 +112,9 @@ describe('storyteller events', () => {
   });
 
   it('a squall wears hull and dish and wrecks an open array; the training squall is gentle', () => {
-    const open = rover('MOV @SOLAR_OPEN 1\nSLEEP 100000');
-    const shut = rover('SLEEP 100000');
-    const dust = rover('MOV @SOLAR_OPEN 1\nSLEEP 100000');
+    const open = rover('MOV @SOLAR_OPEN 1\nCALL SLEEP 100000');
+    const shut = rover('CALL SLEEP 100000');
+    const dust = rover('MOV @SOLAR_OPEN 1\nCALL SLEEP 100000');
     for (const [r, id] of [[open, 'SQUALL'], [shut, 'SQUALL'], [dust, 'DUST_SQUALL']] as const) {
       run(r.e, 30);
       r.e.director.triggerNow(id);

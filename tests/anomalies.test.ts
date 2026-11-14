@@ -71,7 +71,7 @@ describe('anomalies (SPEC §3.8.5)', () => {
   });
 
   it('SNAP of an anomaly tile marks the descriptor and shows a different scene', () => {
-    const { e, u } = rover('SNAP EAST\nSEND\nSLEEP 1000');
+    const { e, u } = rover('CALL SNAP EAST 1\nCALL SEND 0\nCALL SLEEP 1000');
     const y = cliffTile(true);
     // Put the rover next to the anomaly cliff.
     u.y = y;
@@ -84,7 +84,7 @@ describe('anomalies (SPEC §3.8.5)', () => {
     expect(productPayload(SEED, p)).not.toEqual(plain);
     expect(productPayload(SEED, p)).toEqual(productPayload(SEED, { ...p })); // deterministic
 
-    const n = rover('SNAP EAST\nSEND\nSLEEP 1000');
+    const n = rover('CALL SNAP EAST 1\nCALL SEND 0\nCALL SLEEP 1000');
     const y2 = cliffTile(false);
     n.u.y = y2;
     for (let x = -1; x <= 3; x++) n.e.world.setTile(x, y2, Layer.OBSTACLE, 0);
@@ -94,7 +94,7 @@ describe('anomalies (SPEC §3.8.5)', () => {
   });
 
   it('flagging: +20 once per tile, already catalogued pays nothing, wrong −5 never below 0', () => {
-    const { e } = rover('SLEEP 1000');
+    const { e } = rover('CALL SLEEP 1000');
     e.credits = 7;
     const hit = delivered(e, { anomaly: true, sx: 2, sy: 3 });
     expect(e.flagAnomaly(hit)).toBeNull();
@@ -120,7 +120,7 @@ describe('anomalies (SPEC §3.8.5)', () => {
   });
 
   it('only complete, lit photos can be flagged', () => {
-    const { e } = rover('SLEEP 1000');
+    const { e } = rover('CALL SLEEP 1000');
     e.credits = 50;
     expect(e.flagAnomaly(delivered(e, { anomaly: true, received: 100 }))).toBe('photo not complete');
     expect(e.flagAnomaly(delivered(e, { anomaly: true, lit: false }))).toBe('dark photo');
@@ -130,7 +130,7 @@ describe('anomalies (SPEC §3.8.5)', () => {
   });
 
   it('goal Anomaly hunter: one correct flag, 30 credits', () => {
-    const { e } = rover('SLEEP 1000');
+    const { e } = rover('CALL SLEEP 1000');
     e.flagAnomaly(delivered(e, { anomaly: true }));
     run(e, 10); // goals are checked every 10 ticks
     expect(e.director.completed.has('anomaly_hunter')).toBe(true);
@@ -138,7 +138,7 @@ describe('anomalies (SPEC §3.8.5)', () => {
   });
 
   it('flags and catalogued tiles survive save and load; v8 saves migrate', () => {
-    const { e } = rover('SLEEP 1000');
+    const { e } = rover('CALL SLEEP 1000');
     const g = delivered(e, { anomaly: true, sx: 4, sy: 4 });
     e.flagAnomaly(g);
     const l = deserialize(JSON.parse(JSON.stringify(serialize(e))));
@@ -146,7 +146,7 @@ describe('anomalies (SPEC §3.8.5)', () => {
     expect(l.gallery.at(-1)).toMatchObject({ flag: 'hit', anomaly: true });
     expect(l.stats.anomaliesFound).toBe(1);
 
-    const v8 = serialize(rover('SLEEP 10').e) as unknown as Record<string, any>;
+    const v8 = serialize(rover('CALL SLEEP 10').e) as unknown as Record<string, any>;
     v8.version = 8;
     delete v8.anomalyTiles;
     delete v8.stats.anomaliesFound;

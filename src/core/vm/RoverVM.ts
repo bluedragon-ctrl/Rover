@@ -1,21 +1,26 @@
 import type { ChassisDef } from '../balance';
 import { CpuState, Status, i32 } from '../types';
-import { HARDWARE_OPS, type Instr, type Operand, type Program } from './Compiler';
+import { PROGRAM_GATE, romProgram, ROM_BASE, type Operand, type Program } from './Compiler';
 
 /** What the VM needs from the outside world. Implemented by SimulationEngine. */
 export interface VmHost {
   readPort(name: string): number;
+  /** A port write; writing a device's start port starts it and sets @STATUS (M14). */
   writePort(name: string, value: number): void;
-  /**
-   * Start a hardware instruction. `values` are the resolved value operands.
-   * Return output values (written to the instruction's destination operands, in order).
-   * The host decides whether the CPU becomes BLOCKED (via vm.block()).
-   */
-  hardware(instr: Instr, values: number[]): number[] | void;
   /** LOG: queue a log frame (compute instruction, no @STATUS). */
   log?(tag: number, value: number | null): void;
-  /** END (program slot, M10): the program finished with `value`. */
+  /** END, or RET from the program's top level (program slot): the program finished with `value`. */
   end?(value: number): void;
+  /**
+   * M14 `WAIT @port` found the port at 0: the device's result for @STATUS (undefined: not a
+   * device port, @STATUS stays).
+   */
+  waitResult?(port: string): number | undefined;
+  /**
+   * M14 firmware `CALL PROGRAM`: enter the program if it is ready (true; the host switches
+   * contexts), else false (the CALL does nothing, @STATUS = ERR_INVALID).
+   */
+  callProgram?(): boolean;
   /**
    * LDB: the byte (0–255) at data address `addr` (M14 memory map: RAM, image memory, cargo),
    * or undefined if no memory answers there (the CPU faults). Compute: no @STATUS.
@@ -38,11 +43,14 @@ export class RoverVM {
   faultReason = '';
   /** Ticks until the watchdog reboots a FAULTed CPU. */
   watchdog = 0;
+  /** M14 @TIMER of this slot: ticks left (counted down by the host every tick). */
+  timer = 0;
   /** Source line of the instruction executed most recently (for the debugger). */
   lastLine = 0;
   instructionsExecuted = 0;
 
-  constructor(readonly chassis: ChassisDef) {
+  /** `isProgram`: the program slot's context (a top-level RET returns to the firmware). */
+  constructor(readonly chassis: ChassisDef, readonly isProgram = false) {
     this.regs = new Int32Array(chassis.registers);
   }
 
@@ -68,6 +76,7 @@ export class RoverVM {
     this.status = Status.OK;
     this.faultReason = '';
     this.watchdog = 0;
+    this.timer = 0;
     this.lastLine = 0;
     if (this.state !== CpuState.DESTROYED && this.state !== CpuState.POWER_OFF) this.state = CpuState.RUNNING;
   }
@@ -96,14 +105,21 @@ export class RoverVM {
     this.watchdog = watchdogTicks;
   }
 
-  /** Byte address of the instruction that will run next (after wrap-around). */
+  /** Byte address of the instruction that will run next (after wrap-around; ROM and the program gate as they are). */
   get nextIp(): number {
+    if (this.ip >= PROGRAM_GATE) return this.ip;
     const n = this.program?.codeBytes ?? 0;
     return n === 0 || this.ip >= n || this.ip < 0 ? 0 : this.ip;
   }
 
-  /** Source line of the instruction at byte address `addr` (0 if none starts there). */
+  /** Inside a ROM routine (M14)? */
+  get inRom(): boolean {
+    return this.ip >= ROM_BASE;
+  }
+
+  /** Source line of the instruction at byte address `addr` in this slot's code (0 if none starts there, or ROM). */
   lineAt(addr: number): number {
+    if (addr >= PROGRAM_GATE) return 0;
     const p = this.program;
     const k = p?.indexAt.get(addr);
     return k === undefined ? 0 : p!.instrs[k].line;
@@ -115,9 +131,11 @@ export class RoverVM {
 
   /** Execute exactly one instruction. Caller guarantees state === RUNNING. */
   step(host: VmHost, watchdogTicks: number): StepResult {
-    const prog = this.program;
-    if (!prog || prog.instrs.length === 0) return 'endTick';
-    if (this.ip >= prog.codeBytes || this.ip < 0) this.ip = 0; // implicit main loop (the data section is not code)
+    const own = this.program;
+    if (!own || own.instrs.length === 0) return 'endTick';
+    const rom = this.ip >= ROM_BASE;
+    if (!rom && (this.ip >= own.codeBytes || this.ip < 0)) this.ip = 0; // implicit main loop (the data section is not code)
+    const prog = rom ? romProgram() : own;
     const k = prog.indexAt.get(this.ip);
     if (k === undefined) {
       // Only reachable through a corrupted return address: no instruction starts here.
@@ -125,7 +143,7 @@ export class RoverVM {
       return 'endTick';
     }
     const ins = prog.instrs[k];
-    this.lastLine = ins.line;
+    if (!rom) this.lastLine = ins.line;
     this.instructionsExecuted++;
     const a = ins.args;
     const val = (o: Operand): number => {
@@ -239,6 +257,17 @@ export class RoverVM {
         const args = a.slice(1).map(val);
         if (this.callStack.length >= this.chassis.callStack) return stackFault('Call stack overflow (CALL)');
         if (this.dataStack.length + args.length > this.chassis.dataStack) return stackFault('Data stack overflow (CALL args)');
+        if ((a[0] as { target: number }).target === PROGRAM_GATE) {
+          // M14 CALL PROGRAM: the return address goes on this call stack; the host switches to
+          // the program's context, which continues in this tick with the cycles left.
+          this.ip = next;
+          if (!this.isProgram && host.callProgram?.()) {
+            this.status = Status.OK;
+            this.callStack.push(next);
+            this.ip = PROGRAM_GATE;
+          } else this.status = Status.ERR_INVALID;
+          return 'continue';
+        }
         this.dataStack.push(...args);
         this.callStack.push(next);
         jump(a[0]);
@@ -246,8 +275,26 @@ export class RoverVM {
       }
       case 'RET': {
         const r = this.callStack.pop();
-        if (r === undefined) return stackFault('Call stack underflow (RET)');
+        if (r === undefined) {
+          if (!this.isProgram) return stackFault('Call stack underflow (RET)');
+          // M14: RET from the program's top level returns to the firmware with r0.
+          this.ip = next;
+          host.end?.(this.regs[0]);
+          return 'continue';
+        }
         next = r;
+        break;
+      }
+      case 'WAIT': {
+        // M14: sleep until the port reads 0, checked again at the start of every tick (the
+        // host wakes the CPU; this instruction then runs again and finds 0).
+        const port = (a[0] as { name: string }).name;
+        if (i32(host.readPort(port)) !== 0) {
+          this.block();
+          return 'endTick';
+        }
+        const r = host.waitResult?.(port);
+        if (r !== undefined) this.status = r as Status;
         break;
       }
       case 'LOG':
@@ -260,7 +307,7 @@ export class RoverVM {
       case 'END':
         this.ip = next;
         host.end?.(a.length ? val(a[0]) : 0);
-        return 'endTick';
+        return 'continue';
       case 'LDB': {
         const at = addrOf(a[1]);
         const b = host.load?.(at);
@@ -281,34 +328,22 @@ export class RoverVM {
         break;
       }
       case 'LDF': {
-        // Flash of this slot: instructions, then the DATA section.
+        // Flash of this slot (instructions, then the DATA section), or the ROM at 0xF000+.
         const at = addrOf(a[1]);
-        if (at < 0 || at >= prog.code.length) {
-          this.fault(`No Flash at ${hex(at)} (LDF: this slot has ${prog.code.length} B)`, watchdogTicks);
+        const romFlash = romProgram().code;
+        if (at >= ROM_BASE && at < ROM_BASE + romFlash.length) {
+          put(a[0], romFlash[at - ROM_BASE]);
+          break;
+        }
+        if (at < 0 || at >= own.code.length) {
+          this.fault(`No Flash at ${hex(at)} (LDF: this slot has ${own.code.length} B)`, watchdogTicks);
           return 'endTick';
         }
-        put(a[0], prog.code[at]);
+        put(a[0], own.code[at]);
         break;
       }
-      case 'PEEK': {
-        // Cargo is [later]; route through host so it can implement it without VM changes.
-        const out = host.hardware(ins, [val(a[0])]) ?? [];
-        put(a[1], out[0] ?? 0);
-        break;
-      }
-      default: {
-        if (!HARDWARE_OPS.has(ins.op)) throw new Error(`Unhandled op ${ins.op}`);
-        const values: number[] = [];
-        const dests: Operand[] = [];
-        if (ins.op === 'SCAN') {
-          values.push(val(a[0]));
-          dests.push(a[1], a[2]);
-        } else for (const o of a) values.push(val(o));
-        this.ip = next;
-        const out = host.hardware(ins, values) ?? [];
-        dests.forEach((d, i) => put(d, out[i] ?? 0));
-        return 'endTick';
-      }
+      default:
+        throw new Error(`Unhandled op ${ins.op satisfies never}`);
     }
     this.ip = next;
     return 'continue';

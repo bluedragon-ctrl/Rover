@@ -1,6 +1,8 @@
 import { PORT_CODES, PORTS } from '../core/ports';
-import { HARDWARE_OPS, opcodeHex, type Op } from '../core/vm/isa';
-import { formatSig, OPCODES } from '../core/vm/Compiler';
+import { opcodeHex, ROM_BASE, type Op } from '../core/vm/isa';
+import { formatSig, OPCODES, romCompile } from '../core/vm/Compiler';
+import { ROM_ENTRIES, ROM_SOURCE } from '../core/rom';
+import { buildListing, listingText } from './listing';
 import type { TileDef, WorldRegistry } from '../core/WorldRegistry';
 import { BALANCE, CHASSIS_MK1, ENCODING as E, MEMORY_MAP } from '../core/balance';
 import { BOOT_REASON_NAMES, DumpKind, encodeCpuDump, encodeLog, encodeStackDump } from '../core/downlink';
@@ -21,17 +23,14 @@ const NOTES: Record<string, string> = {
   AND: 'dst = dst AND v, bit by bit (AND 3 keeps the lowest two bits)', OR: 'dst = dst OR v, bit by bit (sets the bits of v)',
   SHL: 'shift dst left by v bits (SHL 2 = × 4); v clamped to 0–32', SHR: 'shift dst right by v bits, zeros come in from the left (SHR 2 = / 4 for values ≥ 0); v clamped to 0–32',
   JMP: 'jump', JEQ: 'jump if a == b', JNE: 'jump if a != b', JLT: 'jump if a < b', JGT: 'jump if a > b', JLE: 'jump if a <= b', JGE: 'jump if a >= b',
-  CALL: 'push args, call', RET: 'return',
-  SLEEP: 'wait N ticks', SCAN: 'ray: dest1 = tile type, dest2 = distance', STEP: 'drive [tiles] in dir', ACT: 'fire tool in hardpoint (see Tools)', PEEK: 'dest = item ID in cargo slot', USE: 'repair [system] (default SYS_HULL) by consuming the material in cargo slot (see Tools)',
-  SNAP: 'photograph the subject in dir into image memory (see Tools); nothing is sent until SEND. Mk-I modes 1 (grey) and 2 (dithered), 256 B each; needs daylight or the headlight aimed at dir',
+  CALL: 'push args, call a label of yours or a ROM routine (CALL STEP EAST 3: see ROM). Firmware only: CALL PROGRAM calls the program slot (@SLICE ticks; 0 = no limit), @STATUS ERR_INVALID if it is not PROG_READY',
+  RET: 'return. In the program, a RET with nothing to return to ends the program: PROG_DONE with @PROG_RESULT = r0',
+  WAIT: 'WAIT @port: sleep until the port reads 0 (no energy; checked at the start of every tick). On a device\'s port (@DRIVE, @RADAR, @TOOL, @REPAIR, @CAM, @SEND, @ERASE) @STATUS then says how the device\'s work ended. 1 cycle',
   LDB: 'LDB dst [addr]: dst = the byte (0–255) at data address addr: RAM from 0, image memory from IMG, cargo from CARGO (Basics → Memory). [r], [n], [r+n]. No memory there: FAULT. 1 cycle, no @STATUS',
-  STB: 'STB [addr] v: byte at data address addr = v (only the low 8 bits: 256 → 0, −1 → 255). Cargo is read-only; no memory there: FAULT. 1 cycle, no @STATUS. Into image memory: makes the next SEND of the photo "edited"',
+  STB: 'STB [addr] v: byte at data address addr = v (only the low 8 bits: 256 → 0, −1 → 255). Cargo is read-only; no memory there: FAULT. 1 cycle, no @STATUS. Into image memory: makes the next send of the photo "edited"',
   LDF: 'LDF dst [addr]: dst = the byte at addr of this slot\'s own Flash, e.g. a DATA table: LDF r0 [route+r1]. Past the end of the slot: FAULT. 1 cycle, no @STATUS',
-  SEND: 'copy image memory into the science recorder as a photo of [type] (default: the last SNAP\'s mode; SEND 1 = 32×32 grey). The first SEND after a SNAP carries its credits; any other SEND is a "drawn" picture worth nothing. Image memory is kept. 1 tick, 10 energy; ERR_FULL (recorder), ERR_INVALID (type), ERR_LOW_POWER',
-  ERASE: 'zero all of image memory and forget the last SNAP (the next SEND is a drawn picture). Image memory keeps its contents through reboots and power loss until ERASE or a new SNAP. 2 ticks, 10 energy',
   LOG: 'queue a log frame for the downlink (Comms tab). tag: number or CONST 0–14 (15 = system). 1 cycle, no @STATUS; dropped if the FIFO is full (@LOG_LOST)',
   BRK: 'breakpoint: halt the CPU (HALTED) until mission control sends Resume (Continue) or you upload; the world keeps running, no watchdog. The rover sends a register dump by itself (Comms: "sent by BRK"). 1 cycle. In a program: halts only the program (PROG_HALTED)',
-  RUN: 'firmware only: run the program for N ticks (a STEP or SLEEP in progress finishes first, unless a @PREEMPT condition ends the slice at once), then continue here. @STATUS ERR_INVALID if @PROG_STATE is not PROG_READY',
   END: 'program only: finish with @PROG_STATE = PROG_DONE and @PROG_RESULT = value (default 0); control returns to the firmware',
 };
 
@@ -41,10 +40,9 @@ const OP_GROUPS: [string, Op[]][] = [
   ['Arithmetic', ['ADD', 'SUB', 'MUL', 'DIV', 'MOD']],
   ['Bits (2-byte opcodes)', ['AND', 'OR', 'SHL', 'SHR']],
   ['Flow control', ['JMP', 'JEQ', 'JNE', 'JLT', 'JGT', 'JLE', 'JGE', 'CALL', 'RET']],
-  ['Hardware (end the tick, write @STATUS)', ['SLEEP', 'SCAN', 'STEP', 'ACT', 'PEEK', 'USE', 'SNAP']],
+  ['Devices (the hardware is driven through ports: see Ports → Devices, and the ROM)', ['WAIT']],
   ['Memory (load / store: the only instructions that touch memory)', ['LDB', 'STB', 'LDF']],
-  ['Image memory (SNAP → LDB / STB → SEND)', ['SEND', 'ERASE']],
-  ['Program, log and debug', ['RUN', 'END', 'LOG', 'BRK']],
+  ['Program, log and debug', ['END', 'LOG', 'BRK']],
 ];
 
 /** Port sections. A port not listed here lands in "Other", so new ones still show up. */
@@ -54,10 +52,11 @@ const PORT_GROUPS: [string, string[]][] = [
   ['Sensors and ground', ['GROUND', 'GROUND_HAZARD', 'SENSOR_RANGE', 'SEISMIC_TYPE', 'SEISMIC_DIST']],
   ['Cargo, science and supplies', ['CARGO_FREE', 'SCIENCE_READY', 'REC_FREE', 'DROPS', 'DROP_X', 'DROP_Y']],
   ['Sun and solar array', ['SUN_AZIMUTH', 'SUN_ELEV', 'SUN_LIGHT', 'SOLAR_OPEN', 'SOLAR_ANGLE', 'SOLAR_DUST']],
-  ['Comms and log', ['ORBIT_AZIMUTH', 'ANTENNA_ANGLE', 'SIGNAL_STR', 'TX_DATA', 'LOG_FREE', 'LOG_LOST']],
+  ['Devices: write to start (@STATUS = accepted?), read = work left, WAIT @port for the result', ['TIMER', 'DRIVE', 'DRIVE_N', 'RADAR', 'RADAR_HIT', 'RADAR_DIST', 'TOOL', 'TOOL_ARG', 'REPAIR', 'REPAIR_SYS', 'CAM', 'CAM_MODE', 'SEND', 'ERASE']],
+  ['Comms and log', ['ORBIT_AZIMUTH', 'ANTENNA_ANGLE', 'SIGNAL_STR', 'LOG_FREE', 'LOG_LOST']],
   ['World events', ['ALERT', 'ALERT_ETA']],
   ['Lights and displays', ['HEADLIGHT', 'IND1', 'IND2', 'IND3', 'POST']],
-  ['Firmware and program', ['PROG_STATE', 'PROG_RESULT']],
+  ['Firmware and program', ['PROG_STATE', 'PROG_RESULT', 'SLICE']],
   ['Watchdog and fault protection (firmware writes)', ['WDT', 'PREEMPT', 'BAT_ALARM', 'PREEMPTED']],
 ];
 
@@ -66,7 +65,7 @@ const CONST_GROUPS: [string, object][] = [
   ['Directions', Dir],
   ['Status codes (@STATUS)', Status],
   ['Light colors (@IND1–3)', LightColor],
-  ['Systems (USE)', SystemId],
+  ['Systems (@REPAIR_SYS, CALL USE)', SystemId],
   ['Alerts (@ALERT)', Alert],
   ['Program states (@PROG_STATE)', ProgState],
   ['Memory map (data addresses)', MEMORY_MAP],
@@ -81,6 +80,7 @@ const SECTIONS = [
   ['consts', 'Constants'],
   ['radio', 'Radio'],
   ['image', 'Image'],
+  ['rom', 'ROM'],
 ] as const;
 
 /** Split `items` into the named groups (in order) plus an "Other" group for leftovers. */
@@ -103,19 +103,21 @@ const constList = (entries: [string, number][]) =>
 function basicsHtml(): string {
   return `
     <h4>Two slots</h4>
-    <p>The <b>program</b> is your task (Code tab, Program): the firmware runs it in time slices with
-    <code>RUN</code>; it finishes with <code>END [value]</code>. The <b>firmware</b> keeps the rover alive and decides when the
+    <p>The <b>program</b> is your task (Code tab, Program): the firmware calls it for time slices with
+    <code>CALL RUN ticks</code>; it finishes with <code>END [value]</code> (or a <code>RET</code> at its top level). The <b>firmware</b> keeps the rover alive and decides when the
     program runs (advanced). Both share the flash; each has its own labels, <code>CONST</code>s, registers and stacks.
     The firmware reads the program's state in <code>@PROG_STATE</code> and its result in <code>@PROG_RESULT</code>.</p>
     <h4>Syntax</h4>
     <p>One instruction per line. <code>label:</code> marks a jump target, <code>;</code> starts a comment.
     The program loops back to the top when it runs off the end.
-    Compute instructions are fast (several per tick); hardware instructions (<code>SCAN STEP SLEEP ACT USE SNAP SEND ERASE</code>) end the tick and take time.
+    Every instruction takes 1 cycle (${CHASSIS_MK1.cyclesPerTick} per tick on the Mk-I). The CPU only computes and moves data: the hardware
+    (drive, radar, tools, camera…) are <b>devices</b> you start by writing a port and wait for with <code>WAIT @port</code>. The ROM has
+    a ready-made routine for each (<code>CALL STEP EAST 3</code>, <code>CALL SCAN dir</code>: see ROM) that you can read and copy.
     Names are case-insensitive.</p>
     <h4>Registers</h4>
     <p>The Mk-I has ${CHASSIS_MK1.registers} registers, <code>r0</code>–<code>r${CHASSIS_MK1.registers - 1}</code>${regUpgrades()}.
     Each holds a signed 32-bit integer that wraps on overflow. All of them are general purpose: no register has a fixed meaning,
-    and any of them can hold a direction, a count, a tile ID or a coordinate (<code>STEP r2</code>, <code>JEQ r1 IRON_ORE found</code>).
+    and any of them can hold a direction, a count, a tile ID or a coordinate (<code>CALL STEP r2 1</code>, <code>JEQ r1 IRON_ORE found</code>).
     <code>ALIAS r0 dir</code> gives a register a name (free, compile time only); the shipped firmware's <code>dir</code> is just its own choice.
     The firmware and the program each have their own set. A reboot (upload or watchdog) zeroes them; a register the chassis
     does not have is a compile error.</p>
@@ -139,7 +141,7 @@ function basicsHtml(): string {
     Example: <code>JLE @BAT 20 home</code> = ${E.opcode}+${E.port}+${E.imm8}+${E.label} = ${E.opcode + E.port + E.imm8 + E.label} B.</p>
     <h4>Machine code</h4>
     <p>The listing beside the editor shows it while you type. Opcode byte = instruction number (hex column in Instructions), plus 0x20 per
-    optional operand given (<code>STEP 1 2</code> = <code>34 01 02</code>). The one-byte numbers ran out, so newer instructions
+    optional operand given (<code>LOG 2 r0</code> = <code>39 02 10</code>). The one-byte numbers ran out, so newer instructions
     (the bit instructions) have a 2-byte opcode: the prefix <code>1F</code>, then their own number (<code>AND r0 3</code> =
     <code>1F 01 10 03</code>), like the prefix bytes of real CPUs. One byte longer, just as fast. Operand bytes: <code>00</code>–<code>0F</code> number 0–15,
     <code>10</code>–<code>17</code> register r0–r7, <code>40</code>–<code>7F</code> port (hex column in Ports), <code>18</code> / <code>19</code> / <code>1A</code>
@@ -159,10 +161,22 @@ function basicsHtml(): string {
     </table>`;
 }
 
+/** M14 ROM library (docs/ASSEMBLER_CORE.md §6): its listing, generated from the ROM source. */
+function romHtml(): string {
+  const listing = listingText(buildListing(ROM_SOURCE, romCompile(), 'firmware', ROM_BASE));
+  return `
+    <p class="small dim">The ROM holds ready-made subroutines at code address <code>0xF000</code>. Both slots can <code>CALL</code> them;
+    they cost no Flash, run with the caller's registers, stacks and <code>@STATUS</code> and take normal cycles. Each driver pops its
+    arguments into the device's ports, starts the device and <code>WAIT</code>s until it is done, so <code>@STATUS</code> says how it ended.
+    Write the ports yourself to do more: drive and sweep the radar at the same time, stop a drive early (<code>@DRIVE_N 0</code>).
+    Routine names are reserved: <code>${ROM_ENTRIES.join(' ')}</code> (and <code>PROGRAM</code>).</p>
+    <pre class="ref-diagram">${esc(listing)}</pre>`;
+}
+
 function instructionsHtml(): string {
   return grouped(OPCODES as Op[], (o) => o, OP_GROUPS)
     .map(([title, ops]) => `<h4>${title}</h4><table>${ops
-      .map((op) => `<tr><td><code>${formatSig(op)}</code></td><td class="dim"><code>${opcodeHex(op)}</code></td><td>${NOTES[op] ?? ''}${HARDWARE_OPS.has(op) && !title.startsWith('Hardware') ? ' <span class="dim">(hardware)</span>' : ''}</td></tr>`)
+      .map((op) => `<tr><td><code>${formatSig(op)}</code></td><td class="dim"><code>${opcodeHex(op)}</code></td><td>${NOTES[op] ?? ''}</td></tr>`)
       .join('')}</table>`)
     .join('');
 }
@@ -179,19 +193,21 @@ function toolsHtml(): string {
   const cost = (t: { ticks: number; energy: number }) => `<span class="dim">${t.ticks} ticks, ${t.energy / 1000}% battery</span>`;
   const hardpoints = CHASSIS_MK1.tools
     .map((id, i) => {
-      if (!id) return `<tr><td><code>ACT TOOL_${i}</code></td><td>empty hardpoint: <code>ERR_NO_TOOL</code>. With the upgrade: <b>${TOOLS.SEISMIC.name}</b> (<code>ACT TOOL_${i} &lt;dir&gt;</code>): ${esc(TOOLS.SEISMIC.description)} ${cost(TOOLS.SEISMIC)}</td></tr>`;
+      if (!id) return `<tr><td><code>CALL ACT TOOL_${i} arg</code></td><td>empty hardpoint: <code>ERR_NO_TOOL</code>. With the upgrade: <b>${TOOLS.SEISMIC.name}</b> (<code>CALL ACT TOOL_${i} &lt;dir&gt;</code>): ${esc(TOOLS.SEISMIC.description)} ${cost(TOOLS.SEISMIC)}</td></tr>`;
       const t = TOOLS[id];
-      return `<tr><td><code>ACT TOOL_${i} &lt;${t.arg}&gt;</code></td><td><b>${t.name}</b>: ${esc(t.description)} ${cost(t)}</td></tr>`;
+      return `<tr><td><code>CALL ACT TOOL_${i} &lt;${t.arg}&gt;</code></td><td><b>${t.name}</b>: ${esc(t.description)} ${cost(t)}</td></tr>`;
     })
     .join('');
   return `
     <h4>Hardpoints (Mk-I)</h4>
-    <p class="small dim"><code>ACT TOOL_n arg</code> fires the tool mounted in hardpoint n.</p>
+    <p class="small dim"><code>CALL ACT TOOL_n arg</code> (ROM) uses the tool mounted in hardpoint n: it writes <code>@TOOL_ARG</code> = arg and
+    <code>@TOOL</code> = n, then waits with <code>WAIT @TOOL</code>. Drive, tools, repair and camera share the chassis: one at a time
+    (<code>ERR_BUSY</code>).</p>
     <table>${hardpoints}</table>
     <h4>Built-in</h4>
     <table>
-      <tr><td><code>SNAP &lt;dir&gt; [mode]</code></td><td><b>${TOOLS.CAMERA.name}</b>: ${esc(TOOLS.CAMERA.description)} ${cost(TOOLS.CAMERA)}</td></tr>
-      <tr><td><code>USE &lt;slot&gt; [system]</code></td><td><b>${TOOLS.USE_ITEM.name}</b>: ${esc(TOOLS.USE_ITEM.description)} ${cost(TOOLS.USE_ITEM)}</td></tr>
+      <tr><td><code>CALL SNAP &lt;dir&gt; &lt;mode&gt;</code><br><span class="dim">@CAM_MODE, @CAM</span></td><td><b>${TOOLS.CAMERA.name}</b>: ${esc(TOOLS.CAMERA.description)} ${cost(TOOLS.CAMERA)}</td></tr>
+      <tr><td><code>CALL USE &lt;slot&gt; &lt;system&gt;</code><br><span class="dim">@REPAIR_SYS, @REPAIR</span></td><td><b>${TOOLS.USE_ITEM.name}</b>: ${esc(TOOLS.USE_ITEM.description)} ${cost(TOOLS.USE_ITEM)}</td></tr>
     </table>`;
 }
 
@@ -202,7 +218,7 @@ function tileNotes(d: TileDef): string {
   if (d.moveTicks !== undefined) n.push(`${d.moveTicks} ticks, ${d.moveEnergy ?? 0} energy to enter`);
   if (d.hazardDamage) n.push(`${d.hazardDamage} hull damage`);
   if (d.hazardLevel) n.push(`hazard ${d.hazardLevel}`);
-  if (d.blocksMove) n.push('blocks STEP');
+  if (d.blocksMove) n.push('blocks the drive');
   if (d.tool) n.push(`collect with ${TOOLS[d.tool].name}`);
   if (d.science) n.push(`${d.science} science`);
   if (d.repairs) n.push('repairs ' + Object.entries(d.repairs).map(([s, v]) => `${SYS_NAMES[+s] ?? s} +${v}`).join(', '));
@@ -231,11 +247,11 @@ function constantsHtml(registry: WorldRegistry): string {
   return `
     <p class="small dim">Names that stand for a fixed number; usable wherever a value goes. Your own: <code>CONST NAME 5</code>.</p>
     <h3>Tiles</h3>
-    <p class="small dim">Every tile name is a constant: <code>SCAN</code>, <code>PEEK</code> and <code>@GROUND</code> return these IDs; <code>NONE=0</code>.</p>
+    <p class="small dim">Every tile name is a constant: <code>@RADAR_HIT</code>, cargo bytes (<code>[CARGO+slot]</code>) and <code>@GROUND</code> hold these IDs; <code>NONE=0</code>.</p>
     ${tiles}
     <h3>Other constants</h3>
     ${consts}
-    <h4>Hardpoints (ACT)</h4>${toolSlots}`;
+    <h4>Hardpoints (CALL ACT, @TOOL)</h4>${toolSlots}`;
 }
 
 /** Example program the Radio examples are decoded against (as if it were on the rover). */
@@ -324,9 +340,9 @@ function imageHtml(): string {
   const B = BALANCE;
   const examples = Object.keys(PROGRAM_TEMPLATES).filter((n) => n.startsWith('Image: '));
   const teaches: Record<string, string> = {
-    'Image: Line': 'rows, addresses, <code>ERASE</code>',
+    'Image: Line': 'rows, addresses, <code>CALL ERASE</code>',
     'Image: Test pattern': 'grey levels, computing a byte from its address',
-    'Image: Negative': '<code>SNAP</code> → change → <code>SEND</code>',
+    'Image: Negative': '<code>CALL SNAP</code> → change → <code>CALL SEND</code>',
     'Image: Stamp': 'numbers as bytes (masks and shifts)',
     'Image: Plot': 'single pixels inside a byte',
     'Image: Memory map': 'image memory as plain memory (a map of visited tiles)',
@@ -343,15 +359,15 @@ camera ───► image memory ───► recorder ───► Gallery
               ▲     │
           STB │     │ LDB
               └ your program</pre>
-    <h4>Instructions</h4>
+    <h4>Instructions and routines</h4>
     <table class="radio-kv">
-      <tr><td><code>SNAP dir [mode]</code></td><td>Photograph into image memory (overwrites all of it). ${B.snapTicks} ticks, ${B.snapEnergy} energy. Nothing is sent yet.</td></tr>
+      <tr><td><code>CALL SNAP dir mode</code></td><td>ROM: photograph into image memory (<code>@CAM_MODE</code>, <code>@CAM</code>) (overwrites all of it). ${B.snapTicks} ticks, ${B.snapEnergy} energy. Nothing is sent yet.</td></tr>
       <tr><td><code>LDB dst [IMG+addr]</code></td><td>Read one byte (0–255) of image memory, which starts at data address <code>IMG</code>. 1 cycle, no energy, no <code>@STATUS</code>.</td></tr>
       <tr><td><code>STB [IMG+addr] v</code></td><td>Write one byte (only the low 8 bits: 256 → 0, −1 → 255). 1 cycle, no energy, no <code>@STATUS</code>.
         An address outside the picture faults.</td></tr>
-      <tr><td><code>SEND [type]</code></td><td>Copy image memory into the science recorder as a photo of <code>type</code> (default: the last <code>SNAP</code>'s mode).
+      <tr><td><code>CALL SEND type</code></td><td>ROM (<code>@SEND</code>): copy image memory into the science recorder as a photo of <code>type</code> (0: the last photo's mode).
         Image memory is kept. ${B.sendTicks} tick, ${B.sendEnergy} energy; <code>ERR_FULL</code>, <code>ERR_INVALID</code>, <code>ERR_LOW_POWER</code>.</td></tr>
-      <tr><td><code>ERASE</code></td><td>Set every byte to 0 and forget the last <code>SNAP</code>. ${B.eraseTicks} ticks, ${B.eraseEnergy} energy.</td></tr>
+      <tr><td><code>CALL ERASE</code></td><td>ROM (<code>@ERASE</code>): set every byte to 0 and forget the last photo. ${B.eraseTicks} ticks, ${B.eraseEnergy} energy.</td></tr>
     </table>
     <h4>Rows and addresses (modes 1 and 2: 32×32 grey)</h4>
     <p class="small">Stored row by row, top row first. A pixel has 4 grey levels (2 bits), so <b>one byte holds 4 pixels</b>:
@@ -393,12 +409,12 @@ weight:   64      16      4       1</pre>
     <h4>Things to know</h4>
     <table class="radio-kv">
       <tr><td>keeps</td><td>Image memory keeps its contents through reboots and a flat battery, like a camera's flash memory.
-        Only a new <code>SNAP</code> or <code>ERASE</code> clears it, never <code>SEND</code>.</td></tr>
+        Only a new photo or <code>CALL ERASE</code> clears it, never <code>CALL SEND</code>.</td></tr>
       <tr><td>wraps</td><td>Addresses wrap around the memory size: on Mk-I address 256 is byte 0, −1 is byte 255. No error.</td></tr>
-      <tr><td>type</td><td><code>SEND type</code> only says how mission control decodes the bytes: <code>SEND 1</code> shows any bytes as a 32×32 grey photo.</td></tr>
+      <tr><td>type</td><td><code>CALL SEND type</code> only says how mission control decodes the bytes: <code>CALL SEND 1</code> shows any bytes as a 32×32 grey photo.</td></tr>
       <tr><td>labels</td><td>The Gallery labels what arrived: <b>raw</b> (sent as the camera took it), <b>edited</b> (changed with <code>STB</code>),
         <b>drawn</b> (no camera picture behind it). The label travels in the header byte (Radio).</td></tr>
-      <tr><td>credits</td><td>Only the first <code>SEND</code> after a <code>SNAP</code>, of the same type, earns photo credits, edited or not.
+      <tr><td>credits</td><td>Only the first send after a photo, of the same type, earns photo credits, edited or not.
         The first lit <b>edited</b> photo in each camera mode earns +${BALANCE.editFirstBonus} more (goal <i>Darkroom</i>). Drawn pictures earn nothing. Anomaly flags are checked against the real tile.</td></tr>
       <tr><td>speed</td><td>Touching every byte costs about 6 cycles each: ~400 ticks for a whole 32×32 picture on Mk-I. Programs run in time slices, so long loops just take longer.</td></tr>
     </table>
@@ -418,6 +434,7 @@ export function renderReference(el: HTMLElement, registry: WorldRegistry): void 
     consts: constantsHtml(registry),
     radio: radioHtml(),
     image: imageHtml(),
+    rom: romHtml(),
   };
   el.innerHTML = `
     <div class="ref-head">

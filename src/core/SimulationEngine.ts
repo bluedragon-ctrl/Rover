@@ -24,12 +24,12 @@ import { UPGRADE_BY_ID } from './upgrades';
 import type { SquallDamage } from './events';
 import { TOOLS, type ToolDef } from './tools';
 import { ambientTemp, Environment, signalStrength, solarGain, wrapDeg, angleDiff, type SunState } from './Environment';
-import { getPort, writePortClamped, type PortContext } from './ports';
+import { getPort, writePortClamped, type DevicePort, type PortContext } from './ports';
 import { CpuState, DIR_VEC, Layer, Preempt, ProgState, Status } from './types';
-import { Unit, type Capture } from './Unit';
+import { resetDevices, toolDevice, Unit, type Capture, type Device } from './Unit';
 import { productPayload, toHex } from './imaging';
-import { compile, type CompileResult, type Instr, type Slot } from './vm/Compiler';
-import type { VmHost } from './vm/RoverVM';
+import { compile, FIRMWARE_ONLY_PORTS, PROGRAM_GATE, romProgram, ROM_BASE, type CompileResult, type Slot } from './vm/Compiler';
+import type { RoverVM, VmHost } from './vm/RoverVM';
 import { HORIZON_COLUMNS, HORIZON_V, isAnomaly, photoBytes, type HorizonView } from './photos';
 import { coneOffsets, shapeContains, type SensorShape } from './sensors';
 import { createDefaultRegistry, T, type WorldRegistry } from './WorldRegistry';
@@ -84,6 +84,9 @@ export interface UploadResult extends CompileResult {
   /** Set when the program compiled but the rover could not accept it. */
   rejected?: string;
 }
+
+/** M14: progress ports whose device result `WAIT` copies into @STATUS. */
+const WAIT_DEVICE: Readonly<Record<string, Device>> = { DRIVE: 'drive', RADAR: 'radar', TOOL: 'tool', REPAIR: 'repair', CAM: 'cam', SEND: 'send', ERASE: 'erase' };
 
 /**
  * Headless, deterministic simulation. No DOM, no Three.js, no wall-clock time.
@@ -168,8 +171,8 @@ export class SimulationEngine {
       alert: () => this.director.alert(this.tick),
       drops: () => this.drops.filter((d) => d.landed),
       nearestDrop: (u) => this.nearestDrop(u),
-      transmit: (u, v) => this.transmit(u, v),
       setProgState: (u, v) => this.setProgState(u, v),
+      device: (u, port, v) => this.device(u, port, v),
     };
   }
 
@@ -333,21 +336,45 @@ export class SimulationEngine {
     return (u.prog.program?.instrs.length ?? 0) > 0;
   }
 
-  /** End the running RUN slice: the firmware continues with the instruction after RUN next tick. */
+  /**
+   * The program returns to the firmware (M14 §5.1): the firmware continues after its
+   * CALL PROGRAM, in this tick if cycles are left. Devices the program started keep running.
+   */
   private endSlice(u: Unit, state: ProgState): void {
     if (u.slice < 0) return;
     u.slice = -1;
     u.progState = state;
-    u.cyclesLeft = 0;
+    if (u.vm.ip === PROGRAM_GATE) u.vm.ip = u.vm.callStack.pop() ?? 0;
     u.vm.unblock();
   }
 
-  /** Fresh program context (restart from the top); aborts a running slice and the program's action. */
+  /** Firmware CALL PROGRAM: enter the program if it is ready, for @SLICE ticks (0 = no limit). */
+  private callProgram(u: Unit): boolean {
+    if (u.slice >= 0 || u.progState !== ProgState.PROG_READY || !this.hasProgram(u)) return false;
+    u.progState = ProgState.PROG_RUNNING;
+    u.preempted = 0;
+    u.slice = u.sliceSet;
+    u.vm.block();
+    this.wakeIfReady(u, u.prog); // suspended in a WAIT whose device has finished meanwhile
+    return true;
+  }
+
+  /**
+   * A BLOCKED context sleeps in `WAIT @port`: wake it when the port reads 0 (the WAIT then
+   * runs again, finds 0 and copies the device's result into @STATUS). Call only for u.cpu.
+   */
+  private wakeIfReady(u: Unit, cpu: RoverVM): void {
+    if (cpu.state !== CpuState.BLOCKED || cpu !== u.cpu) return;
+    const code = cpu.ip >= ROM_BASE ? romProgram() : cpu.program;
+    const k = code?.indexAt.get(cpu.ip);
+    const ins = k === undefined ? undefined : code!.instrs[k];
+    const port = ins?.op === 'WAIT' && ins.args[0].k === 'port' ? ins.args[0].name : null;
+    if (!port || (getPort(port)?.read?.(u, this.portCtx) ?? 0) === 0) cpu.unblock();
+  }
+
+  /** Fresh program context (restart from the top); ends a running slice (its devices keep running). */
   private restartProgram(u: Unit): void {
-    if (u.slice >= 0) {
-      u.action = null;
-      this.endSlice(u, ProgState.PROG_READY);
-    }
+    if (u.slice >= 0) this.endSlice(u, ProgState.PROG_READY);
     u.prog.reboot();
     u.progResult = 0;
     u.progState = this.hasProgram(u) ? ProgState.PROG_READY : ProgState.PROG_NONE;
@@ -364,6 +391,7 @@ export class SimulationEngine {
   private hardReboot(u: Unit, reason: number): void {
     u.slice = -1;
     u.action = null;
+    resetDevices(u); // M14: latched arguments, results, radar, image send / erase
     // Control registers are CPU state: the watchdog is disarmed, fault protection off.
     u.wdt = 0;
     u.preemptMask = 0;
@@ -513,6 +541,7 @@ export class SimulationEngine {
       this.revealAround(u);
       this.updatePreempt(u, integrity, announced);
       this.updateSlice(u);
+      this.wakeIfReady(u, u.cpu);
       u.cyclesLeft = u.cpu.state === CpuState.RUNNING ? u.chassis.cyclesPerTick : 0;
     }
     for (const d of this.drops) if (!d.landed && d.landTick === this.tick) this.landDrop(d);
@@ -522,13 +551,15 @@ export class SimulationEngine {
   }
 
   /**
-   * Slice bookkeeping at the start of a tick: a used-up slice ends once the program is
-   * between instructions (an action started in the slice runs to completion first).
+   * The slice timer at the start of a tick (M14 §5.1): when a limited slice runs out, the
+   * timer interrupt returns control to the firmware. A program asleep in WAIT is simply
+   * suspended there; its devices keep running. A slice of 0 has no limit.
    */
   private updateSlice(u: Unit): void {
-    if (u.slice < 0) return;
-    if (u.slice > 0) u.slice--;
-    else if (u.prog.state !== CpuState.BLOCKED) this.endSlice(u, ProgState.PROG_READY);
+    if (u.slice <= 0) return;
+    if (--u.slice > 0) return;
+    u.preempted = 0;
+    this.endSlice(u, ProgState.PROG_READY);
   }
 
   /**
@@ -544,9 +575,9 @@ export class SimulationEngine {
   }
 
   /**
-   * Fault protection (SPEC §3.9.2): a condition armed in @PREEMPT ends the running slice now.
-   * The program's action in progress is aborted (@STATUS ERR_PREEMPTED); it stays PROG_READY,
-   * so the next RUN resumes it after that instruction.
+   * Fault protection (SPEC §3.9.2): a condition armed in @PREEMPT interrupts the program now,
+   * between instructions. It stays PROG_READY, so the next CALL PROGRAM resumes it; its
+   * devices keep running (the firmware decides: @DRIVE_N 0 stops the wheels).
    */
   private updatePreempt(u: Unit, integrityBefore: number, announced: boolean): void {
     if (u.slice < 0 || !u.preemptMask) return;
@@ -556,12 +587,6 @@ export class SimulationEngine {
     if (u.batteryPercent < u.batAlarm) hit |= Preempt.PRE_LOW_BAT;
     hit &= u.preemptMask;
     if (!hit) return;
-    if (u.prog.state === CpuState.BLOCKED) {
-      u.action = null;
-      u.prog.status = Status.ERR_PREEMPTED;
-      u.prog.unblock();
-      this.events.emit('UNIT_STATUS', { unitId: u.id, status: Status.ERR_PREEMPTED });
-    }
     u.preempted = hit;
     this.endSlice(u, ProgState.PROG_READY);
     const why = [hit & Preempt.PRE_ALERT && 'alert', hit & Preempt.PRE_DAMAGE && 'damage', hit & Preempt.PRE_LOW_BAT && 'low battery'].filter(Boolean).join(', ');
@@ -673,12 +698,6 @@ export class SimulationEngine {
     if (d.antennaEvery && t % d.antennaEvery === 0) u.antennaHealth = Math.max(0, u.antennaHealth - 1);
   }
 
-  /** `@TX_DATA` write: old shorthand for `LOG 0 value` that also sets @STATUS. */
-  private transmit(u: Unit, value: number): void {
-    const ok = u.link.enqueue(encodeLog(0, value), u.chassis.logFifoBytes);
-    this.setStatus(u, ok ? Status.OK : Status.ERR_FULL);
-  }
-
   /** Record a science product in the rover's recorder (null if it does not fit). */
   recordProduct(u: Unit, p: Omit<ProductDesc, 'seq' | 'tick'>): ProductDesc | null {
     return u.link.record({ ...p, tick: this.tick }, u.chassis.recorderBytes);
@@ -776,16 +795,16 @@ export class SimulationEngine {
   }
 
   /**
-   * SEND [type] (SPEC §3.8.7): image memory → a photo product in the recorder, for
-   * BALANCE.sendEnergy (ERR_LOW_POWER without it). The first SEND
+   * @SEND type (SPEC §3.8.7): image memory → a photo product in the recorder, for
+   * BALANCE.sendEnergy (ERR_LOW_POWER without it). The first send
    * of the capture's type carries the capture (RAW, or EDITED after an STB); any other is DRAWN.
    */
-  private send(u: Unit, type: number): void {
+  private send(u: Unit, type: number): Status {
     const mem = u.imageMemory();
     const n = isPhoto(type) ? photoBytes(type) : 0;
-    if (!n || n > mem.length) return this.setStatus(u, Status.ERR_INVALID);
-    if (u.link.recFree(u.chassis.recorderBytes) < productFrameBytes(type)) return this.setStatus(u, Status.ERR_FULL);
-    if (u.energy < BALANCE.sendEnergy) return this.setStatus(u, Status.ERR_LOW_POWER);
+    if (!n || n > mem.length) return Status.ERR_INVALID;
+    if (u.link.recFree(u.chassis.recorderBytes) < productFrameBytes(type)) return Status.ERR_FULL;
+    if (u.energy < BALANCE.sendEnergy) return Status.ERR_LOW_POWER;
     const cap = u.capture?.type === type ? u.capture : null;
     let p: Omit<ProductDesc, 'seq' | 'tick'>;
     if (cap) {
@@ -796,24 +815,18 @@ export class SimulationEngine {
       p = { type, subject: 0, x: u.x, y: u.y, lit: false, credits: 0, level: Level.DRAWN, data: toHex(mem.subarray(0, n)) };
     }
     this.recordProduct(u, p);
-    this.setStatus(u, Status.OK);
     this.drain(u, BALANCE.sendEnergy);
-    if (u.powered) {
-      u.action = { kind: 'WAIT', ticksLeft: BALANCE.sendTicks };
-      u.cpu.block();
-    }
+    if (u.powered) u.imgOp = { kind: 'send', ticksLeft: BALANCE.sendTicks };
+    return Status.OK;
   }
 
-  /** ERASE (SPEC §3.8.7): zero image memory and drop the capture, on request only. */
-  private erase(u: Unit): void {
-    if (u.energy < BALANCE.eraseEnergy) return this.setStatus(u, Status.ERR_LOW_POWER);
+  /** @ERASE (SPEC §3.8.7): zero image memory and drop the capture, on request only. */
+  private erase(u: Unit): Status {
+    if (u.energy < BALANCE.eraseEnergy) return Status.ERR_LOW_POWER;
     u.clearImageMemory();
-    this.setStatus(u, Status.OK);
     this.drain(u, BALANCE.eraseEnergy);
-    if (u.powered) {
-      u.action = { kind: 'WAIT', ticksLeft: BALANCE.eraseTicks };
-      u.cpu.block();
-    }
+    if (u.powered) u.imgOp = { kind: 'erase', ticksLeft: BALANCE.eraseTicks };
+    return Status.OK;
   }
 
   /** Is the subject at (x, y) an anomaly? Landscapes (subject 0) never are. */
@@ -885,24 +898,24 @@ export class SimulationEngine {
 
     if (vm.state === CpuState.POWER_OFF) return;
 
+    // M14 devices (docs/ASSEMBLER_CORE.md §4): each one progresses on its own.
+    if (u.vm.timer > 0) u.vm.timer--;
+    if (u.prog.timer > 0) u.prog.timer--;
+    if (u.radarTicks > 0 && --u.radarTicks === 0) this.radarSweep(u);
+    if (u.imgOp && --u.imgOp.ticksLeft <= 0) u.imgOp = null;
+
     const act = u.action;
     if (!act) return;
     if (--act.ticksLeft > 0) return;
 
-    if (act.kind === 'WAIT') {
-      u.action = null;
-      u.cpu.unblock();
-      return;
-    }
-
     if (act.kind === 'TOOL') {
       const st = TOOLS[act.tool].complete(this, u, act.arg, act.arg2);
-      this.finishAction(u, st);
+      this.finishAction(u, toolDevice(act.tool), st);
       this.events.emit('TOOL_DONE', { unitId: u.id, tool: act.tool, status: st });
       return;
     }
 
-    // STEP: arrive on the tile.
+    // Drive: arrive on the tile.
     u.x = act.toX;
     u.y = act.toY;
     act.tilesLeft--;
@@ -910,22 +923,49 @@ export class SimulationEngine {
     if (terrain?.hazardDamage) {
       this.damage(u, terrain.hazardDamage);
       if (!u.powered) return;
-      this.finishAction(u, Status.ERR_HAZARD);
+      this.finishAction(u, 'drive', Status.ERR_HAZARD);
       return;
     }
     this.stats.maxDistance = Math.max(this.stats.maxDistance, Math.abs(u.x) + Math.abs(u.y));
+    if (act.stop) {
+      this.finishAction(u, 'drive', Status.ERR_PREEMPTED);
+      return;
+    }
     if (act.tilesLeft <= 0) {
-      this.finishAction(u, Status.OK);
+      this.finishAction(u, 'drive', Status.OK);
       return;
     }
     const st = this.beginStepTile(u, act.dir, act.tilesLeft);
-    if (st !== Status.OK) this.finishAction(u, st);
+    if (st !== Status.OK) this.finishAction(u, 'drive', st);
   }
 
-  private finishAction(u: Unit, status: Status): void {
+  /** The chassis' work is done: the device's result waits for `WAIT @port`. */
+  private finishAction(u: Unit, dev: Device, status: Status): void {
     u.action = null;
-    this.setStatus(u, status);
-    u.cpu.unblock();
+    u.results[dev] = status;
+    if (status !== Status.OK) this.events.emit('UNIT_STATUS', { unitId: u.id, status });
+  }
+
+  /** The radar sweep ends: the first rover / obstacle / item in range answers (@RADAR_HIT, @RADAR_DIST). */
+  private radarSweep(u: Unit): void {
+    const dir = u.radarDir;
+    const range = this.sensorRange(u);
+    const [dx, dy] = DIR_VEC[dir];
+    let hit = 0;
+    let dist = 0;
+    for (let d = 1; d <= range; d++) {
+      const x = u.x + dx * d;
+      const y = u.y + dy * d;
+      hit = this.tileAt(x, y, Layer.ACTOR) || this.tileAt(x, y, Layer.OBSTACLE) || this.tileAt(x, y, Layer.ITEM);
+      if (hit) {
+        dist = d;
+        break;
+      }
+    }
+    u.radarHit = hit;
+    u.radarDist = dist;
+    u.results.radar = Status.OK;
+    this.events.emit('SCAN_PULSE', { unitId: u.id, x: u.x, y: u.y, dir, dist: dist || range, hit });
   }
 
   /** @STATUS of the context that runs now (each slot has its own). */
@@ -1043,18 +1083,17 @@ export class SimulationEngine {
   }
 
   /** Validate, pay and start a tool action; the effect applies when it completes. */
-  private startTool(u: Unit, tool: ToolDef, arg: number, arg2?: number): void {
+  private startTool(u: Unit, tool: ToolDef, arg: number, arg2?: number): Status {
     let st = tool.check(this, u, arg, arg2);
     if (st === Status.OK && u.energy < tool.energy) st = Status.ERR_LOW_POWER;
-    this.setStatus(u, st);
-    if (st !== Status.OK) return;
+    if (st !== Status.OK) return st;
     this.drain(u, tool.energy);
-    if (!u.powered) return;
+    if (!u.powered) return Status.ERR_LOW_POWER;
     u.action = { kind: 'TOOL', tool: tool.id, arg, arg2, ticksLeft: tool.ticks };
-    u.cpu.block();
     const t = tool.target?.(u, arg) ?? null;
     if (tool.arg === 'dir' && !tool.keepsHeading && arg >= 0 && arg <= 3) u.heading = arg;
     this.events.emit('TOOL_USED', { unitId: u.id, tool: tool.id, x: u.x, y: u.y, targetX: t?.[0] ?? null, targetY: t?.[1] ?? null, ticks: tool.ticks });
+    return Status.OK;
   }
 
   private drain(u: Unit, amount: number): void {
@@ -1093,9 +1132,14 @@ export class SimulationEngine {
       readPort: (name) => getPort(name)?.read?.(u, this.portCtx) ?? 0,
       writePort: (name, v) => {
         const p = getPort(name);
-        if (p) writePortClamped(p, u, v, this.portCtx);
+        // Firmware-only ports: the compiler refuses program writes; the ROM's (CALL RUN) are ignored.
+        if (p && !(u.cpu === u.prog && FIRMWARE_ONLY_PORTS.has(p.name))) writePortClamped(p, u, v, this.portCtx);
       },
-      hardware: (ins, values) => this.hardware(u, ins, values),
+      waitResult: (port) => {
+        const dev = WAIT_DEVICE[port];
+        return dev ? u.results[dev] : undefined;
+      },
+      callProgram: () => this.callProgram(u),
       // M14 data address space (docs/ASSEMBLER_CORE.md §7.1): RAM, image memory, cargo.
       load: (addr) => {
         const ram = u.ramMemory();
@@ -1184,108 +1228,65 @@ export class SimulationEngine {
     return g;
   }
 
-  private hardware(u: Unit, ins: Instr, v: number[]): number[] | void {
+  /**
+   * A write to a device port (M14, docs/ASSEMBLER_CORE.md §4): start the device, or say why
+   * not in @STATUS (and in the device's result, so a WAIT right after reports it too).
+   * Drive, tools, repair and camera share the chassis: one at a time (ERR_BUSY).
+   */
+  private device(u: Unit, port: DevicePort, v: number): void {
     const validDir = (d: number) => d >= 0 && d <= 3;
-    switch (ins.op) {
-      case 'SLEEP': {
-        this.setStatus(u, Status.OK);
-        if (v[0] > 0) {
-          u.action = { kind: 'WAIT', ticksLeft: v[0] };
-          u.cpu.block();
+    const done = (dev: Device | null, st: Status) => {
+      if (dev) u.results[dev] = st;
+      this.setStatus(u, st);
+    };
+    const busy = u.action !== null;
+    switch (port) {
+      case 'TIMER':
+        u.cpu.timer = Math.max(0, v);
+        return done(null, Status.OK);
+      case 'DRIVE_N': {
+        u.driveN = v;
+        const a = u.action;
+        if (a?.kind === 'STEP') {
+          // Driving: change the tiles left (counting this one); 0 stops at the end of this tile.
+          a.stop = v === 0;
+          a.tilesLeft = Math.max(1, v);
         }
         return;
       }
-      case 'SCAN': {
-        const dir = v[0];
-        if (!validDir(dir)) {
-          this.setStatus(u, Status.ERR_INVALID);
-          return [0, 0];
-        }
-        if (u.energy < BALANCE.scanEnergy) {
-          this.setStatus(u, Status.ERR_LOW_POWER);
-          return [0, 0];
-        }
-        // Radar: needs no light and does not turn the rover.
-        const range = this.sensorRange(u);
+      case 'DRIVE':
+        if (busy) return done('drive', Status.ERR_BUSY);
+        if (!validDir(v) || u.driveN < 1) return done('drive', Status.ERR_INVALID);
+        return done('drive', this.beginStepTile(u, v, u.driveN));
+      case 'RADAR':
+        if (u.radarTicks > 0) return done('radar', Status.ERR_BUSY);
+        if (!validDir(v)) return done('radar', Status.ERR_INVALID);
+        if (u.energy < BALANCE.scanEnergy) return done('radar', Status.ERR_LOW_POWER);
+        // Radar: needs no light, does not turn the rover, works while the wheels turn.
         this.drain(u, BALANCE.scanEnergy);
-        const [dx, dy] = DIR_VEC[dir];
-        let hit = 0;
-        let dist = 0;
-        for (let d = 1; d <= range; d++) {
-          const x = u.x + dx * d;
-          const y = u.y + dy * d;
-          hit = this.tileAt(x, y, Layer.ACTOR) || this.tileAt(x, y, Layer.OBSTACLE) || this.tileAt(x, y, Layer.ITEM);
-          if (hit) {
-            dist = d;
-            break;
-          }
-        }
-        this.events.emit('SCAN_PULSE', { unitId: u.id, x: u.x, y: u.y, dir, dist: dist || range, hit });
-        this.setStatus(u, Status.OK);
-        if (u.powered) {
-          u.action = { kind: 'WAIT', ticksLeft: BALANCE.scanTicks };
-          u.cpu.block();
-        }
-        return [hit, dist];
+        if (!u.powered) return;
+        u.radarDir = v;
+        u.radarTicks = BALANCE.scanTicks;
+        return done('radar', Status.OK);
+      case 'TOOL': {
+        if (busy) return done('tool', Status.ERR_BUSY);
+        if (v < 0 || v >= u.chassis.tools.length) return done('tool', Status.ERR_INVALID);
+        const id = u.chassis.tools[v];
+        if (!id) return done('tool', Status.ERR_NO_TOOL);
+        return done('tool', this.startTool(u, TOOLS[id], u.toolArg));
       }
-      case 'STEP': {
-        const dir = v[0];
-        const tiles = v.length > 1 ? v[1] : 1;
-        if (!validDir(dir) || tiles < 1) {
-          this.setStatus(u, Status.ERR_INVALID);
-          return;
-        }
-        const st = this.beginStepTile(u, dir, tiles);
-        this.setStatus(u, st);
-        if (st === Status.OK) u.cpu.block();
-        return;
-      }
-      case 'RUN': {
-        // Firmware only (compile rule). Nothing ready to run: ERR_INVALID, the firmware goes on.
-        if (u.slice >= 0 || u.progState !== ProgState.PROG_READY || !this.hasProgram(u)) {
-          this.setStatus(u, Status.ERR_INVALID);
-          return;
-        }
-        this.setStatus(u, Status.OK);
-        u.progState = ProgState.PROG_RUNNING;
-        u.preempted = 0;
-        u.slice = Math.max(1, v[0]);
-        u.vm.block();
-        return;
-      }
-      case 'ACT': {
-        const slot = v[0];
-        if (slot < 0 || slot >= u.chassis.tools.length) {
-          this.setStatus(u, Status.ERR_INVALID);
-          return;
-        }
-        const id = u.chassis.tools[slot];
-        if (!id) {
-          this.setStatus(u, Status.ERR_NO_TOOL);
-          return;
-        }
-        this.startTool(u, TOOLS[id], v.length > 1 ? v[1] : 0);
-        return;
-      }
-      case 'USE':
-        this.startTool(u, TOOLS.USE_ITEM, v[0], v[1]);
-        return;
-      case 'SNAP':
-        this.startTool(u, TOOLS.CAMERA, v[0], v.length > 1 ? v[1] : 1);
-        return;
+      case 'REPAIR':
+        if (busy) return done('repair', Status.ERR_BUSY);
+        return done('repair', this.startTool(u, TOOLS.USE_ITEM, v, u.repairSys));
+      case 'CAM':
+        if (busy) return done('cam', Status.ERR_BUSY);
+        return done('cam', this.startTool(u, TOOLS.CAMERA, v, u.camMode));
       case 'SEND':
-        this.send(u, v.length ? v[0] : u.snapMode);
-        return;
-      case 'ERASE':
-        this.erase(u);
-        return;
-      case 'PEEK': {
-        const slot = v[0];
-        if (slot < 0 || slot >= u.cargo.length) {
-          this.setStatus(u, Status.ERR_INVALID);
-          return [0];
-        }
-        return [u.cargo[slot]];
+      case 'ERASE': {
+        const dev = port === 'SEND' ? 'send' : 'erase';
+        // The image memory is the camera's: not while it exposes, one transfer at a time.
+        if (u.imgOp || (u.action?.kind === 'TOOL' && u.action.tool === 'CAMERA')) return done(dev, Status.ERR_BUSY);
+        return done(dev, port === 'SEND' ? this.send(u, v || u.snapMode) : this.erase(u));
       }
     }
   }

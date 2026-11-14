@@ -6,12 +6,12 @@ import { SimulationEngine, type SentRecord, type SupplyDrop } from './Simulation
 import { UPGRADE_BY_ID } from './upgrades';
 import { CpuState, ProgState, type Status } from './types';
 import type { RoverVM } from './vm/RoverVM';
-import type { Capture, Unit, UnitAction, UnitMotion } from './Unit';
+import { DEVICES, type Capture, type Device, type Unit, type UnitAction, type UnitMotion } from './Unit';
 import { fromHex, toHex } from './imaging';
 import { ambientTemp, Environment } from './Environment';
-import { migrateImageMemory } from './migrateSource';
+import { migrateHardwareOps, migrateImageMemory } from './migrateSource';
 
-export const SAVE_VERSION = 17;
+export const SAVE_VERSION = 18;
 
 interface UnitSave {
   id: number;
@@ -55,6 +55,17 @@ interface UnitSave {
   /** v17 (M14): RAM as hex without trailing zeros; RAM top the firmware was assembled for (0 = the chassis RAM). */
   ram: string;
   fwRamTop: number;
+  /** v18 (M14 devices): latched arguments, the radar [ticks, dir, hit, dist], image send / erase, each device's result. */
+  devices: {
+    driveN: number;
+    toolArg: number;
+    repairSys: number;
+    camMode: number;
+    sliceSet: number;
+    radar: [ticks: number, dir: number, hit: number, dist: number];
+    imgOp: Unit['imgOp'];
+    results: Record<Device, number>;
+  };
   /** Set by a migration that rewrote this rover's code: its saved CPU state no longer matches, reboot on load. */
   rebootOnLoad?: boolean;
 }
@@ -69,6 +80,8 @@ interface VmSave {
   faultReason: string;
   watchdog: number;
   instructionsExecuted: number;
+  /** v18: @TIMER ticks left. */
+  timer: number;
   /** Set by the v10 -> v11 migration: `ip` and `callStack` are instruction indices, not byte addresses. */
   legacyIndex?: boolean;
 }
@@ -84,6 +97,7 @@ function saveVm(vm: RoverVM): VmSave {
     faultReason: vm.faultReason,
     watchdog: vm.watchdog,
     instructionsExecuted: vm.instructionsExecuted,
+    timer: vm.timer,
   };
 }
 
@@ -100,6 +114,7 @@ function loadVm(vm: RoverVM, s: VmSave): void {
   vm.faultReason = s.faultReason;
   vm.watchdog = s.watchdog;
   vm.instructionsExecuted = s.instructionsExecuted;
+  vm.timer = s.timer;
 }
 
 interface ChunkSave {
@@ -248,6 +263,16 @@ function saveUnit(u: Unit): UnitSave {
     dust: u.solarDust,
     ram: toHex(u.ram.subarray(0, lastNonZero(u.ram) + 1)),
     fwRamTop: u.fwRamTop,
+    devices: {
+      driveN: u.driveN,
+      toolArg: u.toolArg,
+      repairSys: u.repairSys,
+      camMode: u.camMode,
+      sliceSet: u.sliceSet,
+      radar: [u.radarTicks, u.radarDir, u.radarHit, u.radarDist],
+      imgOp: u.imgOp ? { ...u.imgOp } : null,
+      results: { ...u.results },
+    },
   };
 }
 
@@ -335,7 +360,7 @@ export function migrate(raw: unknown): SaveSnapshot {
   if (v === 9) {
     // v9 -> v10: firmware + program slot (M10). The old code stays the firmware; no program.
     for (const u of out.units) {
-      const ctx: VmSave = { ip: 0, regs: u.vm.regs.map(() => 0), dataStack: [], callStack: [], state: CpuState.RUNNING, status: 0 as Status, faultReason: '', watchdog: 0, instructionsExecuted: 0 };
+      const ctx: VmSave = { ip: 0, regs: u.vm.regs.map(() => 0), dataStack: [], callStack: [], state: CpuState.RUNNING, status: 0 as Status, faultReason: '', watchdog: 0, instructionsExecuted: 0, timer: 0 };
       u.program = { source: '', vm: ctx, state: ProgState.PROG_NONE, result: 0, slice: -1 };
     }
     v = 10;
@@ -410,6 +435,24 @@ export function migrate(raw: unknown): SaveSnapshot {
       u.program.source = prog;
     }
     v = 17;
+  }
+  if (v === 17) {
+    // v17 -> v18: M14 devices and ROM. The hardware instructions became device ports and ROM
+    // routines: rewrite the code (STEP d n -> CALL STEP d n, ...). A rover whose code changed,
+    // or that uses LDF (renumbered), reboots on load: its saved addresses no longer match.
+    for (const u of out.units) {
+      const fw = migrateHardwareOps(u.sourceCode);
+      const prog = migrateHardwareOps(u.program.source);
+      if (fw !== u.sourceCode || prog !== u.program.source || /\bLDF\b/i.test(fw + prog)) u.rebootOnLoad = true;
+      u.sourceCode = fw;
+      u.program.source = prog;
+      if ((u.action as { kind: string } | null)?.kind === 'WAIT') u.action = null;
+      u.vm.timer ??= 0;
+      u.program.vm.timer ??= 0;
+      const results = Object.fromEntries(DEVICES.map((d) => [d, 0])) as Record<Device, number>;
+      u.devices ??= { driveN: 1, toolArg: 0, repairSys: 0, camMode: 1, sliceSet: 0, radar: [0, 0, 0, 0], imgOp: null, results };
+    }
+    v = 18;
   }
   if (v !== SAVE_VERSION) throw new SaveError(`Unsupported save version ${s.version}.`);
   out.version = v;
@@ -504,6 +547,17 @@ export function deserialize(raw: unknown): SimulationEngine {
       temp: us.thermal[0],
       heater: us.thermal[1],
       solarDust: us.dust,
+      driveN: us.devices.driveN,
+      toolArg: us.devices.toolArg,
+      repairSys: us.devices.repairSys,
+      camMode: us.devices.camMode,
+      sliceSet: us.devices.sliceSet,
+      radarTicks: us.devices.radar[0],
+      radarDir: us.devices.radar[1],
+      radarHit: us.devices.radar[2],
+      radarDist: us.devices.radar[3],
+      imgOp: us.devices.imgOp ? { ...us.devices.imgOp } : null,
+      results: { ...us.devices.results },
     });
     const ram = u.ramMemory(); // sized by the RAM upgrades
     ram.fill(0);

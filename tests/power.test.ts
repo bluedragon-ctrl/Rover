@@ -52,7 +52,7 @@ describe('solar array & motors', () => {
   it('deploys over time, slews, charges, and blocks STEP until stowed', () => {
     const eng = new SimulationEngine({ seed: 1 });
     const u = eng.spawnUnit('t');
-    eng.upload(u, 'MOV @SOLAR_OPEN 1\nMOV @SOLAR_ANGLE @SUN_AZIMUTH\nSTEP NORTH\nMOV r0 @STATUS\nSLEEP 1000', factory);
+    eng.upload(u, 'MOV @SOLAR_OPEN 1\nMOV @SOLAR_ANGLE @SUN_AZIMUTH\nCALL STEP NORTH 1\nMOV r0 @STATUS\nCALL SLEEP 1000', factory);
     u.energy = 50_000;
     eng.advanceTick(); // STEP refused, ends the tick
     eng.advanceTick();
@@ -95,7 +95,7 @@ describe('solar array & motors', () => {
   it('stays dead if the array was stowed', () => {
     const eng = new SimulationEngine({ seed: 1 });
     const u = eng.spawnUnit('t');
-    eng.upload(u, 'SLEEP 100', factory);
+    eng.upload(u, 'CALL SLEEP 100', factory);
     u.energy = 3;
     for (let i = 0; i < 3000; i++) eng.advanceTick();
     expect(u.vm.state).toBe(CpuState.POWER_OFF);
@@ -106,7 +106,7 @@ describe('comms', () => {
   it('@TX_DATA is LOG 0; the factory firmware aligns the dish and logs a heartbeat', () => {
     const eng = new SimulationEngine({ seed: 1 });
     const u = eng.spawnUnit('t');
-    eng.upload(u, 'MOV @TX_DATA 1\nMOV r0 @STATUS\nSLEEP 1000', factory);
+    eng.upload(u, 'LOG 0 1\nMOV r0 @STATUS\nCALL SLEEP 1000', factory);
     eng.advanceTick();
     expect(u.vm.regs[0]).toBe(Status.OK); // queued, even without signal
     expect(u.link.fifo.at(-1)!.bytes).toEqual([0x02, 0x01]);
@@ -125,13 +125,13 @@ describe('comms', () => {
     u.antennaAngle = (eng.orbitAzimuth + 180) % 360;
     const bad = eng.uploadCost(u, 80);
     expect(bad).toBe(good * 10);
-    u.energy = eng.uploadCost(u, 2) - 1; // SLEEP 1 = 2 bytes
-    const r = eng.upload(u, 'SLEEP 1');
+    u.energy = eng.uploadCost(u, 4) - 1; // CALL SLEEP 1 = 4 bytes
+    const r = eng.upload(u, 'CALL SLEEP 1');
     expect(r.rejected).toMatch(/battery/);
     u.antennaAngle = eng.orbitAzimuth;
-    const ok = eng.upload(u, 'SLEEP 1');
+    const ok = eng.upload(u, 'CALL SLEEP 1');
     expect(ok.rejected).toBeUndefined();
-    expect(ok.cost).toBe(eng.uploadCost(u, 2));
+    expect(ok.cost).toBe(eng.uploadCost(u, 4));
   });
 });
 
@@ -139,7 +139,7 @@ describe('night & fog', () => {
   it('at night the operator view shrinks to the ring; the headlight adds a cone; radar is unaffected', () => {
     const eng = new SimulationEngine({ seed: 1 });
     const u = eng.spawnUnit('t');
-    eng.upload(u, 'SLEEP 10000', factory);
+    eng.upload(u, 'CALL SLEEP 10000', factory);
     while (eng.sun.elevation > 0) eng.advanceTick();
     expect(eng.viewShape(u)).toEqual({ radius: BALANCE.nightSensorRange, cone: -1 });
     u.headlight = 1;

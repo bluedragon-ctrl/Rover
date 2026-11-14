@@ -1,7 +1,7 @@
 import { FIRMWARE_TEMPLATES, PROGRAM_TEMPLATES } from '../core/programs';
 import type { SimulationEngine, UplinkCommand } from '../core/SimulationEngine';
 import type { Unit } from '../core/Unit';
-import { snapsWithoutSend, type CompileResult, type Slot } from '../core/vm/Compiler';
+import { runsProgram, snapsWithoutSend, type CompileResult, type Slot } from '../core/vm/Compiler';
 import { formatAddr } from '../core/vm/isa';
 import { EditorPanel } from './EditorPanel';
 import { InspectPanel, type SnapMark } from './InspectPanel';
@@ -241,14 +241,13 @@ export class CodeWorkspace {
 
     const warn = this.q('#cw-warn');
     const msgs: string[] = [];
-    const hasRun = (r: CompileResult | null) => !!r?.program?.instrs.some((i) => i.op === 'RUN');
-    if (this.slot === 'firmware' && res?.program && !hasRun(res))
-      msgs.push('This firmware has no <code>RUN</code>: it never runs the program. Fine for an all-in-one firmware; load <i>Default firmware</i> to use the Program slot.');
-    if (this.slot === 'program' && !hasRun(this.opts.engine.compileFor(u, u.sourceCode, 'firmware')))
-      msgs.push('The firmware on the rover has no <code>RUN</code>, so no program runs. Switch to <b>Firmware</b> and upload <i>Default firmware</i> (or add <code>RUN</code>).');
+    if (this.slot === 'firmware' && res?.program && !runsProgram(res))
+      msgs.push('This firmware has no <code>CALL RUN</code> (or <code>CALL PROGRAM</code>): it never runs the program. Fine for an all-in-one firmware; load <i>Default firmware</i> to use the Program slot.');
+    if (this.slot === 'program' && !runsProgram(this.opts.engine.compileFor(u, u.sourceCode, 'firmware')))
+      msgs.push('The firmware on the rover has no <code>CALL RUN</code>, so no program runs. Switch to <b>Firmware</b> and upload <i>Default firmware</i> (or add <code>CALL RUN</code>).');
     const other = this.slot === 'program' ? this.opts.engine.compileFor(u, u.sourceCode, 'firmware') : u.programSource ? this.opts.engine.compileFor(u, u.programSource, 'program') : null;
     if (snapsWithoutSend(res, other))
-      msgs.push('This code takes photos (<code>SNAP</code>) but never sends them: a photo stays in image memory until <code>SEND</code> records it for the downlink (Reference → Image).');
+      msgs.push('This code takes photos (<code>CALL SNAP</code>) but never sends them: a photo stays in image memory until <code>CALL SEND</code> records it for the downlink (Reference → Image).');
     warn.hidden = !msgs.length;
     warn.innerHTML = msgs.map((m) => `⚠ ${m}`).join('<br>');
     this.renderListing();
