@@ -83,23 +83,22 @@ safe mode goes into M14 (option ROMs, tables, `RAND` later); upload 6 energy per
 - [ ] Slice 4: templates as lessons (*Count with a variable*, *Drive and scan at once*, …;
       the shipped templates still read like the old instructions in places), image guide,
       Reference sections *CPU*, *Devices*, *Memory map*, tests.
-- [ ] Later in M14 (decision 8): boot ROM with safe mode; ROM helper routines (see open
-      question 1 below).
+- [x] ROM helper routines (after decision 1 below): `ABS v`, `DIR_TO dx dy` (−1 = arrived),
+      `PUT16 addr v` (returns addr + 2), `GET16 addr` (signed), `PLOT x y grey`; ROM 330 B.
+      *Image: Stamp* / *Image: Plot* renamed their own routines `put2` / `pixel` (the names
+      are reserved now); the guide points to the ROM versions. Tests in `devices.test.ts`.
+- [ ] Later in M14 (decision 8): boot ROM with safe mode.
 
-Open questions from slice 3 (owner):
-1. **Helper routines need a scratch register.** `PUT16 addr v`, `DIR_TO dx dy`, `PLOT x y g`
-   pop two or more arguments, but with only the data stack and `r0` free they cannot keep
-   "every other register" (§6.1: there is no way to reach the second argument without a
-   second register). Proposal: like ARM's AAPCS, helpers may change `r0`–`r1` (result in
-   `r0`) and keep `r2`, `r3`. The drivers are not affected (no registers). Built: none yet.
-2. **Port numbers are full** (0–63; 30, 33, 34 retired and never reused). The next port
-   needs the extended operand `1B pp` of §9 (2 bytes). Fine, or reuse the retired numbers
-   once like the opcodes?
-3. Preemption checks run only at tick start, so after `PRE_LOW_BAT` fires the firmware can
-   re-call the program in the same tick and it gets the rest of that tick's cycles before
-   the next check. Harmless (it is asleep in `WAIT` in practice); OK?
-4. The radar measures when its sweep ends (1 tick later), so a sweep started while driving
-   answers for where the rover is then. OK?
+Decisions on the slice 3 questions (owner, 2026-11-14):
+1. **Helpers may change two registers**: result in `r0`, `r0` and `r1` are scratch (like
+   ARM's AAPCS), every other register is kept. (A routine with two or more arguments cannot
+   reach the second one with `r0` alone.) The drivers use no registers.
+2. **Port numbers: reuse the retired ones once** (30 `@TX_DATA`, 33–34 the old beacon), like
+   the opcodes, before the extended operand of §9 is needed. Every save is recompiled by its
+   migration anyway; a port added that way must be migrated with a source rewrite if the old
+   name could still appear in saved code.
+3. Preemption checked at tick start only, and the radar answering where its sweep ends:
+   both OK as built.
 
 ## M13 — Realism pass 1 (in review)
 
@@ -776,3 +775,4 @@ window with a fixed dish?
 | 2026-11-13 | `claude/intelligent-faraday-lx8xgo` (2) | Review of the language and the player's development workflow against real assembler and flight-software practice; M14 *Assembler core* design draft (`docs/ASSEMBLER_CORE.md`): device ports + `WAIT`, ROM library, RAM / `VAR` / addressing modes / `DATA` / `LDF`, the program as a subroutine with a slice timer, migration plan, open questions. |
 | 2026-11-14 | `claude/intelligent-faraday-lx8xgo` (3) | M14 design approved (decisions §12 of `ASSEMBLER_CORE.md`); slice 2 memory model: RAM / `VAR` / `DATA` / `LDF`, bracket addresses, data address space with image memory at `IMG` and cargo at `CARGO`, Mk-I 512 B Flash + 64 B RAM, RAM upgrades, upload 6/B, image templates and guide on `[IMG+…]`, template *Route*, save v17 with code migration. |
 | 2026-11-14 | `ccr-298af329-qtcfs9` | M14 slice 3: devices behind ports (15 ports 49–63, `WAIT` 12, `ERR_BUSY`, chassis interlock, `@DRIVE_N 0` stop), ROM library at 0xF000 (drivers, Reference → ROM listing, argument check), `CALL PROGRAM` + `@SLICE` timer interrupt, top-level `RET`; hardware instructions, `RUN`, `@TX_DATA` retired, `LDF` = 13; Mk-I 8 cycles / 16-deep data stack; save v18 with code rewrite; template *Drive yourself*; `tests/devices.test.ts`. |
+| 2026-11-14 | `ccr-298af329-qtcfs9` (2) | Owner decisions on slice 3: ROM helpers may change `r0`/`r1` → helpers `ABS`, `DIR_TO`, `PUT16`, `GET16`, `PLOT` built (ROM 330 B; Stamp / Plot templates renamed their routines `put2` / `pixel`); retired port numbers 30, 33, 34 to be reused once before the extended operand; tick-start preemption and radar timing accepted. |

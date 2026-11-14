@@ -33,8 +33,9 @@ npm run build      # typecheck + production bundle in dist/
   `engine.admin` / `engine.cheats`).
 - All gameplay numbers live in `src/core/balance.ts` and the tile registry.
 - New tiles: `WorldRegistry` (constName auto-becomes a language constant).
-  New ports: `src/core/ports.ts` (auto-appears in compiler and Reference tab; numbers 0–63 are
-  full since M14: the next one needs the extended operand, see `ASSEMBLER_CORE.md` §9).
+  New ports: `src/core/ports.ts` (auto-appears in compiler and Reference tab). Numbers 0–63
+  are taken since M14: reuse the retired 30, 33, 34 once (owner decision), then the extended
+  operand (`ASSEMBLER_CORE.md` §9).
   New instructions: `src/core/vm/isa.ts` signature + opcode tables, `RoverVM.ts`.
   New devices (M14): a start port in `ports.ts` (`DevicePort`), its logic in
   `SimulationEngine.device()`, progress in `Unit.deviceLeft()`, the result in `Unit.results`
@@ -63,5 +64,5 @@ npm run build      # typecheck + production bundle in dist/
 - M14: there are no hardware instructions. Device start writes set `@STATUS` (accepted?),
   `WAIT @port` on a device copies its result (how it ended); other instructions don't
   (except `DIV`/`MOD` by 0 and `CALL PROGRAM`).
-- ROM routine names (`STEP`, `SCAN`, `SLEEP`, …), `PROGRAM` and `WAIT` are reserved: a label
-  `step:` or `wait:` is a compile error.
+- ROM routine names (`STEP`, `SCAN`, `SLEEP`, `PLOT`, …), `PROGRAM` and `WAIT` are reserved:
+  a label `step:` or `wait:` is a compile error. ROM helpers may change `r0` and `r1`.

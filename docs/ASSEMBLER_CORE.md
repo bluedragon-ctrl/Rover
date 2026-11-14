@@ -5,9 +5,9 @@ built** (SPEC §5.8): RAM, `VAR`, brackets, `DATA` / `LDF`, the data address spa
 512 B Flash / 64 B RAM, upload 6 energy per byte, save v17. **Slice 3 is built** (SPEC
 §5.9, §3.9.2): devices and `WAIT` (§3–§4), `CALL PROGRAM` / `@SLICE` (§5), the ROM drivers
 (§6.2), 8 cycles per tick, the 16-deep data stack, save v18 with the §10 rewrite. Not built
-yet: the helper routines (§6.2: they need a scratch register, see ROADMAP), the extended
-port operand (§9: not needed yet, the devices fit in 49–63), the boot ROM / safe mode, and
-the lessons of slice 4. Built parts move into [`SPEC.md`](SPEC.md); the plan is in
+yet: the extended port operand (§9: not needed yet; the retired numbers 30, 33, 34 are
+reused first, owner 2026-11-14), the boot ROM / safe mode, and the lessons of slice 4. The
+helper routines are built with two scratch registers (§6.1, owner 2026-11-14). Built parts move into [`SPEC.md`](SPEC.md); the plan is in
 [`ROADMAP.md`](ROADMAP.md) M14; this file then becomes the player guide, like
 [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md).
 
@@ -190,9 +190,12 @@ own code and change it. Routine names are reserved (a label `step` is a compile 
 
 * Arguments are pushed by `CALL name args…` (unchanged); every routine pops all of them.
 * **Drivers use no registers at all**: they pop straight into ports.
-* **Helpers** return their result in **`r0`** and keep every other register (they save
-  what they use on the data stack). The same rule makes a program's top-level `RET` return
-  `r0` to the firmware (§5.1).
+* **Helpers** return their result in **`r0`**; they may change **`r0` and `r1`** and keep
+  every other register (they save what else they use on the data stack). *Owner decision
+  2026-11-14*: "keep everything but `r0`" is impossible for a routine with two or more
+  arguments (with `r0` alone it cannot reach the second one), so `r1` is scratch too, like
+  ARM's `r0`–`r3`. The same `r0` rule makes a program's top-level `RET` return `r0` to the
+  firmware (§5.1).
 
 ### 6.2 Contents (v1)
 

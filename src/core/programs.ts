@@ -812,15 +812,15 @@ ALIAS r2 low
         JNE @STATUS OK fail
         MOV addr 0
         MOV value @X
-        CALL put16
+        CALL put2
         MOV value @Y
-        CALL put16
+        CALL put2
         CALL SEND 0
         END 1
 fail:   END 0
 
-; put16: write value as two bytes (high, low) at addr; addr += 2
-put16:  MOV low value
+; put2: write value as two bytes (high, low) at addr; addr += 2
+put2:   MOV low value
         AND low 0xFF          ; keep bits 7–0: the low byte
         SHR value 8           ; bits 15–8 move down to 7–0
         AND value 0xFF        ; the high byte: −300 → FE D4
@@ -833,23 +833,23 @@ put16:  MOV low value
 
 export const IMAGE_PLOT = `; PLOT: draw single pixels. Takes a photo and draws a white
 ; diagonal from the top-left corner to the bottom-right one.
-; The plot routine works for any 2-bpp picture (modes 1 and 2).
+; The pixel routine works for any 2-bpp picture (modes 1 and 2).
 
         CALL SNAP NORTH 1
         JNE @STATUS OK fail
         MOV r0 0
 diag:   MOV r1 r0             ; y = x
         MOV r2 3              ; colour 3 = white
-        CALL plot
+        CALL pixel
         ADD r0 1
         JLT r0 32 diag
         CALL SEND 0
         END 1
 fail:   END 0
 
-; plot: pixel (r0 = x, r1 = y) = colour r2 (0–3).
+; pixel: pixel (r0 = x, r1 = y) = colour r2 (0–3).
 ; Keeps r0; changes r1, r2 and r3.
-plot:   PUSH r0
+pixel:  PUSH r0
         SHL r1 3              ; y × 8: start of the row
         MOV r3 r0
         SHR r3 2              ; x / 4
