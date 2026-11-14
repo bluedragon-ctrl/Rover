@@ -14,10 +14,34 @@ export const imageBytes = (c: Pick<ChassisDef, 'cameraModes'>): number => c.came
  */
 export type Capture = Pick<ProductDesc, 'type' | 'subject' | 'x' | 'y' | 'sx' | 'sy' | 'lit' | 'horizon' | 'anomaly'> & { noise: { tick: number; seq: number } };
 
+/**
+ * The chassis' mechanical work (M14 devices drive, tools, repair, camera: they share the
+ * chassis and the arm, so one at a time). `tilesLeft` counts the tile in progress;
+ * `stop`: @DRIVE_N 0 asked to stop at the end of this tile.
+ */
 export type UnitAction =
-  | { kind: 'WAIT'; ticksLeft: number }
-  | { kind: 'STEP'; dir: number; tilesLeft: number; ticksLeft: number; toX: number; toY: number }
+  | { kind: 'STEP'; dir: number; tilesLeft: number; ticksLeft: number; toX: number; toY: number; stop?: boolean }
   | { kind: 'TOOL'; tool: ToolId; arg: number; arg2?: number; ticksLeft: number };
+
+/** M14 devices with a progress port and a result (docs/ASSEMBLER_CORE.md §4). The timer is per slot (RoverVM.timer). */
+export type Device = 'drive' | 'radar' | 'tool' | 'repair' | 'cam' | 'send' | 'erase';
+export const DEVICES: readonly Device[] = ['drive', 'radar', 'tool', 'repair', 'cam', 'send', 'erase'];
+
+/** Which device a tool action belongs to. */
+export const toolDevice = (t: ToolId): Device => (t === 'USE_ITEM' ? 'repair' : t === 'CAMERA' ? 'cam' : 'tool');
+
+/** Device state that a hard reboot resets (latched arguments, results, radar and image work). */
+export function resetDevices(u: Unit): void {
+  u.driveN = 1;
+  u.toolArg = 0;
+  u.repairSys = 0;
+  u.camMode = 1;
+  u.sliceSet = 0;
+  u.radarTicks = 0;
+  u.radarDir = 0;
+  u.imgOp = null;
+  for (const d of DEVICES) u.results[d] = 0;
+}
 
 export interface UnitMotion {
   fromX: number;
@@ -31,7 +55,7 @@ export interface UnitMotion {
 export class Unit {
   x = 0;
   y = 0;
-  /** Direction the rover faces (STEP, directional tools, @HEADING). Aims the headlight cone. */
+  /** Direction the rover faces (the drive, directional tools, @HEADING). Aims the headlight cone. */
   heading = 0;
   energy: number;
   hull = 100;
@@ -57,7 +81,7 @@ export class Unit {
   link = new Downlink();
   /**
    * M12 image memory (SPEC §3.8.7). Non-volatile, like a camera's flash: survives reboots and
-   * power-off; only SNAP (overwrites) and ERASE clear it. Grows with camera upgrades; use
+   * power-off; only a photo (overwrites) and @ERASE clear it. Grows with camera upgrades; use
    * imageMemory() to read it at the right size.
    */
   img = new Uint8Array(0);
@@ -73,6 +97,43 @@ export class Unit {
   lastRevealKey = '';
   action: UnitAction | null = null;
   motion: UnitMotion | null = null;
+
+  // M14 devices (docs/ASSEMBLER_CORE.md §4). Latched arguments:
+  /** @DRIVE_N tiles per drive (1 after a reboot). */
+  driveN = 1;
+  /** @TOOL_ARG direction / slot. */
+  toolArg = 0;
+  /** @REPAIR_SYS (SYS_HULL after a reboot). */
+  repairSys = 0;
+  /** @CAM_MODE (1 after a reboot). */
+  camMode = 1;
+  /** @SLICE as the firmware wrote it: ticks the next CALL PROGRAM may run (0 = no limit). */
+  sliceSet = 0;
+  /** Radar sweep in progress (ticks left), its direction, and the last answer. */
+  radarTicks = 0;
+  radarDir = 0;
+  radarHit = 0;
+  radarDist = 0;
+  /** Image send / erase in progress. */
+  imgOp: { kind: 'send' | 'erase'; ticksLeft: number } | null = null;
+  /** Each device's result: copied into @STATUS by `WAIT @port` (0 = OK). */
+  results: Record<Device, number> = { drive: 0, radar: 0, tool: 0, repair: 0, cam: 0, send: 0, erase: 0 };
+
+  /** Progress port value: tiles (drive) or ticks left, 0 = idle. */
+  deviceLeft(d: Device): number {
+    const a = this.action;
+    switch (d) {
+      case 'drive':
+        return a?.kind === 'STEP' ? a.tilesLeft : 0;
+      case 'radar':
+        return this.radarTicks;
+      case 'send':
+      case 'erase':
+        return this.imgOp?.kind === d ? this.imgOp.ticksLeft : 0;
+      default:
+        return a?.kind === 'TOOL' && toolDevice(a.tool) === d ? a.ticksLeft : 0;
+    }
+  }
   /** Cycles left in the current tick (lets the debugger single-step mid-tick). */
   cyclesLeft = 0;
   /** Firmware source (the firmware slot). */
@@ -87,7 +148,10 @@ export class Unit {
   programBytes = 0;
   progState: ProgState = ProgState.PROG_NONE;
   progResult = 0;
-  /** Ticks left in the program's current RUN slice; -1 when the firmware has control. */
+  /**
+   * -1 when the firmware has control; inside CALL PROGRAM the ticks left of the slice (M14
+   * @SLICE), or 0 for a call without a time limit.
+   */
   slice = -1;
 
   /**
@@ -155,13 +219,13 @@ export class Unit {
     const chassis = (this.chassis = cloneChassis(base));
     this.energy = chassis.batteryCapacity;
     this.vm = new RoverVM(chassis);
-    this.prog = new RoverVM(chassis);
+    this.prog = new RoverVM(chassis, true);
     this.cargo = new Array(chassis.cargoSlots).fill(0);
     this.img = new Uint8Array(imageBytes(chassis));
     this.ram = new Uint8Array(chassis.ramBytes);
   }
 
-  /** The context that executes now: the program inside a RUN slice, else the firmware. */
+  /** The context that executes now: the program inside CALL PROGRAM, else the firmware. */
   get cpu(): RoverVM {
     return this.slice >= 0 ? this.prog : this.vm;
   }

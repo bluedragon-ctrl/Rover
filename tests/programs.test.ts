@@ -49,12 +49,12 @@ const logged = (e: SimulationEngine, tag: number): number[] =>
   e.received.map((f) => decodeFrame(f.bytes)).flatMap((d) => (d.kind === 0 && d.tag === tag ? [d.value ?? 0] : []));
 
 describe('program templates (lessons)', () => {
-  it('together use every instruction (RUN is firmware-only: the default firmware shows it)', () => {
+  it('together use every instruction', () => {
     const consts = createDefaultRegistry().constants();
     const used = new Set<Op>();
     for (const src of Object.values(PROGRAM_TEMPLATES))
       for (const i of compile(src, CHASSIS_MK1, consts, { slot: 'program' }).program!.instrs) used.add(i.op);
-    const missing = (Object.keys(SIGNATURES) as Op[]).filter((op) => op !== 'RUN' && !used.has(op));
+    const missing = (Object.keys(SIGNATURES) as Op[]).filter((op) => !used.has(op));
     expect(missing).toEqual([]);
   });
 

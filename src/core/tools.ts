@@ -8,12 +8,14 @@ import { BALANCE } from './balance';
 export type ToolId = 'DRILL' | 'GRABBER' | 'SPECTROMETER' | 'SEISMIC' | 'USE_ITEM' | 'CAMERA';
 
 /**
- * Declarative tool table. `ACT TOOL_n arg` looks up the tool mounted in hardpoint n;
- * `USE slot` runs the internal USE_ITEM tool. The VM never changes for new tools.
+ * Declarative tool table. A write to `@TOOL n` (the ROM's `CALL ACT n arg`) uses the tool
+ * mounted in hardpoint n on @TOOL_ARG; `@REPAIR slot` runs the internal USE_ITEM tool, `@CAM
+ * dir` the CAMERA (M14 devices). The VM never changes for new tools.
  *
- * Lifecycle: `check` runs when the instruction executes (fails fast, no time spent);
- * if it returns OK the energy is paid, the CPU blocks for `ticks`, then `complete`
- * applies the effect (and re-validates, since the world may have changed).
+ * Lifecycle: `check` runs when the start port is written (fails fast, no time spent);
+ * if it returns OK the energy is paid, the device works for `ticks`, then `complete`
+ * applies the effect (and re-validates, since the world may have changed); its result
+ * waits for `WAIT @port`.
  */
 export interface ToolDef {
   id: ToolId;
@@ -145,7 +147,7 @@ export const TOOLS: Record<ToolId, ToolDef> = {
     energy: BALANCE.snapEnergy,
     keepsHeading: true,
     description:
-      'SNAP <dir> [mode=1] photographs the first obstacle, item or rover within 2 tiles in <dir>; with nothing that close, a landscape of what lies ahead (ridges, ground, the sun). The photo goes into image memory: change it with LDB / STB, then SEND it to the science recorder. Needs @SUN_LIGHT ≥ 20 or the headlight aimed that way (@HEADING = dir), else the photo is dark and worth nothing. Mk-I modes: 1 grey, 2 dithered (256 B each); upgrades add 3 colour palette (512 B), 4 hi-res 64×64 (1024 B), 5 RGB332 (1024 B).',
+      'CALL SNAP dir mode (@CAM dir, @CAM_MODE) photographs the first obstacle, item or rover within 2 tiles in <dir>; with nothing that close, a landscape of what lies ahead (ridges, ground, the sun). The photo goes into image memory: change it with LDB / STB, then CALL SEND it to the science recorder. Needs @SUN_LIGHT ≥ 20 or the headlight aimed that way (@HEADING = dir), else the photo is dark and worth nothing. Mk-I modes: 1 grey, 2 dithered (256 B each); upgrades add 3 colour palette (512 B), 4 hi-res 64×64 (1024 B), 5 RGB332 (1024 B).',
     target: (u, d) => (validDir(d) ? adjacent(u, d) : null),
     check(_e, u, dir, mode = 1) {
       return !validDir(dir) || !u.chassis.cameraModes.includes(mode) ? Status.ERR_INVALID : Status.OK;

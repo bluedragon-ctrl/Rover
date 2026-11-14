@@ -14,8 +14,8 @@ function run(e: SimulationEngine, ticks: number): void {
   }
 }
 
-const FW = 'CONST T 2\nloop: LOG T @TICK\nRUN 5\nSLEEP 4\nJMP loop';
-const PROG = 'CONST P 3\nLOG P 1\nSLEEP 2\nEND 1';
+const FW = 'CONST T 2\nloop: LOG T @TICK\nCALL RUN 5\nCALL SLEEP 4\nJMP loop';
+const PROG = 'CONST P 3\nLOG P 1\nCALL SLEEP 2\nEND 1';
 
 function rover(seed = 3): { e: SimulationEngine; u: Unit; logs: { message: string; category?: string }[] } {
   const e = new SimulationEngine({ seed });
@@ -243,7 +243,7 @@ describe('BRK reports itself (SPEC §3.8.4)', () => {
     const b = encodeCpuDump({ ip: 0, status: 4, state: ProgState.PROG_NONE, regs: [0, 0, 0, 0], dsDepth: 0, csDepth: 0 }, DumpKind.PROG_CPU);
     const f = frameFields(b, { firmware: emptyDictionary(), program: { tags: {}, regs: {}, lineAt: () => 7 } });
     expect(f.find((x) => x.name === 'next')).toMatchObject({ value: 'prog:0x000 (not running)', goto: undefined });
-    expect(f.find((x) => x.name === '@STATUS')).toMatchObject({ value: 'ERR_BLOCKED', note: 'STEP hit an obstacle' });
+    expect(f.find((x) => x.name === '@STATUS')).toMatchObject({ value: 'ERR_BLOCKED', note: 'the drive hit an obstacle' });
     expect(fieldsHtml(f, undefined, true)).not.toContain('data-goto');
   });
 });

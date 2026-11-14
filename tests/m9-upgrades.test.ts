@@ -15,7 +15,7 @@ function run(e: SimulationEngine, ticks: number): void {
   }
 }
 
-function rover(src = 'SLEEP 1000', link = false): { e: SimulationEngine; u: Unit } {
+function rover(src = 'CALL SLEEP 1000', link = false): { e: SimulationEngine; u: Unit } {
   const e = new SimulationEngine({ seed: 5 });
   const u = e.spawnUnit('t');
   for (let y = -4; y <= 4; y++)
@@ -31,7 +31,7 @@ function rover(src = 'SLEEP 1000', link = false): { e: SimulationEngine; u: Unit
 
 /** Ticks until a 258 B photo has left the recorder. */
 function photoTicks(upgrades: string[]): number {
-  const { e, u } = rover('SLEEP 1000', true);
+  const { e, u } = rover('CALL SLEEP 1000', true);
   for (const id of upgrades) e.installUpgrade(u, id);
   run(e, 20); // boot frame out of the way
   e.recordProduct(u, { type: 1, subject: T.CLIFF_WALL, x: 0, y: 0, sx: 1, sy: 0, lit: true, credits: 0 });
@@ -49,14 +49,14 @@ describe('M9 upgrades (SPEC §3.8.6)', () => {
   });
 
   it('recorder 2 KB / 4 KB raise @REC_FREE; 4 KB needs 2 KB first', () => {
-    const { e, u } = rover('MOV r0 @REC_FREE\nSLEEP 1000');
+    const { e, u } = rover('MOV r0 @REC_FREE\nCALL SLEEP 1000');
     e.credits = 1000;
     expect(e.upgradeBlocker(u, 'REC_4K')).toBe('needs Recorder 2 KB');
     e.installUpgrade(u, 'REC_2K');
     expect(u.chassis.recorderBytes).toBe(2048);
     expect(e.upgradeBlocker(u, 'REC_4K')).toBeNull();
     e.installUpgrade(u, 'REC_4K');
-    e.upload(u, 'MOV r0 @REC_FREE\nSLEEP 1000', { factory: true });
+    e.upload(u, 'MOV r0 @REC_FREE\nCALL SLEEP 1000', { factory: true });
     e.advanceTick();
     expect(u.vm.regs[0]).toBe(4096);
     expect(CHASSIS_MK1.recorderBytes).toBe(1024); // shared chassis untouched
@@ -65,7 +65,7 @@ describe('M9 upgrades (SPEC §3.8.6)', () => {
   it('trace buffer: log FIFO 64 B', () => {
     const { e, u } = rover();
     e.installUpgrade(u, 'TRACE_64');
-    e.upload(u, 'MOV r0 @LOG_FREE\nSLEEP 1000', { factory: true });
+    e.upload(u, 'MOV r0 @LOG_FREE\nCALL SLEEP 1000', { factory: true });
     e.advanceTick();
     expect(u.vm.regs[0]).toBe(64 - 4); // two boot frames (one per upload) wait: no link
   });
@@ -79,7 +79,7 @@ describe('M9 upgrades (SPEC §3.8.6)', () => {
   });
 
   it('camera modes 3–5 are accepted only once their upgrade is installed', () => {
-    const src = 'SNAP NORTH 3\nMOV r0 @STATUS\nSEND\nSNAP NORTH 4\nMOV r1 @STATUS\nSEND\nSNAP NORTH 5\nMOV r2 @STATUS\nSEND\nSLEEP 1000';
+    const src = 'CALL SNAP NORTH 3\nMOV r0 @STATUS\nCALL SEND 0\nCALL SNAP NORTH 4\nMOV r1 @STATUS\nCALL SEND 0\nCALL SNAP NORTH 5\nMOV r2 @STATUS\nCALL SEND 0\nCALL SLEEP 1000';
     const before = rover(src);
     run(before.e, 10);
     expect([0, 1, 2].map((i) => before.u.vm.regs[i])).toEqual([Status.ERR_INVALID, Status.ERR_INVALID, Status.ERR_INVALID]);

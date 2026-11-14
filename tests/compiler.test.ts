@@ -32,7 +32,7 @@ describe('Compiler', () => {
   });
 
   it('is case-insensitive and accepts commas and -> sugar', () => {
-    const r = c('Loop: scan north -> R0, r1\njmp LOOP');
+    const r = c('Loop: CALL SCAN north\n      MOV R0 @RADAR_HIT\n      MOV r1 @RADAR_DIST\njmp LOOP');
     expect(r.errors).toEqual([]);
   });
 

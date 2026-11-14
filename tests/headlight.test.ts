@@ -16,7 +16,7 @@ const factory = { factory: true };
 function nightRover(seed = 7): { eng: SimulationEngine; u: Unit; ox: number; oy: number } {
   const eng = new SimulationEngine({ seed });
   const u = eng.spawnUnit('t');
-  eng.upload(u, 'SLEEP 100000', factory);
+  eng.upload(u, 'CALL SLEEP 100000', factory);
   while (eng.sun.elevation > 0) eng.advanceTick();
   const ox = 400;
   const oy = 400;
@@ -88,7 +88,7 @@ describe('M8.1 directional headlight', () => {
     eng.world.setTile(ox, oy + 4, Layer.OBSTACLE, T.CLIFF_WALL);
     eng.admin.teleport(u, ox, oy);
     u.heading = Dir.NORTH;
-    eng.upload(u, 'SCAN EAST -> r0 r1\nSCAN NORTH -> r2 r3\nSLEEP 100000', factory);
+    eng.upload(u, 'CALL SCAN EAST\nMOV r0 @RADAR_HIT\nMOV r1 @RADAR_DIST\nCALL SCAN NORTH\nMOV r2 @RADAR_HIT\nMOV r3 @RADAR_DIST\nCALL SLEEP 100000', factory);
     for (let i = 0; i < 6; i++) eng.advanceTick();
     expect(u.heading).toBe(Dir.NORTH);
     expect([u.vm.regs[0], u.vm.regs[1]]).toEqual([T.CLIFF_WALL, 4]);
@@ -102,7 +102,7 @@ describe('M8.1 directional headlight', () => {
     eng.world.setTile(ox + 4, oy, Layer.OBSTACLE, T.CLIFF_WALL);
     eng.admin.teleport(u, ox, oy);
     u.heading = Dir.NORTH;
-    eng.upload(u, 'MOV @HEADLIGHT 1\nADD @HEADING 1\nMOV r2 @HEADING\nSCAN EAST -> r0 r1\nMOV @HEADING 7\nMOV r3 @HEADING\nSLEEP 100000', factory);
+    eng.upload(u, 'MOV @HEADLIGHT 1\nADD @HEADING 1\nMOV r2 @HEADING\nCALL SCAN EAST\nMOV r0 @RADAR_HIT\nMOV r1 @RADAR_DIST\nMOV @HEADING 7\nMOV r3 @HEADING\nCALL SLEEP 100000', factory);
     const before = u.energy;
     eng.advanceTick();
     expect(u.vm.regs[2]).toBe(Dir.EAST);
@@ -144,18 +144,20 @@ describe('M8.1 directional headlight', () => {
 
   it('determinism and save round trip with turns and headlight at night', () => {
     const prog = `boot: MOV @HEADLIGHT 1
-loop: SCAN @HEADING -> r0 r1
+loop: CALL SCAN @HEADING
+      MOV r0 @RADAR_HIT
+      MOV r1 @RADAR_DIST
       JEQ r0 NONE go
       JGT r1 1 go
       ADD @HEADING 1
       JMP loop
-go:   STEP @HEADING 1
+go:   CALL STEP @HEADING 1
       JEQ @STATUS OK loop
       ADD @HEADING 1
       JLT @BAT 20 rest
       JMP loop
 rest: MOV @HEADLIGHT 0
-      SLEEP 200`;
+      CALL SLEEP 200`;
     const make = () => {
       const e = new SimulationEngine({ seed: 99 });
       const u = e.spawnUnit('r');

@@ -69,7 +69,7 @@ describe('engine hardware', () => {
   it('STEP moves tile by tile and stops at walls with ERR_BLOCKED', () => {
     const eng = engineWithWall();
     const u = eng.spawnUnit('t');
-    eng.upload(u, 'STEP EAST 5\nMOV r0 @STATUS\nSLEEP 1000');
+    eng.upload(u, 'CALL STEP EAST 5\nMOV r0 @STATUS\nCALL SLEEP 1000');
     for (let i = 0; i < 40; i++) eng.advanceTick();
     expect([u.x, u.y]).toEqual([2, 0]);
     expect(u.vm.regs[0]).toBe(Status.ERR_BLOCKED);
@@ -79,7 +79,7 @@ describe('engine hardware', () => {
   it('SCAN reports the first obstacle and its distance', () => {
     const eng = engineWithWall();
     const u = eng.spawnUnit('t');
-    eng.upload(u, 'SCAN EAST -> r0 r1\nSCAN WEST -> r2 r3\nSLEEP 1000');
+    eng.upload(u, 'CALL SCAN EAST\nMOV r0 @RADAR_HIT\nMOV r1 @RADAR_DIST\nCALL SCAN WEST\nMOV r2 @RADAR_HIT\nMOV r3 @RADAR_DIST\nCALL SLEEP 1000');
     for (let i = 0; i < 5; i++) eng.advanceTick();
     expect([u.vm.regs[0], u.vm.regs[1]]).toEqual([T.CLIFF_WALL, 3]);
     expect(u.vm.regs[2]).toBe(0);
@@ -89,8 +89,9 @@ describe('engine hardware', () => {
     const eng = new SimulationEngine({ seed: 3 });
     const u = eng.spawnUnit('a');
     eng.spawnUnit('b', 0, 2);
-    eng.upload(u, 'SCAN NORTH r0 r1\nSLEEP 1000');
+    eng.upload(u, 'CALL SCAN NORTH\nMOV r0 @RADAR_HIT\nMOV r1 @RADAR_DIST\nCALL SLEEP 1000');
     eng.advanceTick();
+    eng.advanceTick(); // the sweep takes a tick
     expect([u.vm.regs[0], u.vm.regs[1]]).toEqual([T.ROVER, 2]);
   });
 
@@ -98,7 +99,7 @@ describe('engine hardware', () => {
     const eng = new SimulationEngine({ seed: 3 });
     eng.world.setTile(0, 1, Layer.TERRAIN, T.ACID_VENT);
     const u = eng.spawnUnit('t');
-    eng.upload(u, `STEP ${Dir.NORTH} 3\nMOV r0 @STATUS\nSLEEP 1000`);
+    eng.upload(u, `CALL STEP ${Dir.NORTH} 3\nMOV r0 @STATUS\nCALL SLEEP 1000`);
     for (let i = 0; i < 20; i++) eng.advanceTick();
     expect([u.x, u.y]).toEqual([0, 1]);
     expect(u.hull).toBe(90);
@@ -121,7 +122,7 @@ describe('engine hardware', () => {
     const run = () => {
       const eng = new SimulationEngine({ seed: 11 });
       const u = eng.spawnUnit('t');
-      eng.upload(u, 'SCAN r0 r1 r2\nJEQ r1 NONE go\nADD r0 1\nMOD r0 4\ngo: STEP r0 2');
+      eng.upload(u, 'CALL SCAN r0\nMOV r1 @RADAR_HIT\nMOV r2 @RADAR_DIST\nJEQ r1 NONE go\nADD r0 1\nMOD r0 4\ngo: CALL STEP r0 2');
       for (let i = 0; i < 2000; i++) eng.advanceTick();
       return [u.x, u.y, u.energy, u.hull];
     };

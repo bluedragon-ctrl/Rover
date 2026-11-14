@@ -168,7 +168,7 @@ button('SCAN', 'Scan pulse + radar wave', () => false, () => {
   radarAt = performance.now();
   fx.scan(Math.round(state.x), Math.round(state.y), [0, 1, 2, 3][state.facing], 4, dx === 1 && dy === 0 ? 0xff5a4a : 0x3affc8, performance.now());
 });
-button('@TX_DATA', 'Uplink', () => false, () => fx.uplink(Math.round(state.x), Math.round(state.y), true, 40, performance.now(), true));
+button('LOG', 'Uplink', () => false, () => fx.uplink(Math.round(state.x), Math.round(state.y), true, 40, performance.now(), true));
 button('POST', 'Bloom', () => state.bloom, () => (post.enabled = state.bloom = !state.bloom));
 button('POST', 'CRT scanlines', () => state.crt, () => view.classList.toggle('crt', (state.crt = !state.crt)));
 button('UI', 'Labels', () => state.labels, () => (state.labels = !state.labels));

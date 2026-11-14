@@ -24,7 +24,7 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | **M10** | **Firmware + program slot (SPEC §3.9)** | 🚧 slice 1 (core, save v10) done; slice 2 (machine code + byte addresses, save v11, Code tab / Console redesign, listing pane) in review |
 | M11 | User interface review (after M10) | 🚧 Comms tab, Code tab dump box, Reference → Radio, Mission events: default since 2026-11-13 (save v13); `BRK` reports itself |
 | M12 | Image memory: `SNAP` → `LDB` / `STB` → `SEND` (SPEC §3.8.7, guide [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md)) | ✅ done (bit instructions; image memory in the core, save v14; templates, Reference → Image, Gallery labels + hex view, `SNAP` warning; goal *Darkroom* + first-edit bonus per camera mode, save v15) |
-| **M14** | **Assembler core**: hardware through device ports + `WAIT`, ROM library, RAM / `VAR` / addressing modes / `DATA`, program called like a subroutine (design [`ASSEMBLER_CORE.md`](ASSEMBLER_CORE.md)) | 🚧 design approved; slice 2 (memory model, save v17) done; slice 3 (devices, ROM) next |
+| **M14** | **Assembler core**: hardware through device ports + `WAIT`, ROM library, RAM / `VAR` / addressing modes / `DATA`, program called like a subroutine (design [`ASSEMBLER_CORE.md`](ASSEMBLER_CORE.md)) | 🚧 design approved; slice 2 (memory model, save v17) done; slice 3 (devices, `WAIT`, ROM, `CALL PROGRAM`, save v18) in review; slice 4 (lessons) next |
 | M13 | Realism pass 1: watchdog `@WDT`, thermal model + array dust, fault protection `@PREEMPT` (SPEC §3.3.4, §3.9.2, §3.9.5) | 🚧 core, default firmware, *Fault protection* template, Reference, save v16 done; in review (balance numbers to playtest) |
 
 ## M14 — Assembler core (in progress)
@@ -57,8 +57,49 @@ safe mode goes into M14 (option ROMs, tables, `RAND` later); upload 6 energy per
       the data section, Code tab RAM totals, Reference *Memory*, admin RAM view; save v17
       (RAM, `fwRamTop`, v16 code rewritten, rebooted with boot reason 6). Tests:
       `tests/memory.test.ts`.
-- [ ] Slice 3: devices, `WAIT`, ROM, `CALL PROGRAM`, removal of the old instructions, migration.
-- [ ] Slice 4: templates as lessons, image guide, Reference, tests.
+- [x] Slice 3 (in review): devices, `WAIT`, ROM, `CALL PROGRAM`, removal of the old
+      instructions, migration (SPEC §5.9, §3.9.2).
+  - [x] Opcodes: hardware instructions and `RUN` retired; `WAIT` = `12`, `LDF` = `13`
+        (decision 1: freed numbers reused once; `1F 05`–`1F 07` free). `@TX_DATA` retired.
+  - [x] 15 device ports at the last free port numbers 49–63 (`@TIMER` per slot, `@DRIVE`,
+        `@DRIVE_N`, `@RADAR`, `@RADAR_HIT`, `@RADAR_DIST`, `@TOOL`, `@TOOL_ARG`, `@REPAIR`,
+        `@REPAIR_SYS`, `@CAM`, `@CAM_MODE`, `@SEND`, `@ERASE`, `@SLICE`); start writes set
+        `@STATUS`, `WAIT` copies the result; `ERR_BUSY` = 10; chassis interlock (drive /
+        tools / repair / camera), radar alongside; `@DRIVE_N 0` stops a drive
+        (`ERR_PREEMPTED`). Timings and energy unchanged.
+  - [x] ROM at `0xF000` (`src/core/rom.ts`, 90 B): drivers `SLEEP STEP SCAN ACT USE SNAP
+        SEND ERASE RUN`, no registers; reserved names, argument count checked by the
+        assembler; `LDF` reads it; Reference → ROM shows its listing; dumps `rom:0xF0…`.
+  - [x] `CALL PROGRAM` (gate `0xE000`, same tick), `@SLICE` (0 = no limit), timer interrupt at
+        tick start, top-level `RET` = `END r0`; `@PREEMPT` interrupts without aborting (the
+        firmware decides). Mk-I 8 cycles / tick (overclock 12 / 16), data stack 16.
+  - [x] Save v18: device state and timers; v17 code rewritten (`migrateHardwareOps`, §10
+        table; reserved names get `_`), changed rovers rebooted (boot reason 6). Shipped
+        templates and `IMAGE_MEMORY.md` went through the same rewrite; new lesson template
+        *Drive yourself* (the §8 "what STEP really is"). Default firmware 166 B.
+  - [x] Tests: `tests/devices.test.ts` (ROM, `WAIT`, devices, interlocks, drive + radar at
+        once, timers, save round trip mid-drive, v17 migration); the rest of the suite moved
+        to the new language.
+- [ ] Slice 4: templates as lessons (*Count with a variable*, *Drive and scan at once*, …;
+      the shipped templates still read like the old instructions in places), image guide,
+      Reference sections *CPU*, *Devices*, *Memory map*, tests.
+- [ ] Later in M14 (decision 8): boot ROM with safe mode; ROM helper routines (see open
+      question 1 below).
+
+Open questions from slice 3 (owner):
+1. **Helper routines need a scratch register.** `PUT16 addr v`, `DIR_TO dx dy`, `PLOT x y g`
+   pop two or more arguments, but with only the data stack and `r0` free they cannot keep
+   "every other register" (§6.1: there is no way to reach the second argument without a
+   second register). Proposal: like ARM's AAPCS, helpers may change `r0`–`r1` (result in
+   `r0`) and keep `r2`, `r3`. The drivers are not affected (no registers). Built: none yet.
+2. **Port numbers are full** (0–63; 30, 33, 34 retired and never reused). The next port
+   needs the extended operand `1B pp` of §9 (2 bytes). Fine, or reuse the retired numbers
+   once like the opcodes?
+3. Preemption checks run only at tick start, so after `PRE_LOW_BAT` fires the firmware can
+   re-call the program in the same tick and it gets the rest of that tick's cycles before
+   the next check. Harmless (it is asleep in `WAIT` in practice); OK?
+4. The radar measures when its sweep ends (1 tick later), so a sweep started while driving
+   answers for where the rover is then. OK?
 
 ## M13 — Realism pass 1 (in review)
 
@@ -734,3 +775,4 @@ window with a fixed dish?
 | 2026-11-13 | `claude/intelligent-faraday-lx8xgo` | Realism review of the virtual hardware; M13 realism pass 1: watchdog `@WDT` (boot reason 5, default firmware kicks it, 158 B), thermal model (`@TEMP`, survival heaters `@HEATER`), array dust (`@SOLAR_DUST`, shed on stow, dust squall), fault protection (`@PREEMPT`, `@BAT_ALARM`, `@PREEMPTED`, `ERR_PREEMPTED`, *Fault protection* firmware template), save v16; remaining realism items in Backlog. |
 | 2026-11-13 | `claude/intelligent-faraday-lx8xgo` (2) | Review of the language and the player's development workflow against real assembler and flight-software practice; M14 *Assembler core* design draft (`docs/ASSEMBLER_CORE.md`): device ports + `WAIT`, ROM library, RAM / `VAR` / addressing modes / `DATA` / `LDF`, the program as a subroutine with a slice timer, migration plan, open questions. |
 | 2026-11-14 | `claude/intelligent-faraday-lx8xgo` (3) | M14 design approved (decisions §12 of `ASSEMBLER_CORE.md`); slice 2 memory model: RAM / `VAR` / `DATA` / `LDF`, bracket addresses, data address space with image memory at `IMG` and cargo at `CARGO`, Mk-I 512 B Flash + 64 B RAM, RAM upgrades, upload 6/B, image templates and guide on `[IMG+…]`, template *Route*, save v17 with code migration. |
+| 2026-11-14 | `ccr-298af329-qtcfs9` | M14 slice 3: devices behind ports (15 ports 49–63, `WAIT` 12, `ERR_BUSY`, chassis interlock, `@DRIVE_N 0` stop), ROM library at 0xF000 (drivers, Reference → ROM listing, argument check), `CALL PROGRAM` + `@SLICE` timer interrupt, top-level `RET`; hardware instructions, `RUN`, `@TX_DATA` retired, `LDF` = 13; Mk-I 8 cycles / 16-deep data stack; save v18 with code rewrite; template *Drive yourself*; `tests/devices.test.ts`. |

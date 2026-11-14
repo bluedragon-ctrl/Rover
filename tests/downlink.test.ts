@@ -62,11 +62,11 @@ describe('LOG instruction', () => {
   });
 
   it('is a 1-cycle compute instruction that does not touch @STATUS', () => {
-    const { e, u } = rover('MOV r0 7\nLOG 1 r0\nLOG 2\nLOG 3\nSLEEP 1000');
+    const { e, u } = rover('MOV r0 7\nLOG 1 r0\nLOG 2\nLOG 3\nWAIT @TICK');
     u.vm.status = 3;
     u.link.fifo = []; // drop the boot frame
     e.advanceTick();
-    // 4 cycles: MOV + 3 LOGs in one tick.
+    // MOV + 3 LOGs in one tick, then WAIT on a port that is never 0 (not a device: no @STATUS).
     expect(u.link.fifo.map((f) => hex(f.bytes))).toEqual(['0A 07', '10', '18']);
     expect(u.vm.status).toBe(3);
   });
@@ -101,7 +101,7 @@ describe('log FIFO and transmitter', () => {
   });
 
   it('a frame arrives when its last byte is sent; mission control decodes it', () => {
-    const { e } = rover('CONST T 4\nloop: LOG T @TICK\nSLEEP 1000');
+    const { e } = rover('CONST T 4\nloop: LOG T @TICK\nCALL SLEEP 1000');
     const got: number[] = [];
     e.events.on('DOWNLINK_FRAME', (f) => got.push(f.tick));
     run(e, 6);
@@ -113,7 +113,7 @@ describe('log FIFO and transmitter', () => {
   });
 
   it('costs energy only in ticks that send bytes', () => {
-    const { e, u } = rover('SLEEP 100000');
+    const { e, u } = rover('CALL SLEEP 100000');
     run(e, 1); // first tick sends the boot frame (2 B)
     const before = u.energy;
     run(e, 20); // idle link: only idle drain, no solar (array stowed)
@@ -139,7 +139,7 @@ describe('log FIFO and transmitter', () => {
   });
 
   it('queues a boot frame with the reason and resets @LOG_LOST on every hard reboot', () => {
-    const { e, u } = rover('SLEEP 1');
+    const { e, u } = rover('CALL SLEEP 1');
     u.link.lost = 9;
     e.upload(u, 'POP r0', factory);
     expect(u.link.lost).toBe(0);
@@ -151,7 +151,7 @@ describe('log FIFO and transmitter', () => {
   });
 
   it('@LOG_FREE and @LOG_LOST ports', () => {
-    const { e, u } = rover('LOG 1 100000\nLOG 1 100000\nLOG 1 100000\nLOG 1 100000\nMOV r0 @LOG_FREE\nMOV r1 @LOG_LOST\nMOV @LOG_LOST 0\nMOV r2 @LOG_LOST\nSLEEP 1000');
+    const { e, u } = rover('LOG 1 100000\nLOG 1 100000\nLOG 1 100000\nLOG 1 100000\nMOV r0 @LOG_FREE\nMOV r1 @LOG_LOST\nMOV @LOG_LOST 0\nMOV r2 @LOG_LOST\nCALL SLEEP 1000');
     u.link.fifo = [];
     u.antennaHealth = 0; // no signal: nothing leaves the FIFO
     for (let i = 0; i < 3; i++) e.advanceTick();
@@ -163,7 +163,7 @@ describe('log FIFO and transmitter', () => {
 });
 
 describe('downlink determinism and saves', () => {
-  const SRC = 'CONST T_BAT 3\nloop: LOG T_BAT @BAT\nLOG 1 @TICK\nLOG 2 @LOG_LOST\nSLEEP 2\nJMP loop';
+  const SRC = 'CONST T_BAT 3\nloop: LOG T_BAT @BAT\nLOG 1 @TICK\nLOG 2 @LOG_LOST\nCALL SLEEP 2\nJMP loop';
 
   it('save mid-frame, load, continue == uninterrupted run', () => {
     const make = () => {
@@ -184,7 +184,7 @@ describe('downlink determinism and saves', () => {
   });
 
   it('migrates v3 saves to an empty link', () => {
-    const { e } = rover('SLEEP 10');
+    const { e } = rover('CALL SLEEP 10');
     const v3 = serialize(e) as unknown as Record<string, unknown>;
     v3.version = 3;
     delete v3.received;
@@ -209,7 +209,7 @@ describe('console decoding', async () => {
   it('merges both slots: a tag named differently in each shows both names (SPEC §3.9.3)', () => {
     const d = {
       firmware: slotDictionary(compile('CONST T_BAT 1\nCONST T_END 14\nLOG T_BAT @BAT\nLOG T_END', CHASSIS_MK1)),
-      program: slotDictionary(compile('CONST T_X 1\nCONST T_END 14\nSLEEP 1\nLOG T_X @X\nLOG T_END 3\nLOG 6', CHASSIS_MK1, {}, { slot: 'program' })),
+      program: slotDictionary(compile('CONST T_X 1\nCONST T_END 14\nCALL SLEEP 1\nLOG T_X @X\nLOG T_END 3\nLOG 6', CHASSIS_MK1, {}, { slot: 'program' })),
     };
     const f = (bytes: number[]) => describeFrame({ unitId: 1, tick: 1, bytes, gap: 0 }, d);
     expect(f(encodeLog(1, 5))).toBe('T_BAT|T_X = 5 (fw L3, prog L4)');
@@ -218,7 +218,7 @@ describe('console decoding', async () => {
   });
 
   it('decodes program dumps with prog: addresses and program source lines', () => {
-    const res = compile('MOV r0 42\nPUSH 6\nBRK\nSLEEP 1000', CHASSIS_MK1, {}, { slot: 'program' });
+    const res = compile('MOV r0 42\nPUSH 6\nBRK\nCALL SLEEP 1000', CHASSIS_MK1, {}, { slot: 'program' });
     const d = { firmware: emptyDictionary(), program: slotDictionary(res) };
     const bytes = encodeCpuDump({ ip: 7, status: 0, state: 5, regs: [42, 0, 0, 0], dsDepth: 1, csDepth: 0 }, 3);
     expect(describeFrame({ unitId: 1, tick: 9, bytes, gap: 0, taken: 8 }, d)).toBe(
@@ -257,7 +257,7 @@ describe('science recorder (SPEC §3.8.5)', () => {
   });
 
   it('spectrometer records a spectrum; ERR_FULL keeps the item', () => {
-    const { e, u } = rover('ACT TOOL_2 0\nMOV r0 @STATUS\nMOV r1 @REC_FREE\nACT TOOL_2 1\nMOV r2 @STATUS\nMOV r3 @SCIENCE_READY\nSLEEP 1000');
+    const { e, u } = rover('CALL ACT TOOL_2 0\nMOV r0 @STATUS\nMOV r1 @REC_FREE\nCALL ACT TOOL_2 1\nMOV r2 @STATUS\nMOV r3 @SCIENCE_READY\nCALL SLEEP 1000');
     u.cargo[0] = T.IRON_ORE;
     u.cargo[1] = T.SILICON_ORE;
     u.antennaHealth = 0; // nothing leaves the recorder
@@ -269,7 +269,7 @@ describe('science recorder (SPEC §3.8.5)', () => {
   });
 
   it('delivers in order, pays credits once, shows partial products in the gallery', () => {
-    const { e, u } = rover('SLEEP 100000');
+    const { e, u } = rover('CALL SLEEP 100000');
     u.link.fifo = [];
     e.recordProduct(u, { ...spec(T.IRON_ORE), credits: 1 });
     e.recordProduct(u, spec());
@@ -309,7 +309,7 @@ describe('science recorder (SPEC §3.8.5)', () => {
   });
 
   it('boot frames alone do not complete First contact', () => {
-    const { e } = rover('SLEEP 100000');
+    const { e } = rover('CALL SLEEP 100000');
     run(e, 30);
     expect(e.received.length).toBe(1);
     expect(e.stats.framesReceived).toBe(0);
@@ -318,7 +318,7 @@ describe('science recorder (SPEC §3.8.5)', () => {
 
   it('save mid-product, load, continue == uninterrupted run', () => {
     const make = () => {
-      const { e, u } = rover('CONST T 2\nloop: LOG T @TICK\nSLEEP 7\nJMP loop', 21);
+      const { e, u } = rover('CONST T 2\nloop: LOG T @TICK\nCALL SLEEP 7\nJMP loop', 21);
       u.antennaHealth = 75;
       for (let i = 0; i < 6; i++) e.recordProduct(u, spec(i % 2 ? T.IRON_ORE : T.SAMPLE));
       return e;
@@ -335,7 +335,7 @@ describe('science recorder (SPEC §3.8.5)', () => {
   });
 
   it('migrates v4 saves: waiting science packets are credited', () => {
-    const { e } = rover('SLEEP 10');
+    const { e } = rover('CALL SLEEP 10');
     const v4 = serialize(e) as unknown as Record<string, any>;
     v4.version = 4;
     delete v4.gallery;

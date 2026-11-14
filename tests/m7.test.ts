@@ -10,7 +10,7 @@ import { T } from '../src/core/WorldRegistry';
 const run = (e: SimulationEngine, n: number) => {
   for (let i = 0; i < n; i++) e.advanceTick();
 };
-function rover(src = 'SLEEP 100000', seed = 5) {
+function rover(src = 'CALL SLEEP 100000', seed = 5) {
   const e = new SimulationEngine({ seed });
   const u = e.spawnUnit('t');
   expect(e.upload(u, src, { factory: true }).errors).toEqual([]);
@@ -27,7 +27,7 @@ function orderAndLand(e: SimulationEngine, id: string) {
 function grab(e: SimulationEngine, d: { x: number; y: number }) {
   const u = e.units[0];
   expect(e.admin.teleport(u, d.x, d.y - 1)).toBe(true);
-  e.upload(u, 'ACT TOOL_1 NORTH\nMOV r0 @STATUS\nSLEEP 100000', { factory: true });
+  e.upload(u, 'CALL ACT TOOL_1 NORTH\nMOV r0 @STATUS\nCALL SLEEP 100000', { factory: true });
   run(e, 5);
   return u.vm.regs[0];
 }
@@ -95,9 +95,9 @@ describe('picking up installs immediately', () => {
   it('other rovers do not get the base chassis modified', () => {
     const { e, u } = rover();
     grab(e, orderAndLand(e, 'CPU_6'));
-    expect(u.chassis.cyclesPerTick).toBe(6);
+    expect(u.chassis.cyclesPerTick).toBe(12);
     const other = e.spawnUnit('b', 20, 20);
-    expect(other.chassis.cyclesPerTick).toBe(4);
+    expect(other.chassis.cyclesPerTick).toBe(8);
   });
 
   it('battery, solar and armor upgrades change the physics', () => {
@@ -121,7 +121,7 @@ describe('picking up installs immediately', () => {
     e.admin.teleport(u, 0, 0);
     e.world.setTile(1, 0, Layer.OBSTACLE, T.CLIFF_WALL);
     e.world.setTile(9, 0, Layer.OBSTACLE, T.SILICON_ORE);
-    e.upload(u, 'ACT TOOL_3 EAST\nMOV r0 @SEISMIC_TYPE\nMOV r1 @SEISMIC_DIST\nSLEEP 100000', { factory: true });
+    e.upload(u, 'CALL ACT TOOL_3 EAST\nMOV r0 @SEISMIC_TYPE\nMOV r1 @SEISMIC_DIST\nCALL SLEEP 100000', { factory: true });
     run(e, 8);
     expect([u.vm.regs[0], u.vm.regs[1]]).toEqual([T.SILICON_ORE, 9]);
   });

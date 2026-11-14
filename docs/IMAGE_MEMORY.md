@@ -15,7 +15,7 @@ The camera no longer sends a photo by itself. Taking a picture, changing it and 
 are three separate steps, and your program decides what happens in between:
 
 ```
-            SNAP                     SEND
+            CALL SNAP SEND 1
   camera ─────────► image memory ─────────► science recorder ──► downlink ──► Gallery
                      (256 bytes)             (waits to be sent)
                         ▲     │
@@ -23,9 +23,10 @@ are three separate steps, and your program decides what happens in between:
                         └─ your program ─┘
 ```
 
-* **`SNAP dir [mode]`** takes a picture into **image memory**. Nothing is sent yet.
+* **`CALL SNAP dir mode`** (a ROM routine, **[M14]**) takes a picture into **image memory**.
+  Nothing is sent yet.
 * **`LDB`** reads one byte of image memory, **`STB`** writes one.
-* **`SEND [type]`** copies image memory into the science recorder as a product. From
+* **`CALL SEND type`** copies image memory into the science recorder as a product. From
   there the downlink sends it home, as before.
 
 Image memory is ordinary memory: you can also draw a picture into it from nothing, or use
@@ -37,13 +38,16 @@ and only those products are sent to Earth.
 
 ## 2. Instructions
 
+**[M14]** The camera, the send and the erase are devices (`@CAM` with `@CAM_MODE`, `@SEND`,
+`@ERASE`); the ROM routines below start them and `WAIT` until they are done (Reference → ROM).
+
 | Instruction | Cycles | What it does |
 | :--- | :--- | :--- |
-| `SNAP dir [mode]` | blocks 10 ticks, 200 energy | Photograph the subject in `dir` into image memory (overwrites all of it). Writes `@STATUS`. |
+| `CALL SNAP dir mode` | waits 10 ticks, 200 energy | Photograph the subject in `dir` into image memory (overwrites all of it). `@STATUS`: how it went. |
 | `LDB dst [addr]` | 1 cycle | `dst` = byte at data address `addr` (always 0–255). Image memory starts at `IMG`: byte `n` of the picture is `[IMG+n]`. |
 | `STB [addr] src` | 1 cycle | Byte at `addr` = `src` (only the low 8 bits are kept: 256 → 0, −1 → 255). |
-| `SEND [type]` | blocks 1 tick, 10 energy | Copy image memory into the recorder as a product of `type` (default: the mode of the last `SNAP`). Image memory is kept. Writes `@STATUS`: `ERR_FULL` (no room in the recorder), `ERR_INVALID` (bad type, or the type is bigger than image memory), `ERR_LOW_POWER`. |
-| `ERASE` | blocks 2 ticks, 10 energy | Set every byte of image memory to 0 and forget the last `SNAP` (a `SEND` after it is a drawn picture). Writes `@STATUS`: `ERR_LOW_POWER`. |
+| `CALL SEND type` | waits 1 tick, 10 energy | Copy image memory into the recorder as a product of `type` (0: the mode of the last photo). Image memory is kept. `@STATUS`: `ERR_FULL` (no room in the recorder), `ERR_INVALID` (bad type, or the type is bigger than image memory), `ERR_LOW_POWER`, `ERR_BUSY` (the camera is still exposing). |
+| `CALL ERASE` | waits 2 ticks, 10 energy | Set every byte of image memory to 0 and forget the last photo (a send after it is a drawn picture). `@STATUS`: `ERR_LOW_POWER`, `ERR_BUSY`. |
 
 `LDB` and `STB` are compute instructions like `MOV`: no energy, no `@STATUS`. **[M14]** They
 reach the rover's whole data memory, not just pictures: RAM at `0x000`, image memory at
@@ -153,9 +157,9 @@ In mode 5 one byte is one pixel: **address = y × 32 + x**, the easiest mode to 
   the first time in each camera mode (goal *Darkroom*: deliver your first one). Other
   `SEND`s earn nothing. Anomaly flags are checked against the real tile, so a painted
   fossil costs credits.
-* **Speed.** The Mk-I CPU runs 4 cycles per tick. A loop that touches every byte costs
-  about 6 cycles per byte: roughly **400 ticks** (a sixth of a sol) for a whole picture,
-  three times longer than sending it (128 ticks at full signal). The firmware runs your
+* **Speed.** The Mk-I CPU runs 8 cycles per tick (4 before M14). A loop that touches every
+  byte costs about 6 cycles per byte: roughly **200 ticks** for a whole picture, longer than
+  sending it (128 ticks at full signal). The firmware runs your
   program in time slices, so long loops just take several slices. *CPU overclock*
   upgrades make processing faster.
 * **Flash.** Every example fits next to the default firmware with lots of room to spare
@@ -164,17 +168,18 @@ In mode 5 one byte is one pixel: **address = y × 32 + x**, the easiest mode to 
 
 ## 5. Examples
 
-Measured on Mk-I (4 cycles per tick). Ticks are CPU time only; `SNAP` adds 10 ticks, `SEND`
-1 and `ERASE` 2.
+Measured on Mk-I (8 cycles per tick), counting the instructions of the ROM routines they
+call. Ticks are CPU time only; a photo (`CALL SNAP`) adds 10 ticks, `CALL SEND` 1 and
+`CALL ERASE` 2.
 
 | # | Example | Teaches | Flash | CPU time |
 | :--- | :--- | :--- | :--- | :--- |
-| 1 | Line | rows, addresses, `ERASE` | 29 B | 28 cycles ≈ 7 ticks |
-| 2 | Test pattern | grey levels, computing from the address | 36 B | 1795 cycles ≈ 450 ticks |
-| 3 | Negative | `SNAP` → change → `SEND` | 45 B | 1541 cycles ≈ 390 ticks |
-| 4 | Stamp | numbers as bytes (masks and shifts), negative numbers | 64 B | 27 cycles ≈ 7 ticks |
-| 5 | Plot | single pixels inside a byte (bit instructions) | 99 B | 773 cycles ≈ 190 ticks |
-| 6 | Memory map | image memory as a big scratch RAM | 76 B | runs forever |
+| 1 | Line | rows, addresses, `CALL ERASE` | 31 B | 38 cycles ≈ 5 ticks |
+| 2 | Test pattern | grey levels, computing from the address | 37 B | 1800 cycles ≈ 225 ticks |
+| 3 | Negative | `CALL SNAP` → change → `CALL SEND` | 50 B | 1552 cycles ≈ 195 ticks |
+| 4 | Stamp | numbers as bytes (masks and shifts), negative numbers | 69 B | 38 cycles ≈ 5 ticks |
+| 5 | Plot | single pixels inside a byte (bit instructions) | 104 B | 783 cycles ≈ 100 ticks |
+| 6 | Memory map | image memory as a big scratch RAM | 85 B | runs forever |
 
 ### Example 1: Line, your first picture
 
@@ -184,12 +189,12 @@ Measured on Mk-I (4 cycles per tick). Ticks are CPU time only; `SNAP` adds 10 ti
 
 ALIAS r0 addr
 
-        ERASE                 ; every byte 0 = 00 00 00 00 = four black pixels
+        CALL ERASE            ; every byte 0 = 00 00 00 00 = four black pixels
         MOV addr 128          ; row 16 starts at byte 16 × 8 = 128
 line:   STB [IMG+addr] 0xFF   ; 0xFF = 11 11 11 11 = four white pixels
         ADD addr 1
         JLT addr 136 line     ; one row = 8 bytes = 32 pixels
-        SEND 1                ; decode as a 32×32 grey photo
+        CALL SEND 1           ; decode as a 32×32 grey photo
         END 1
 ```
 
@@ -217,7 +222,7 @@ fill:   MOV grey addr
         STB [IMG+addr] grey
         ADD addr 1
         JLT addr 256 fill
-        SEND 1
+        CALL SEND 1
         END 1
 ```
 
@@ -235,7 +240,7 @@ column of bytes, then `MOD 2`).
 ALIAS r0 addr
 ALIAS r1 byte
 
-        SNAP NORTH            ; into image memory: nothing is sent yet
+        CALL SNAP NORTH 1     ; into image memory: nothing is sent yet
         JNE @STATUS OK fail   ; ERR_LOW_POWER, ERR_INVALID...
         MOV addr 0
 inv:    LDB byte [IMG+addr]   ; read
@@ -244,7 +249,7 @@ inv:    LDB byte [IMG+addr]   ; read
         STB [IMG+addr] byte   ; write back
         ADD addr 1
         JLT addr 256 inv
-        SEND                  ; same format as the SNAP (mode 1)
+        CALL SEND 0           ; same format as the SNAP (mode 1)
         END 1
 fail:   END 0
 ```
@@ -268,14 +273,14 @@ ALIAS r0 addr
 ALIAS r1 value
 ALIAS r2 low
 
-        SNAP NORTH
+        CALL SNAP NORTH 1
         JNE @STATUS OK fail
         MOV addr 0
         MOV value @X
         CALL put16
         MOV value @Y
         CALL put16
-        SEND
+        CALL SEND 0
         END 1
 fail:   END 0
 
@@ -307,7 +312,7 @@ came out dark.
 ; diagonal from the top-left corner to the bottom-right one.
 ; The plot routine works for any 2-bpp picture (modes 1 and 2).
 
-        SNAP NORTH
+        CALL SNAP NORTH 1
         JNE @STATUS OK fail
         MOV r0 0
 diag:   MOV r1 r0             ; y = x
@@ -315,7 +320,7 @@ diag:   MOV r1 r0             ; y = x
         CALL plot
         ADD r0 1
         JLT r0 32 diag
-        SEND
+        CALL SEND 0
         END 1
 fail:   END 0
 
@@ -358,22 +363,24 @@ a photo; a filled square.
 ; a 16×16 map that repeats every 16 tiles. Back on a known tile, the
 ; rover turns by the number of earlier visits, so it leaves a loop
 ; differently every time instead of circling forever.
-; Do not SNAP in this program: a photo would overwrite the map.
+; Do not take photos in this program: one would overwrite the map.
 
 ALIAS r0 dir
 ALIAS r1 seen
 ALIAS r2 dist
 ALIAS r3 cell
 
-        ERASE                 ; forget the old map: image memory keeps
+        CALL ERASE            ; forget the old map: image memory keeps
                               ; its contents through reboots
-loop:   SCAN dir -> seen dist
+loop:   CALL SCAN dir
+        MOV seen @RADAR_HIT
+        MOV dist @RADAR_DIST
         JEQ seen NONE go
         JGT dist 1 go
 turn:   ADD dir 1
         MOD dir 4
         JMP loop
-go:     STEP dir 1
+go:     CALL STEP dir 1
         JNE @STATUS OK turn
         MOV cell @Y
         MOD cell 16           ; map row 0–15 (also for negative @Y)

@@ -2,8 +2,9 @@
  * Rover-ASM instruction set and machine code (docs/SPEC.md §5.7, §5.7.1).
  *
  * The compiler emits real bytes; the VM executes the decoded instructions. Opcode and
- * port numbers are fixed forever: new instructions and ports get new numbers, old ones
- * never change (saved programs, listings and dumps stay valid).
+ * port numbers are fixed: new instructions and ports get new numbers. Once, in M14, the
+ * numbers of the retired hardware instructions were reused (owner decision; every save was
+ * recompiled and rebooted by the v18 migration).
  */
 import { ENCODING } from '../balance';
 import { PORT_CODES } from '../ports';
@@ -14,10 +15,10 @@ export type Op =
   | 'AND' | 'OR' | 'SHL' | 'SHR'
   | 'JMP' | 'JEQ' | 'JNE' | 'JLT' | 'JGT' | 'JLE' | 'JGE'
   | 'CALL' | 'RET'
-  | 'SLEEP' | 'SCAN' | 'STEP' | 'ACT' | 'PEEK' | 'USE' | 'SNAP'
+  | 'WAIT'
   | 'LOG' | 'BRK'
-  | 'RUN' | 'END'
-  | 'LDB' | 'STB' | 'SEND' | 'ERASE'
+  | 'END'
+  | 'LDB' | 'STB'
   | 'LDF';
 
 export type Operand =
@@ -51,6 +52,7 @@ export interface Instr {
  *  l  label
  *  k  compile-time constant (number or CONST), no register/port
  *  a  memory address in brackets: [n], [r], [r+n] (M14; load / store instructions only)
+ *  p  a readable port (M14: WAIT)
  *  suffix '?' optional, '*' variadic
  */
 export const SIGNATURES: Record<Op, string[]> = {
@@ -75,43 +77,39 @@ export const SIGNATURES: Record<Op, string[]> = {
   JGE: ['v', 'v', 'l'],
   CALL: ['l', 'v*'],
   RET: [],
-  SLEEP: ['v'],
-  SCAN: ['v', 'd', 'd'],
-  STEP: ['v', 'v?'],
-  ACT: ['v', 'v?'],
-  PEEK: ['v', 'd'],
-  USE: ['v', 'v?'],
-  SNAP: ['v', 'v?'],
+  WAIT: ['p'],
   LOG: ['k', 'v?'],
   BRK: [],
-  RUN: ['v'],
   END: ['v?'],
   LDB: ['d', 'a'],
   STB: ['a', 'v'],
-  SEND: ['v?'],
-  ERASE: [],
   LDF: ['d', 'a'],
 };
 
 export const OPCODES = Object.keys(SIGNATURES) as Op[];
-export const HARDWARE_OPS: ReadonlySet<Op> = new Set(['SLEEP', 'SCAN', 'STEP', 'ACT', 'USE', 'SNAP', 'RUN', 'SEND', 'ERASE']);
 
 /**
- * Fixed opcode numbers (SPEC §5.7.1), in §5.4 order. Append only: never renumber.
- * The low 5 bits of the opcode byte hold this number (1–30): the image-memory `LDB` / `STB`
- * (SPEC §3.8.7) took the last two, 1D and 1E; 1F is the extension prefix.
+ * M14 code address space (docs/ASSEMBLER_CORE.md §9): each slot from 0x000, the `PROGRAM`
+ * gate (firmware `CALL PROGRAM` enters the program slot) and the ROM library.
+ */
+export const PROGRAM_GATE = 0xe000;
+export const ROM_BASE = 0xf000;
+
+/**
+ * Fixed opcode numbers (SPEC §5.7.1). The low 5 bits of the opcode byte hold this number
+ * (1–30); 1F is the extension prefix. M14 retired the hardware instructions and reused two
+ * of their numbers once (owner decision): 12 `WAIT` (was `SLEEP`), 13 `LDF` (was `SCAN`,
+ * and `1F 07` in slice 2). Free for later: 14–18, 1B; extended 05–07.
  */
 export const OPCODE_NUMBERS: Readonly<Partial<Record<Op, number>>> = {
   MOV: 0x01, PUSH: 0x02, POP: 0x03,
   ADD: 0x04, SUB: 0x05, MUL: 0x06, DIV: 0x07, MOD: 0x08,
   JMP: 0x09, JEQ: 0x0a, JNE: 0x0b, JLT: 0x0c, JGT: 0x0d, JLE: 0x0e, JGE: 0x0f,
   CALL: 0x10, RET: 0x11,
-  SLEEP: 0x12, SCAN: 0x13, STEP: 0x14, ACT: 0x15, PEEK: 0x16, USE: 0x17, SNAP: 0x18,
+  WAIT: 0x12, LDF: 0x13,
   LOG: 0x19, BRK: 0x1a,
-  RUN: 0x1b, END: 0x1c,
+  END: 0x1c,
   LDB: 0x1d, STB: 0x1e,
-  // M14 slice 2: LDF reads Flash. It takes a two-byte number until the hardware
-  // instructions retire (slice 3) and free one-byte numbers (owner: reuse them once).
 };
 
 /**
@@ -123,8 +121,6 @@ export const OPCODE_NUMBERS: Readonly<Partial<Record<Op, number>>> = {
 export const EXT_PREFIX = 0x1f;
 export const EXT_OPCODE_NUMBERS: Readonly<Partial<Record<Op, number>>> = {
   AND: 0x01, OR: 0x02, SHL: 0x03, SHR: 0x04,
-  SEND: 0x05, ERASE: 0x06,
-  LDF: 0x07,
 };
 const OP_BY_NUMBER = new Map(Object.entries(OPCODE_NUMBERS).map(([op, n]) => [n, op as Op]));
 const OP_BY_EXT_NUMBER = new Map(Object.entries(EXT_OPCODE_NUMBERS).map(([op, n]) => [n, op as Op]));
@@ -141,11 +137,11 @@ export function opcodeBytes(op: Op): number[] {
 /** Opcode as the Reference tab shows it: `04`, `1F 01`. */
 export const opcodeHex = (op: Op): string => opcodeBytes(op).map((b) => b.toString(16).toUpperCase().padStart(2, '0')).join(' ');
 
-/** Size of the opcode in bytes: 1, or 2 for an extended instruction (bit instructions, SEND, ERASE). */
+/** Size of the opcode in bytes: 1, or 2 for an extended instruction (the bit instructions). */
 export const opcodeSize = (op: Op): number => (EXT_OPCODE_NUMBERS[op] !== undefined ? ENCODING.extOpcode : ENCODING.opcode);
 
 /**
- * The top 3 bits of the opcode byte count the optional operands present (`STEP d [n]`,
+ * The top 3 bits of the opcode byte count the optional operands present (`LOG tag [v]`,
  * `END [v]`, the arguments of `CALL`): a short immediate (0x00–0x0F) or register byte
  * (0x10–0x17) looks like an opcode, so the decoder could not tell otherwise.
  */
@@ -269,7 +265,7 @@ export class DecodeError extends Error {}
  * Disassemble a slot's machine code (the inverse of encodeInstr over a whole program). `end`:
  * where the instructions stop (M14: the data section after them is not code).
  */
-export function decodeProgram(code: ArrayLike<number>, end = code.length): DecodedInstr[] {
+export function decodeProgram(code: ArrayLike<number>, end = code.length, base = 0): DecodedInstr[] {
   const out: DecodedInstr[] = [];
   let at = 0;
   const byte = (): number => {
@@ -310,13 +306,14 @@ export function decodeProgram(code: ArrayLike<number>, end = code.length): Decod
       else if ((b & 0xc0) === OPERAND.port && PORT_CODES[b & 0x3f]) args.push({ k: 'port', name: PORT_CODES[b & 0x3f] });
       else throw new DecodeError(`Invalid operand byte 0x${b.toString(16)} at 0x${(at - 1).toString(16)}`);
     }
-    out.push({ op, args, addr, size: at - addr });
+    out.push({ op, args, addr: base + addr, size: at - addr });
   }
   return out;
 }
 
-/** Address as the listing and the Comms tab show it: `fw:0x02A` / `prog:0x010`. */
+/** Address as the listing and the Comms tab show it: `fw:0x02A` / `prog:0x010`; ROM addresses as `rom:0xF012`. */
 export function formatAddr(addr: number, slot?: 'firmware' | 'program'): string {
   const a = `0x${addr.toString(16).toUpperCase().padStart(3, '0')}`;
+  if (addr >= ROM_BASE) return `rom:${a}`;
   return slot ? `${slot === 'firmware' ? 'fw' : 'prog'}:${a}` : a;
 }

@@ -23,8 +23,10 @@ export enum Status {
   ERR_NO_SIGNAL = 6,
   ERR_HAZARD = 7,
   ERR_DEPLOYED = 8,
-  /** The firmware took control back in the middle of the program's action (@PREEMPT, SPEC §3.9.2). */
+  /** M14: stopped by a command before it finished (a drive stopped with @DRIVE_N 0). */
   ERR_PREEMPTED = 9,
+  /** M14: the device (or one it is interlocked with) is still working. */
+  ERR_BUSY = 10,
 }
 
 export enum LightColor {
@@ -35,7 +37,7 @@ export enum LightColor {
   AMBER = 4,
 }
 
-/** Repair targets for `USE slot [system]`. */
+/** Repair targets (@REPAIR_SYS, `CALL USE slot system`). */
 export enum SystemId {
   SYS_HULL = 0,
   SYS_SOLAR = 1,

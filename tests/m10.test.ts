@@ -41,16 +41,23 @@ function until(e: SimulationEngine, cond: () => boolean, max = 2000): number {
 describe('compiler slots (SPEC §3.9.1)', () => {
   const c = (src: string, slot: 'firmware' | 'program', otherBytes = 0) => compile(src, CHASSIS_MK1, consts, { slot, otherBytes });
 
-  it('RUN and @PROG_STATE writes are firmware-only, END is program-only', () => {
-    expect(c('RUN 10', 'firmware').errors).toEqual([]);
-    expect(c('RUN 10', 'program').errors[0].message).toMatch(/RUN is a firmware instruction/);
+  it('CALL RUN / CALL PROGRAM and @PROG_STATE / @SLICE writes are firmware-only, END is program-only', () => {
+    expect(c('CALL RUN 10', 'firmware').errors).toEqual([]);
+    expect(c('CALL RUN 10', 'program').errors[0].message).toMatch(/CALL RUN is for the firmware/);
+    expect(c('MOV @SLICE 10\nCALL PROGRAM', 'firmware').errors).toEqual([]);
+    expect(c('CALL PROGRAM', 'program').errors[0].message).toMatch(/CALL PROGRAM is for the firmware/);
+    expect(c('CALL PROGRAM 5', 'firmware').errors[0].message).toMatch(/takes no arguments/);
+    expect(c('JMP PROGRAM', 'firmware').errors[0].message).toMatch(/can only be CALLed/);
+    expect(c('MOV @SLICE 5', 'program').errors[0].message).toMatch(/Only the firmware/);
+    expect(c('run: END', 'program').errors[0].message).toMatch(/name of a ROM routine/);
     expect(c('END 3', 'program').errors).toEqual([]);
     expect(c('END', 'program').flashUsed).toBe(1);
     expect(c('END 3', 'firmware').errors[0].message).toMatch(/END is a program instruction/);
     expect(c('MOV @PROG_STATE PROG_NONE', 'firmware').errors).toEqual([]);
     expect(c('MOV @PROG_STATE PROG_NONE', 'program').errors[0].message).toMatch(/Only the firmware/);
     expect(c('MOV r0 @PROG_STATE\nJEQ @PROG_RESULT 1 x\nx: END @PROG_STATE', 'program').errors).toEqual([]);
-    expect(c('RUN 50', 'firmware').flashUsed).toBe(3);
+    expect(c('CALL RUN 50', 'firmware').flashUsed).toBe(5); // opcode, ROM address, 50
+    expect(c('CALL PROGRAM', 'firmware').flashUsed).toBe(3);
   });
 
   it('firmware and program share the flash; the error names both sizes', () => {
@@ -63,7 +70,7 @@ describe('compiler slots (SPEC §3.9.1)', () => {
   it('the default firmware leaves room for every shipped program; comfort blocks state their real cost', () => {
     const fw = c(DEFAULT_FIRMWARE, 'firmware');
     expect(fw.errors).toEqual([]);
-    expect(fw.flashUsed).toBeLessThanOrEqual(158);
+    expect(fw.flashUsed).toBeLessThanOrEqual(170); // M14: about 170 B of 512 (docs/ASSEMBLER_CORE.md §8)
     for (const [name, src] of Object.entries(PROGRAM_TEMPLATES)) expect(c(src, 'program', fw.flashUsed).errors, name).toEqual([]);
     const lines = DEFAULT_FIRMWARE.split('\n');
     let block: { cost: number; sum: number; title: string } | null = null;
@@ -82,34 +89,50 @@ describe('compiler slots (SPEC §3.9.1)', () => {
   });
 });
 
-describe('RUN slices (SPEC §3.9.2)', () => {
-  it('gives the program whole ticks with separate registers; the firmware resumes after the slice', () => {
-    const { e, u } = rover('MOV r0 99\nRUN 3\nMOV r1 @PROG_STATE\nSLEEP 1000', 'loop: ADD r0 1\nJMP loop');
+describe('CALL PROGRAM slices (SPEC §3.9.2, M14)', () => {
+  it('calls the program in the same tick with separate registers; the timer interrupt returns to the firmware', () => {
+    const { e, u } = rover('MOV r0 99\nCALL RUN 3\nMOV r1 @PROG_STATE\nCALL SLEEP 1000', 'loop: ADD r0 1\nJMP loop');
     expect(u.progState).toBe(ProgState.PROG_READY);
-    run(e, 1); // firmware: MOV, RUN (ends the tick)
+    run(e, 1); // firmware: MOV, CALL RUN, POP @SLICE, CALL PROGRAM; the program gets the 4 cycles left
     expect(u.slice).toBe(3);
     expect(u.progState).toBe(ProgState.PROG_RUNNING);
     expect(u.vm.state).toBe(CpuState.BLOCKED);
-    run(e, 3); // three program ticks, 4 cycles each: ADD/JMP pairs
-    expect(u.prog.regs[0]).toBe(6);
+    expect(u.vm.callStack.length).toBe(2); // inside CALL PROGRAM, called from the ROM's RUN
+    expect(u.prog.regs[0]).toBe(2);
+    run(e, 2); // two whole program ticks: 8 cycles, ADD/JMP pairs
+    expect(u.prog.regs[0]).toBe(10);
     expect(u.vm.regs[0]).toBe(99);
-    run(e, 1); // slice over: firmware runs MOV r1 @PROG_STATE, then SLEEP
+    run(e, 1); // slice over at the start of the tick: the firmware returns from RUN, reads @PROG_STATE
     expect(u.slice).toBe(-1);
     expect(u.vm.regs[1]).toBe(ProgState.PROG_READY);
-    expect(u.prog.regs[0]).toBe(6);
+    expect(u.prog.regs[0]).toBe(10);
   });
 
-  it('lets an action started in the slice finish first', () => {
-    const { e, u } = rover('RUN 1\nMOV r0 @TICK\nSLEEP 1000', 'SLEEP 10\nMOV r0 1');
+  it('suspends a program asleep in WAIT on time; its timer keeps running and it goes on when called again', () => {
+    const fw = 'loop: CALL RUN 2\nADD r2 1\nJNE @PROG_STATE PROG_DONE loop\nMOV r1 @TICK\nCALL SLEEP 1000';
+    const { e, u } = rover(fw, 'CALL SLEEP 10\nEND 1');
     run(e, 1);
     const t0 = e.tick;
-    until(e, () => u.vm.regs[0] !== 0);
-    expect(u.vm.regs[0] - t0).toBeGreaterThanOrEqual(10);
-    expect(u.prog.regs[0]).toBe(0); // the slice ended right after the SLEEP, before MOV
+    until(e, () => u.vm.regs[1] !== 0);
+    expect(u.vm.regs[1] - t0).toBeGreaterThanOrEqual(9);
+    expect(u.vm.regs[1] - t0).toBeLessThanOrEqual(12);
+    expect(u.vm.regs[2]).toBeGreaterThanOrEqual(4); // the firmware got control back every 2 ticks
+    expect(u.progResult).toBe(1);
+  });
+
+  it('@SLICE 0 is no time limit; a top-level RET returns r0 as the result', () => {
+    const { e, u } = rover('MOV @SLICE 0\nCALL PROGRAM\nMOV r1 @PROG_RESULT\nCALL SLEEP 1000', 'CALL SLEEP 30\nMOV r0 42\nRET');
+    run(e, 20);
+    expect(u.slice).toBe(0);
+    expect(u.progState).toBe(ProgState.PROG_RUNNING);
+    until(e, () => u.vm.regs[1] !== 0);
+    expect(u.vm.regs[1]).toBe(42);
+    expect(u.progState).toBe(ProgState.PROG_DONE);
+    expect(u.vm.callStack.length).toBe(1); // back from CALL PROGRAM, now inside the ROM's SLEEP
   });
 
   it('RUN with nothing ready sets ERR_INVALID and the firmware goes on', () => {
-    const { e, u } = rover('RUN 5\nMOV r0 @STATUS\nSLEEP 1000');
+    const { e, u } = rover('CALL RUN 5\nMOV r0 @STATUS\nCALL SLEEP 1000');
     expect(u.progState).toBe(ProgState.PROG_NONE);
     run(e, 2);
     expect(u.vm.regs[0]).toBe(Status.ERR_INVALID);
@@ -117,14 +140,14 @@ describe('RUN slices (SPEC §3.9.2)', () => {
   });
 
   it('each slot has its own @STATUS', () => {
-    const { e, u } = rover('DIV r0 0\nRUN 2\nMOV r1 @STATUS\nSLEEP 1000', 'MOV r0 @STATUS\nSLEEP 1\nMOV r1 @STATUS\nSLEEP 1000');
+    const { e, u } = rover('DIV r0 0\nCALL RUN 2\nMOV r1 @STATUS\nCALL SLEEP 1000', 'MOV r0 @STATUS\nCALL SLEEP 1\nMOV r1 @STATUS\nCALL SLEEP 1000');
     run(e, 6);
     expect(u.prog.regs[0]).toBe(Status.OK); // the firmware's RUN wrote OK, but to its own @STATUS
     expect(u.vm.regs[1]).toBe(Status.OK);
   });
 
   it('END reports DONE and the result; RUN does not restart it until the firmware writes PROG_READY', () => {
-    const fw = 'loop: RUN 10\nJNE @PROG_STATE PROG_DONE loop\nMOV r0 @PROG_RESULT\nADD r1 1\nJGE r1 2 stop\nMOV @PROG_STATE PROG_READY\nJMP loop\nstop: RUN 10\nMOV r2 @STATUS\nSLEEP 1000';
+    const fw = 'loop: CALL RUN 10\nJNE @PROG_STATE PROG_DONE loop\nMOV r0 @PROG_RESULT\nADD r1 1\nJGE r1 2 stop\nMOV @PROG_STATE PROG_READY\nJMP loop\nstop: CALL RUN 10\nMOV r2 @STATUS\nCALL SLEEP 1000';
     const { e, u } = rover(fw, 'ADD r0 1\nEND 7');
     until(e, () => u.vm.regs[2] !== 0);
     expect(u.vm.regs[0]).toBe(7);
@@ -135,7 +158,7 @@ describe('RUN slices (SPEC §3.9.2)', () => {
   });
 
   it('PROG_NONE acknowledges: the program stays in flash and Run again restarts it', () => {
-    const { e, u } = rover('loop: RUN 5\nJNE @PROG_STATE PROG_DONE loop\nMOV @PROG_STATE PROG_NONE\nJMP loop', 'END 1');
+    const { e, u } = rover('loop: CALL RUN 5\nJNE @PROG_STATE PROG_DONE loop\nMOV @PROG_STATE PROG_NONE\nJMP loop', 'END 1');
     until(e, () => u.progState === ProgState.PROG_NONE);
     run(e, 20);
     expect(u.progState).toBe(ProgState.PROG_NONE);
@@ -148,7 +171,7 @@ describe('RUN slices (SPEC §3.9.2)', () => {
   });
 
   it('a program fault returns to the firmware without a watchdog reboot', () => {
-    const { e, u } = rover('loop: RUN 5\nMOV r0 @PROG_STATE\nJMP loop', 'POP r0');
+    const { e, u } = rover('loop: CALL RUN 5\nMOV r0 @PROG_STATE\nJMP loop', 'POP r0');
     run(e, 3);
     expect(u.progState).toBe(ProgState.PROG_FAULT);
     expect(u.vm.regs[0]).toBe(ProgState.PROG_FAULT);
@@ -158,7 +181,7 @@ describe('RUN slices (SPEC §3.9.2)', () => {
   });
 
   it('BRK halts only the program; Continue (program slot) resumes after the BRK', () => {
-    const { e, u } = rover('loop: RUN 5\nADD r1 1\nJMP loop', 'MOV r0 1\nBRK\nMOV r0 2\nSLEEP 1000');
+    const { e, u } = rover('loop: CALL RUN 5\nADD r1 1\nJMP loop', 'MOV r0 1\nBRK\nMOV r0 2\nCALL SLEEP 1000');
     run(e, 3);
     expect(u.progState).toBe(ProgState.PROG_HALTED);
     const r1 = u.vm.regs[1];
@@ -174,14 +197,14 @@ describe('RUN slices (SPEC §3.9.2)', () => {
   });
 
   it('hard reboots reset both contexts and make the program READY again', () => {
-    const { e, u } = rover('loop: RUN 5\nJMP loop', 'ADD r0 1\nEND 4');
+    const { e, u } = rover('loop: CALL RUN 5\nJMP loop', 'ADD r0 1\nEND 4');
     until(e, () => u.progState === ProgState.PROG_DONE);
-    e.upload(u, 'loop: RUN 5\nJMP loop', factory);
+    e.upload(u, 'loop: CALL RUN 5\nJMP loop', factory);
     expect(u.progState).toBe(ProgState.PROG_READY);
     expect(u.prog.regs[0]).toBe(0);
     expect(u.progResult).toBe(0);
     // Power loss in the middle of a slice.
-    e.uploadProgram(u, 'loop: SLEEP 5\nJMP loop', factory);
+    e.uploadProgram(u, 'loop: CALL SLEEP 5\nJMP loop', factory);
     run(e, 3);
     expect(u.slice).toBeGreaterThanOrEqual(0);
     u.energy = 1;
@@ -195,17 +218,17 @@ describe('RUN slices (SPEC §3.9.2)', () => {
 
 describe('uploads and commands (SPEC §3.9.3)', () => {
   it('a program upload is cheaper, does not reboot and replaces a running program', () => {
-    const { e, u } = rover('MOV r0 5\nloop: RUN 50\nJMP loop', 'loop: SLEEP 30\nJMP loop');
+    const { e, u } = rover('MOV r0 5\nloop: CALL RUN 50\nJMP loop', 'loop: CALL SLEEP 30\nJMP loop');
     run(e, 3);
     expect(u.slice).toBeGreaterThan(0);
-    expect(u.action?.kind).toBe('WAIT');
+    expect(u.prog.timer).toBeGreaterThan(0);
     const before = u.energy;
     const res = e.uploadProgram(u, 'MOV r1 3\nEND 9');
     expect(res.rejected).toBeUndefined();
     expect(res.cost).toBe(e.programUploadCost(u, res.flashUsed));
     expect(res.cost).toBeLessThan(e.uploadCost(u, res.flashUsed));
     expect(u.energy).toBe(before - res.cost);
-    expect(u.action).toBeNull(); // the old program's SLEEP was aborted
+    expect(u.prog.timer).toBe(0); // the old program's context is gone (its SLEEP with it)
     expect(u.slice).toBe(-1);
     expect(u.vm.regs[0]).toBe(5); // no reboot
     until(e, () => u.progState === ProgState.PROG_DONE);
@@ -214,7 +237,7 @@ describe('uploads and commands (SPEC §3.9.3)', () => {
   });
 
   it('an empty program erases it; Run again then has nothing to run', () => {
-    const { e, u } = rover('loop: RUN 5\nJMP loop', 'END 1');
+    const { e, u } = rover('loop: CALL RUN 5\nJMP loop', 'END 1');
     e.uploadProgram(u, '; nothing', factory);
     expect(u.progState).toBe(ProgState.PROG_NONE);
     expect(u.programBytes).toBe(0);
@@ -223,14 +246,14 @@ describe('uploads and commands (SPEC §3.9.3)', () => {
 
   it('rejects a firmware that no longer fits next to the program', () => {
     const big = Array.from({ length: 80 }, () => 'ADD r0 100').join('\n'); // 320 B
-    const { e, u } = rover('loop: RUN 5\nJMP loop', big);
+    const { e, u } = rover('loop: CALL RUN 5\nJMP loop', big);
     const res = e.upload(u, big, factory);
     expect(res.program).toBeNull();
     expect(res.errors[0].message).toMatch(/Firmware is \d+ bytes \+ program 320 bytes/);
   });
 
   it('dumps the selected slot: program dumps are kinds 3/4 with @PROG_STATE', () => {
-    const { e, u } = rover('loop: RUN 5\nJMP loop', 'MOV r0 42\nPUSH 6\nBRK\nSLEEP 1000');
+    const { e, u } = rover('loop: CALL RUN 5\nJMP loop', 'MOV r0 42\nPUSH 6\nBRK\nCALL SLEEP 1000');
     run(e, 3);
     expect(u.progState).toBe(ProgState.PROG_HALTED);
     // BRK already queued a register dump of the program by itself.
@@ -287,13 +310,14 @@ describe('save v10', () => {
   });
 
   it('migrates v9 saves: the old code stays the firmware, no program', () => {
-    const { e } = rover('SLEEP 10');
+    const { e } = rover('CALL SLEEP 10');
     const v9 = serialize(e) as unknown as Record<string, any>;
     v9.version = 9;
     for (const u of v9.units) delete u.program;
+    v9.units[0].sourceCode = 'SLEEP 10'; // the language of that time: rewritten by the v18 migration
     expect(migrate(v9).units[0].program.state).toBe(ProgState.PROG_NONE);
     const l = deserialize(v9);
-    expect(l.units[0].sourceCode).toBe('SLEEP 10');
+    expect(l.units[0].sourceCode).toBe('CALL SLEEP 10');
     expect(l.units[0].progState).toBe(ProgState.PROG_NONE);
     expect(l.units[0].slice).toBe(-1);
   });

@@ -224,29 +224,30 @@ export interface FrameField {
 /** What each dumped state means, for the comment next to it (item: value-specific comments). */
 export const STATE_NOTES: Record<string, string> = {
   PROG_NONE: 'not running: no program started, or it finished and the firmware acknowledged it',
-  PROG_READY: 'waiting for its next time slice (RUN); continues at "next"',
+  PROG_READY: 'waiting for its next time slice (CALL RUN); continues at "next"',
   PROG_RUNNING: 'running in a time slice right now',
   PROG_DONE: 'finished with END; the firmware has not acknowledged it yet',
   PROG_FAULT: 'crashed; the firmware took over',
   PROG_HALTED: 'stopped by BRK; ▶ Resume after BRK continues at "next"',
   RUNNING: 'running',
-  BLOCKED: 'waiting: for a hardware instruction (STEP, SLEEP…) to finish, or in RUN while the program has its slice',
+  BLOCKED: 'asleep in WAIT until a device is done (CALL STEP, CALL SLEEP… wait inside the ROM), or in CALL PROGRAM while the program has its slice',
   HALTED: 'stopped by BRK; ▶ Resume after BRK continues at "next"',
   FAULT: 'crashed; the watchdog reboots it',
 };
 
 /** What each @STATUS value says about the last instruction that set it. */
 export const STATUS_NOTES: Record<number, string> = {
-  [Status.OK]: 'the last hardware instruction worked',
+  [Status.OK]: 'the last device start was accepted, or the device finished its work',
   [Status.ERR_INVALID]: 'bad argument or nothing usable there (bad direction or slot, DIV by 0…)',
   [Status.ERR_FULL]: 'no room: cargo, recorder or log queue full',
   [Status.ERR_LOW_POWER]: 'not enough battery for it',
-  [Status.ERR_BLOCKED]: 'STEP hit an obstacle',
+  [Status.ERR_BLOCKED]: 'the drive hit an obstacle',
   [Status.ERR_NO_TOOL]: 'no tool in that hardpoint',
   [Status.ERR_NO_SIGNAL]: 'the dish does not reach the orbiter',
-  [Status.ERR_HAZARD]: 'STEP moved onto a hazard',
-  [Status.ERR_DEPLOYED]: 'STEP refused: the solar array is open',
-  [Status.ERR_PREEMPTED]: 'the firmware took control back in the middle of the action (@PREEMPT)',
+  [Status.ERR_HAZARD]: 'the drive moved onto a hazard',
+  [Status.ERR_DEPLOYED]: 'the drive refused: the solar array is open',
+  [Status.ERR_PREEMPTED]: 'stopped by a command before it finished (a drive stopped with @DRIVE_N 0)',
+  [Status.ERR_BUSY]: 'the device (or one it shares the chassis with) is still working',
 };
 
 /** False for a program that is not running (finished or never started): its "next" means nothing. */

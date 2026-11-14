@@ -77,36 +77,40 @@ describe('watchdog @WDT (SPEC §3.9.5)', () => {
   });
 
   it('a firmware that keeps kicking is never reset; writing 0 does not disarm it', () => {
-    const { e, u } = rover('loop: MOV @WDT 30\nMOV @WDT 0\nSLEEP 20\nJMP loop');
+    const { e, u } = rover('loop: MOV @WDT 30\nMOV @WDT 0\nCALL SLEEP 20\nJMP loop');
     run(e, 1000);
     expect(boots(e, BootReason.WDT_TIMEOUT)).toBe(0);
     expect(u.wdt).toBeGreaterThan(0); // the 0 write was ignored
   });
 
   it('a hard reboot disarms it; a kick with a smaller value shortens it', () => {
-    const { e, u } = rover('MOV @WDT 500\nSLEEP 5\nMOV @WDT 10\nSLEEP 1000');
+    const { e, u } = rover('MOV @WDT 500\nCALL SLEEP 5\nMOV @WDT 10\nCALL SLEEP 1000');
     run(e, 1);
     expect(u.wdt).toBe(500);
     run(e, 6);
     expect(u.wdt).toBeLessThanOrEqual(10);
     until(e, () => boots(e, BootReason.WDT_TIMEOUT) > 0, 200);
-    e.upload(u, 'SLEEP 1000', factory); // hard reboot
+    e.upload(u, 'CALL SLEEP 1000', factory); // hard reboot
     expect(u.wdt).toBe(0);
   });
 
   it('BRK freezes it, like a debugger', () => {
-    const { e, u } = rover('MOV @WDT 20\nBRK\nSLEEP 1000');
+    const { e, u } = rover('MOV @WDT 20\nBRK\nCALL SLEEP 1000');
     run(e, 200);
     expect(u.vm.state).toBe(CpuState.HALTED);
     expect(u.wdt).toBe(20);
     expect(boots(e, BootReason.WDT_TIMEOUT)).toBe(0);
   });
 
-  it('keeps counting through a program slice: a program that blocks too long starves the firmware', () => {
-    const { e, u } = rover('loop: MOV @WDT 100\nRUN 10\nJMP loop', 'SLEEP 300\nEND');
-    const t = until(e, () => boots(e, BootReason.WDT_TIMEOUT) > 0, 400);
+  it('keeps counting through a program slice; with exact slices (M14) a long SLEEP no longer starves the firmware', () => {
+    const { e, u } = rover('loop: MOV @WDT 100\nCALL RUN 10\nJMP loop', 'CALL SLEEP 300\nEND 1');
+    until(e, () => u.progState === ProgState.PROG_DONE, 400);
+    expect(boots(e, BootReason.WDT_TIMEOUT)).toBe(0); // the timer interrupt brought the firmware back every 10 ticks
+    // A call without a time limit (@SLICE 0) trusts the program: then the watchdog catches it.
+    const s = rover('loop: MOV @WDT 100\nCALL RUN 0\nJMP loop', 'CALL SLEEP 300\nEND 1');
+    const t = until(s.e, () => boots(s.e, BootReason.WDT_TIMEOUT) > 0, 400);
     expect(t).toBeGreaterThan(100);
-    expect(u.prog.state).not.toBe(CpuState.FAULT); // the reboot restarted the program
+    expect(s.u.prog.state).not.toBe(CpuState.FAULT); // the reboot restarted the program
   });
 
   it('the default firmware arms it and keeps it fed through charging, idling and slices', () => {
@@ -120,13 +124,15 @@ describe('watchdog @WDT (SPEC §3.9.5)', () => {
 
 describe('fault protection @PREEMPT (SPEC §3.9.2)', () => {
   /**
-   * Firmware: arm `mask`, run long slices, note @PREEMPTED in r0 and count slices in r1. It
-   * RUNs again in the same tick, and RUN clears @PREEMPTED: so the tests look at r0.
+   * Firmware: arm `mask`, run long slices, note @PREEMPTED in r0 and count slices in r1; after
+   * a preemption it stops the drive (@DRIVE_N 0: the firmware decides, M14). It calls the
+   * program again in the same tick, and CALL PROGRAM clears @PREEMPTED: so the tests look at r0.
    */
-  const fw = (mask: string, extra = '') => `${extra}\nMOV @PREEMPT ${mask}\nloop: RUN 500\nMOV r0 @PREEMPTED\nADD r1 1\nJEQ @PROG_STATE PROG_READY loop\nSLEEP 1000`;
+  const fw = (mask: string, extra = '') =>
+    `${extra}\nMOV @PREEMPT ${mask}\nloop: CALL RUN 500\nMOV r0 @PREEMPTED\nJEQ r0 0 cont\nMOV @DRIVE_N 0\ncont: ADD r1 1\nJEQ @PROG_STATE PROG_READY loop\nCALL SLEEP 1000`;
 
-  it('PRE_ALERT: an announced event ends the slice at once and aborts the program\'s SLEEP', () => {
-    const { e, u } = rover(fw('PRE_ALERT'), 'SLEEP 400\nMOV r1 @STATUS\nMOV r2 7\nEND 1');
+  it('PRE_ALERT: an announced event interrupts the program at once; its SLEEP goes on and it resumes there', () => {
+    const { e, u } = rover(fw('PRE_ALERT'), 'CALL SLEEP 400\nMOV r1 @STATUS\nMOV r2 7\nEND 1');
     run(e, 20);
     expect(u.slice).toBeGreaterThan(0);
     expect(u.prog.state).toBe(CpuState.BLOCKED);
@@ -134,18 +140,19 @@ describe('fault protection @PREEMPT (SPEC §3.9.2)', () => {
     run(e, 1);
     expect(u.vm.regs[0]).toBe(Preempt.PRE_ALERT); // the firmware got control in that tick
     expect(u.vm.regs[1]).toBe(1); // ...came back from RUN once...
-    expect(u.slice).toBeGreaterThan(0); // ...and started a second slice
-    expect(u.prog.status).toBe(Status.ERR_PREEMPTED);
-    expect(u.prog.state).toBe(CpuState.RUNNING); // the SLEEP is gone
-    until(e, () => u.progState === ProgState.PROG_DONE, 5); // resumed after the SLEEP
-    expect(u.prog.regs[1]).toBe(Status.ERR_PREEMPTED);
+    run(e, 1);
+    expect(u.slice).toBeGreaterThan(0); // ...and started a second slice (its 9 instructions take two ticks)
+    expect(u.prog.state).toBe(CpuState.BLOCKED); // interrupted, not aborted: still asleep in the ROM's WAIT
+    expect(u.prog.timer).toBeGreaterThan(300);
+    until(e, () => u.progState === ProgState.PROG_DONE, 400); // woke up when its timer ran out
+    expect(u.prog.regs[1]).toBe(Status.OK);
     expect(u.prog.regs[2]).toBe(7);
     run(e, 1);
     expect(u.vm.regs[0]).toBe(0); // the second slice ended normally (END): nothing preempted it
   });
 
   it('without @PREEMPT the slice is cooperative: the SLEEP runs to the end', () => {
-    const { e, u } = rover(fw('0'), 'SLEEP 400\nEND 1');
+    const { e, u } = rover(fw('0'), 'CALL SLEEP 400\nEND 1');
     run(e, 20);
     e.director.triggerNow('PARTIAL_ECLIPSE');
     run(e, 100);
@@ -154,23 +161,21 @@ describe('fault protection @PREEMPT (SPEC §3.9.2)', () => {
     expect(u.prog.state).toBe(CpuState.BLOCKED);
   });
 
-  it('PRE_LOW_BAT: battery below @BAT_ALARM stops a long drive between tiles; the rover stays where it was', () => {
-    const { e, u } = rover(fw('PRE_LOW_BAT', 'MOV @BAT_ALARM 50'), 'STEP EAST 2\nEND 1');
+  it('PRE_LOW_BAT: battery below @BAT_ALARM interrupts a long drive; the firmware stops it at the end of the tile', () => {
+    const { e, u } = rover(fw('PRE_LOW_BAT', 'MOV @BAT_ALARM 50'), 'CALL STEP EAST 3\nMOV r1 @STATUS\nEND 1');
     u.energy = 50_000 + 10; // just above the alarm: the first tile's 40 energy crosses it
-    run(e, 2); // tick 1: firmware RUNs; tick 2: the program starts the STEP (pays the tile)
+    run(e, 1); // the firmware calls the program, which starts the drive in the same tick (pays the tile)
     expect(u.action?.kind).toBe('STEP');
-    run(e, 1); // tick 3: 49 % < 50 %: preempted before the rover arrives
+    run(e, 1); // 49 % < 50 %: interrupted; the firmware writes @DRIVE_N 0
     expect(u.vm.regs[0]).toBe(Preempt.PRE_LOW_BAT);
-    expect(u.prog.status).toBe(Status.ERR_PREEMPTED);
-    expect(u.action?.kind).not.toBe('STEP');
-    expect(u.x).toBe(0); // the move was aborted before it arrived
-    run(e, 20); // still below the alarm: every new slice ends at once, the program never runs
-    expect(u.x).toBe(0);
-    expect(u.progState).not.toBe(ProgState.PROG_DONE);
+    expect(u.action).toMatchObject({ kind: 'STEP', tilesLeft: 1, stop: true });
+    until(e, () => u.progState === ProgState.PROG_DONE, 20);
+    expect(u.x).toBe(1); // finished the tile it was on, then stopped
+    expect(u.prog.regs[1]).toBe(Status.ERR_PREEMPTED); // the program's WAIT @DRIVE: stopped by a command
   });
 
   it('PRE_DAMAGE: a squall hit ends the slice', () => {
-    const { e, u } = rover(fw('PRE_DAMAGE'), 'SLEEP 1000');
+    const { e, u } = rover(fw('PRE_DAMAGE'), 'CALL SLEEP 1000');
     run(e, 5);
     e.director.triggerNow('SQUALL');
     until(e, () => u.vm.regs[0] !== 0, 300);
@@ -179,10 +184,10 @@ describe('fault protection @PREEMPT (SPEC §3.9.2)', () => {
   });
 
   it('a reboot switches fault protection off', () => {
-    const { e, u } = rover('MOV @PREEMPT 7\nMOV @BAT_ALARM 40\nSLEEP 1000');
+    const { e, u } = rover('MOV @PREEMPT 7\nMOV @BAT_ALARM 40\nCALL SLEEP 1000');
     run(e, 2);
     expect([u.preemptMask, u.batAlarm]).toEqual([7, 40]);
-    e.upload(u, 'SLEEP 1000', factory);
+    e.upload(u, 'CALL SLEEP 1000', factory);
     expect([u.preemptMask, u.batAlarm, u.preempted]).toEqual([0, 0, 0]);
   });
 

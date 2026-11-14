@@ -2,8 +2,12 @@
 
 Status: **design approved by the owner** (2026-11-14, §12). **Slice 2 (memory, §7) is
 built** (SPEC §5.8): RAM, `VAR`, brackets, `DATA` / `LDF`, the data address space, Mk-I
-512 B Flash / 64 B RAM, upload 6 energy per byte, save v17. Not built yet: devices, `WAIT`,
-ROM, `CALL PROGRAM`, 8 cycles per tick, the bigger data stack (slice 3). Built parts move into [`SPEC.md`](SPEC.md); the plan is in
+512 B Flash / 64 B RAM, upload 6 energy per byte, save v17. **Slice 3 is built** (SPEC
+§5.9, §3.9.2): devices and `WAIT` (§3–§4), `CALL PROGRAM` / `@SLICE` (§5), the ROM drivers
+(§6.2), 8 cycles per tick, the 16-deep data stack, save v18 with the §10 rewrite. Not built
+yet: the helper routines (§6.2: they need a scratch register, see ROADMAP), the extended
+port operand (§9: not needed yet, the devices fit in 49–63), the boot ROM / safe mode, and
+the lessons of slice 4. Built parts move into [`SPEC.md`](SPEC.md); the plan is in
 [`ROADMAP.md`](ROADMAP.md) M14; this file then becomes the player guide, like
 [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md).
 

@@ -30,7 +30,8 @@ export interface Listing {
 /** Hex bytes per listing row; longer instructions continue on the next row. */
 export const LISTING_BYTES_PER_ROW = 6;
 
-export function buildListing(source: string, res: CompileResult, slot: Slot): Listing {
+/** `base`: code address of the first byte (ROM_BASE for the ROM listing, M14). */
+export function buildListing(source: string, res: CompileResult, slot: Slot, base = 0): Listing {
   const rows: ListingRow[] = [];
   const prog = res.program;
   const errs = new Map<number, string>();
@@ -48,9 +49,9 @@ export function buildListing(source: string, res: CompileResult, slot: Slot): Li
       // DATA lines (M14) carry their address in the data section after the code.
       const isData = /^(?:[A-Za-z_][A-Za-z0-9_]*:\s*)?DATA\b/i.test(body);
       const at = res.lineAddr?.[line] ?? addr;
-      rows.push({ line, addr: at, bytes: prog ? prog.code.slice(at, at + size) : null, size, code, comment, kind: isData ? 'data' : 'instr', error });
+      rows.push({ line, addr: base + at, bytes: prog ? prog.code.slice(at, at + size) : null, size, code, comment, kind: isData ? 'data' : 'instr', error });
       if (!isData) addr = at + size;
-    } else if (/^[A-Za-z_][A-Za-z0-9_]*:/.test(body)) rows.push({ line, addr, bytes: null, size: 0, code, comment, kind: 'label', error });
+    } else if (/^[A-Za-z_][A-Za-z0-9_]*:/.test(body)) rows.push({ line, addr: base + addr, bytes: null, size: 0, code, comment, kind: 'label', error });
     else if (body) rows.push({ line, addr: null, bytes: null, size: 0, code, comment, kind: 'directive', error });
     else if (error) rows.push({ line, addr: null, bytes: null, size: 0, code, comment, kind: 'directive', error });
   });

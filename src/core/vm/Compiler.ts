@@ -1,11 +1,12 @@
-import { ENCODING, MEMORY_MAP, type ChassisDef } from '../balance';
+import { CHASSIS_MK1, ENCODING, MEMORY_MAP, type ChassisDef } from '../balance';
 import { MAX_LOG_TAG, SYSTEM_TAG } from '../downlink';
 import { getPort } from '../ports';
 import { Alert, Dir, LightColor, Preempt, ProgState, Status, SystemId } from '../types';
 
-import { encodeInstr, immBytes, instrBytes, MAX_OPTIONAL, memBytes, OPCODES, opcodeSize, SIGNATURES, type Instr, type Op, type Operand } from './isa';
+import { FIRMWARE_ONLY_ROUTINES, ROM_ARGS, ROM_ENTRIES, ROM_SOURCE, type RomEntry } from '../rom';
+import { encodeInstr, immBytes, instrBytes, MAX_OPTIONAL, memBytes, OPCODES, opcodeSize, PROGRAM_GATE, ROM_BASE, SIGNATURES, type Instr, type Op, type Operand } from './isa';
 
-export { HARDWARE_OPS, immBytes, instrBytes, OPCODES, operandBytes, type Instr, type Op, type Operand } from './isa';
+export { immBytes, instrBytes, OPCODES, operandBytes, PROGRAM_GATE, ROM_BASE, type Instr, type Op, type Operand } from './isa';
 
 export interface Program {
   instrs: Instr[];
@@ -19,6 +20,8 @@ export interface Program {
   indexAt: Map<number, number>;
   /** M14: where the instructions end; `DATA` bytes follow up to `code.length` (the data section). */
   codeBytes: number;
+  /** M14: code address of byte 0 (0 for a slot, ROM_BASE for the ROM). Addresses above are absolute. */
+  base: number;
 }
 
 export interface CompileError {
@@ -48,7 +51,7 @@ export interface CompileResult {
   ramHigh: number;
 }
 
-/** Code slot (M10, SPEC §3.9): the firmware runs the program inside `RUN` time slices. */
+/** Code slot (M10, SPEC §3.9): the firmware calls the program (`CALL PROGRAM`, M14) for time slices. */
 export type Slot = 'firmware' | 'program';
 
 export interface CompileOptions {
@@ -60,6 +63,8 @@ export interface CompileOptions {
   otherRam?: { low: number; high: number } | null;
   /** M14: top of RAM for the firmware's VARs (default: the chassis RAM; a saved firmware keeps its own). */
   ramTop?: number;
+  /** M14: assemble the ROM itself (at ROM_BASE, no ROM names of its own, may CALL PROGRAM). */
+  rom?: boolean;
 }
 
 export function builtinConstants(): Record<string, number> {
@@ -76,8 +81,30 @@ export function builtinConstants(): Record<string, number> {
   return c;
 }
 
-/** Ports a program may read but only the firmware may write (SPEC §3.9). */
-export const FIRMWARE_ONLY_PORTS: ReadonlySet<string> = new Set(['PROG_STATE', 'WDT', 'PREEMPT', 'BAT_ALARM']);
+/** Ports a program may read but only the firmware may write (SPEC §3.9). Enforced at run time too (the ROM). */
+export const FIRMWARE_ONLY_PORTS: ReadonlySet<string> = new Set(['PROG_STATE', 'WDT', 'PREEMPT', 'BAT_ALARM', 'SLICE']);
+
+let romCache: CompileResult | null = null;
+/** The ROM library assembled once at ROM_BASE (docs/ASSEMBLER_CORE.md §6), with its listing data. */
+export function romCompile(): CompileResult {
+  if (romCache) return romCache;
+  const chassis: ChassisDef = { ...CHASSIS_MK1, flashBytes: 0x1000, tools: [...CHASSIS_MK1.tools], cameraModes: [...CHASSIS_MK1.cameraModes] };
+  const r = compile(ROM_SOURCE, chassis, {}, { rom: true });
+  if (!r.program) throw new Error(`ROM does not assemble: line ${r.errors[0]?.line}: ${r.errors[0]?.message}`);
+  romCache = r;
+  return r;
+}
+
+/** The ROM's code (the VM fetches from it at ROM_BASE and up). */
+export const romProgram = (): Program => romCompile().program!;
+
+/** Call targets every slot knows: the ROM routines and the program gate (firmware: CALL PROGRAM). */
+export function romLabels(): Record<string, number> {
+  const rom = romProgram();
+  const out: Record<string, number> = { PROGRAM: PROGRAM_GATE };
+  for (const n of ROM_ENTRIES) out[n] = rom.labels[n];
+  return out;
+}
 
 const IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const NUMBER = /^-?(0x[0-9a-f]+|\d+)$/i;
@@ -124,16 +151,35 @@ function tokenize(source: string): RawLine[] {
 /** Does compiled code contain `op`? (null / failed compiles: no) */
 export const usesOp = (r: CompileResult | null | undefined, op: Op): boolean => !!r?.program?.instrs.some((i) => i.op === op);
 
+/** Does compiled code `CALL` this ROM routine (or `PROGRAM`)? */
+export const callsRoutine = (r: CompileResult | null | undefined, name: string): boolean => {
+  const at = romLabels()[name.toUpperCase()];
+  return !!r?.program?.instrs.some((i) => i.op === 'CALL' && i.args[0].k === 'label' && i.args[0].target === at);
+};
+
+/** Does compiled code write this port (as a destination: MOV, POP, ADD…)? */
+export const writesPort = (r: CompileResult | null | undefined, port: string): boolean =>
+  !!r?.program?.instrs.some((i) => i.args.some((o, k) => o.k === 'port' && o.name === port && /^[dm]/.test(SIGNATURES[i.op][Math.min(k, SIGNATURES[i.op].length - 1)])));
+
+/** Does compiled code start the firmware's program (CALL RUN / CALL PROGRAM)? */
+export const runsProgram = (r: CompileResult | null | undefined): boolean => callsRoutine(r, 'RUN') || callsRoutine(r, 'PROGRAM');
+
 /**
- * M12 (SPEC §3.8.7): `code` takes photos (SNAP) but nothing ever records them: neither it nor
- * the other slot on the rover has a SEND, so every photo stays in image memory.
+ * M12 (SPEC §3.8.7): `code` takes photos (CALL SNAP, or @CAM) but nothing ever records them:
+ * neither it nor the other slot on the rover sends (CALL SEND, or @SEND), so every photo stays
+ * in image memory.
  */
-export const snapsWithoutSend = (code: CompileResult | null | undefined, otherSlot: CompileResult | null | undefined): boolean =>
-  usesOp(code, 'SNAP') && !usesOp(code, 'SEND') && !usesOp(otherSlot, 'SEND');
+export const snapsWithoutSend = (code: CompileResult | null | undefined, otherSlot: CompileResult | null | undefined): boolean => {
+  const sends = (r: CompileResult | null | undefined) => callsRoutine(r, 'SEND') || writesPort(r, 'SEND');
+  return (callsRoutine(code, 'SNAP') || writesPort(code, 'CAM')) && !sends(code) && !sends(otherSlot);
+};
 
 export function compile(source: string, chassis: ChassisDef, extraConstants: Record<string, number> = {}, opts: CompileOptions = {}): CompileResult {
   const slot = opts.slot ?? 'firmware';
   const otherBytes = opts.otherBytes ?? 0;
+  const base = opts.rom ? ROM_BASE : 0;
+  /** ROM routines and PROGRAM: call targets, reserved names (none while assembling the ROM itself). */
+  const reserved: Record<string, number> = opts.rom ? { PROGRAM: PROGRAM_GATE } : romLabels();
   const errors: CompileError[] = [];
   const err = (line: number, message: string) => errors.push({ line, message });
 
@@ -145,7 +191,7 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
   const lines = tokenize(source);
   const varLines: { line: number; used: number }[] = [];
 
-  const nameTaken = (n: string) => n in constants || n in aliases || n in labels || REG.test(n) || (OPCODES as string[]).includes(n);
+  const nameTaken = (n: string) => n in constants || n in aliases || n in labels || REG.test(n) || (OPCODES as string[]).includes(n) || n in reserved;
 
   // Pass 1: directives and labels. A label names the next instruction, or the next DATA
   // block (which the assembler moves to the data section after the code, M14).
@@ -161,7 +207,8 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
   for (const l of lines) {
     if (l.label) {
       const name = l.label.toUpperCase();
-      if (nameTaken(name) || name in dataLabels) err(l.line, `Label '${l.label}' clashes with an existing name`);
+      if (name in reserved) err(l.line, `Label '${l.label}' is the name of a ROM routine (CALL ${name}): pick another name`);
+      else if (nameTaken(name) || name in dataLabels) err(l.line, `Label '${l.label}' clashes with an existing name`);
       else {
         labels[name] = ip;
         pending.push({ name, line: l.line });
@@ -271,8 +318,8 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
     dataAddr.push(addr);
     addr += l.tokens.length - 1;
   }
-  for (const name of Object.keys(labels)) labels[name] = addrOf[labels[name]];
-  for (const [name, i] of Object.entries(dataLabels)) labels[name] = dataAddr[i];
+  for (const name of Object.keys(labels)) labels[name] = base + addrOf[labels[name]];
+  for (const [name, i] of Object.entries(dataLabels)) labels[name] = base + dataAddr[i];
 
   // Pass 2: instructions.
   const instrs: Instr[] = [];
@@ -306,7 +353,7 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
         base = r;
         continue;
       }
-      const n = parseNumber(t) ?? constants[up] ?? labels[up];
+      const n = parseNumber(t) ?? constants[up] ?? labels[up] ?? reserved[up];
       if (n === undefined) {
         err(line, `Unknown name '${t}' in '${tok}'`);
         return null;
@@ -334,8 +381,21 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
     }
     if (kind === 'l') {
       if (up in labels) return { k: 'label', target: labels[up], name: up };
+      if (up in reserved) return { k: 'label', target: reserved[up], name: up };
       err(line, `Unknown label '${tok}'`);
       return null;
+    }
+    if (kind === 'p') {
+      const p = up.startsWith('@') ? getPort(up) : undefined;
+      if (!p) {
+        err(line, up.startsWith('@') ? `Unknown port '${tok}'` : `WAIT needs a port: WAIT @DRIVE, WAIT @TIMER… ('${tok}' is not one)`);
+        return null;
+      }
+      if (!p.read) {
+        err(line, `Port ${up} is write-only`);
+        return null;
+      }
+      return { k: 'port', name: p.name };
     }
     if (kind === 'k') {
       const n = parseNumber(tok) ?? constants[up];
@@ -378,7 +438,7 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
     const n = parseNumber(tok);
     if (n !== null) return { k: 'imm', v: n };
     if (up in constants) return { k: 'imm', v: constants[up] };
-    if (up in labels) err(line, `'${tok}' is a label, not a value`);
+    if (up in labels || up in reserved) err(line, `'${tok}' is a label, not a value`);
     else err(line, `Unknown name '${tok}'`);
     return null;
   };
@@ -409,12 +469,26 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
       if (o) args.push(o);
       else ok = false;
     });
-    if (op === 'RUN' && slot === 'program') {
-      err(l.line, 'RUN is a firmware instruction: a program cannot start itself');
+    const target = ok && args[0]?.k === 'label' ? args[0].name : '';
+    if (FIRMWARE_ONLY_ROUTINES.has(target) && !(target in labels)) {
+      if (op !== 'CALL') {
+        err(l.line, `${target} can only be CALLed`);
+        ok = false;
+      } else if (slot === 'program' && !opts.rom) {
+        err(l.line, `CALL ${target} is for the firmware: a program cannot start itself`);
+        ok = false;
+      } else if (target === 'PROGRAM' && args.length > 1) {
+        err(l.line, 'CALL PROGRAM takes no arguments (write @SLICE first, or CALL RUN ticks)');
+        ok = false;
+      }
+    }
+    const romArgs = op === 'CALL' && !(target in labels) ? ROM_ARGS[target as RomEntry] : undefined;
+    if (ok && romArgs && args.length - 1 !== romArgs.length) {
+      err(l.line, romArgs.length ? `CALL ${target} takes ${romArgs.length} argument${romArgs.length > 1 ? 's' : ''}: CALL ${target} ${romArgs.join(' ')}` : `CALL ${target} takes no arguments`);
       ok = false;
     }
-    if (op === 'END' && slot === 'firmware') {
-      err(l.line, 'END is a program instruction: firmware never ends (it runs the program with RUN)');
+    if (op === 'END' && slot === 'firmware' && !opts.rom) {
+      err(l.line, 'END is a program instruction: firmware never ends (it calls the program with CALL RUN)');
       ok = false;
     }
     const fwPort = slot === 'program' && ok ? args.find((o, i) => o.k === 'port' && FIRMWARE_ONLY_PORTS.has(o.name) && /^[dm]/.test(sig[Math.min(i, sig.length - 1)])) : undefined;
@@ -445,7 +519,7 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
       }
     }
     if (!ok) continue;
-    const at = addrOf[ci];
+    const at = base + addrOf[ci];
     lineToIp[l.line] = at;
     instrs.push({ op, args, line: l.line, addr: at, size: instrBytes({ op, args }) });
   }
@@ -503,12 +577,12 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
     const bytes: number[] = [];
     const indexAt = new Map<number, number>();
     instrs.forEach((ins, i) => {
-      if (ins.addr !== bytes.length) throw new Error(`Compiler: line ${ins.line} sized ${lineBytes[ins.line]} B but encodes differently`);
+      if (ins.addr - base !== bytes.length) throw new Error(`Compiler: line ${ins.line} sized ${lineBytes[ins.line]} B but encodes differently`);
       indexAt.set(ins.addr, i);
       bytes.push(...encodeInstr(ins));
     });
     bytes.push(...dataBytes);
-    program = { instrs, labels, lineToIp, code: bytes, indexAt, codeBytes };
+    program = { instrs, labels, lineToIp, code: bytes, indexAt, codeBytes, base };
   }
 
   return {
@@ -526,7 +600,7 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
 }
 
 export function formatSig(op: Op): string {
-  const names: Record<string, string> = { v: 'value', d: 'dest', m: 'reg', l: 'label', k: 'tag', a: '[address]' };
+  const names: Record<string, string> = { v: 'value', d: 'dest', m: 'reg', l: 'label', k: 'tag', a: '[address]', p: '@port' };
   return (
     `${op} ` +
     SIGNATURES[op]

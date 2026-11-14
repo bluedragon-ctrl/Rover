@@ -1,4 +1,4 @@
-# Rover — Game & Language Specification (`v1.5`)
+# Rover — Game & Language Specification (`v1.6`)
 
 This document supersedes `v1.2` of the architecture/language review. It fixes the
 inconsistencies found in review and pins down the numbers the code relies on.
@@ -38,17 +38,22 @@ integer lookup tables.
 
 Each tick, every powered rover's CPU receives `cyclesPerTick` cycles.
 
-* **Compute instructions** (`MOV`, arithmetic, bit instructions, stack, jumps, `CALL`/`RET`, `PEEK`) cost
-  **1 cycle** each. Several run per tick.
-* **Hardware instructions** (`SCAN`, `STEP`, `ACT`, `USE`, `SLEEP`) **end the current
-  tick** and may block the CPU for a number of ticks while the physical action happens.
+* **Every instruction costs 1 cycle.** Mk-I has 8 cycles per tick (**[M14]**; 4 before, when
+  the hardware had its own instructions). Several instructions run per tick.
+* **[M14] There are no hardware instructions.** The CPU only computes and moves data; the
+  hardware is a set of **devices** driven through ports (§5.9). Writing a device's start
+  port (`MOV @DRIVE EAST`) is a 1-cycle port write that starts it; **`WAIT @port`** puts the
+  CPU to sleep (`BLOCKED`, the tick ends) until the device is done. The ROM's routines
+  (`CALL STEP EAST 3`, `CALL SCAN dir`, `CALL SLEEP 20`…) do both for you.
 * Port writes (e.g. `MOV @IND1 2`) are compute instructions: instant.
 
 This keeps logic snappy, makes physical actions cost real time, and naturally caps
 runaway loops (an infinite `JMP` loop just burns cycles; it cannot freeze the game).
 
-Tick order: (1) world/event update, (2) each unit's in-flight action advances and may
-complete (unblocking its CPU), (3) passive energy drain, (4) each CPU spends its cycles.
+Tick order: (1) world/event update, (2) passive energy drain and actuators, (3) every device
+advances (timers, radar, image send / erase, the drive or tool at work) and may finish, (4)
+fault protection and the slice timer may return control to the firmware, (5) a CPU asleep in
+`WAIT` wakes if its port reads 0, (6) each CPU spends its cycles.
 
 ## 3. The Rover (Mk-I chassis)
 
@@ -59,17 +64,19 @@ Each rover owns a copy of its chassis stats; upgrades (§3.7) modify that copy.
 | Flash | 512 bytes (128 before M10, 256 before M14) | Machine-code size (§5.7), shared by firmware and program (§3.9). Comments, blank lines, label definitions, `ALIAS`, `CONST`, `VAR` are free; `DATA` costs its bytes. |
 | RAM **[M14]** | 64 bytes at data address `0x000` | Shared by firmware and program, zero after a hard reboot; `VAR`, `LDB` / `STB` (§5.8). |
 | Registers | 4 (`r0`–`r3`) | Signed 32-bit, wrap on overflow. |
-| Data stack | 8 entries | `PUSH`/`POP`, `CALL` arguments. |
+| Data stack | 16 entries (8 before M14) | `PUSH`/`POP`, `CALL` arguments. |
+| Cycles per tick | 8 (4 before M14) | §2.1; overclock upgrades 12 / 16. |
 | Call stack | 8 frames | Return addresses only. |
 | Battery | 100 000 energy units | Exposed as `@BAT` = 0–100 (%). |
 | Hull | 100 | `@HULL`. |
 | Subsystems | solar array 100, dish 100 | `@SOLAR_HEALTH`, `@ANTENNA_HEALTH`. **[M6]** |
 | Cargo | 4 slots | Item IDs (= tile IDs). **[M5]** |
 | Hardpoints | `TOOL_0` drill, `TOOL_1` grabber, `TOOL_2` spectrometer, `TOOL_3` empty | **[M5]** |
-| Sensor range | 6 tiles | `SCAN` radar, every direction, day and night. The operator's *view* needs light: 6 by day, 1-tile ring at night plus the headlight cone (§3.1.1). **[M4, M8.1]** |
+| Sensor range | 6 tiles | Radar (`@RADAR`, `CALL SCAN`), every direction, day and night. The operator's *view* needs light: 6 by day, 1-tile ring at night plus the headlight cone (§3.1.1). **[M4, M8.1]** |
 | Downlink | 2 B/tick at full signal, log FIFO 32 B, science recorder 1024 B | **[M9]** §3.8 |
-| Camera | mast camera, 32×32 2 bpp (modes 1–2) | `SNAP dir [mode]`; modes 3–5 by upgrade. **[M9]** §3.8.5 |
-| Image memory | 256 bytes (the largest installed camera mode), at data address `IMG` = `0x100` (M14) | `SNAP` fills it, `LDB` / `STB` read and write it, `SEND` sends it. **[M12]** §3.8.7 |
+| Camera | mast camera, 32×32 2 bpp (modes 1–2) | `CALL SNAP dir mode` (`@CAM`, `@CAM_MODE`); modes 3–5 by upgrade. **[M9]** §3.8.5 |
+| Image memory | 256 bytes (the largest installed camera mode), at data address `IMG` = `0x100` (M14) | A photo fills it, `LDB` / `STB` read and write it, `CALL SEND` sends it. **[M12]** §3.8.7 |
+| ROM **[M14]** | device drivers at code address `0xF000` | `CALL STEP`, `CALL SCAN`… cost no Flash (§5.9). |
 | Thermal | survival heaters hold −40 °C | `@TEMP`, `@HEATER`; dust on the array `@SOLAR_DUST`. **[M13]** §3.3.4 |
 | Watchdog, fault protection | `@WDT`; `@PREEMPT`, `@BAT_ALARM` | Firmware-armed reset timer and slice preemption. **[M13]** §3.9.5, §3.9.2 |
 
@@ -78,10 +85,10 @@ Each rover owns a copy of its chassis stats; upgrades (§3.7) modify that copy.
 | Action | Ticks | Energy |
 | :--- | :--- | :--- |
 | Idle (CPU powered) | per tick | 1 |
-| `STEP` onto `FLAT_SAND` | 3 / tile | 40 / tile |
-| `STEP` onto `ROUGH_GRAVEL` | 6 / tile | 120 / tile |
-| `STEP` onto `ACID_VENT` | 4 / tile | 60 / tile + 10 hull damage |
-| `SCAN` | 1 | 10 |
+| Drive (`@DRIVE`, `CALL STEP`) onto `FLAT_SAND` | 3 / tile | 40 / tile |
+| Drive onto `ROUGH_GRAVEL` | 6 / tile | 120 / tile |
+| Drive onto `ACID_VENT` | 4 / tile | 60 / tile + 10 hull damage |
+| Radar sweep (`@RADAR`, `CALL SCAN`) | 1 | 10 |
 | Turn in place (`@HEADING` write) | instant | 5 |
 | Headlight on | per tick | 8 |
 | Actuator moving (array deploy, panel or dish slew) | per tick, each | 1 |
@@ -93,7 +100,7 @@ Each rover owns a copy of its chassis stats; upgrades (§3.7) modify that copy.
 
 The rover and the player "see" differently:
 
-* **`SCAN` is radar.** It reaches the chassis sensor range (6 tiles; 8 with the
+* **The radar** (`@RADAR`, the ROM's `CALL SCAN`; `SCAN` before M14) reaches the chassis sensor range (6 tiles; 8 with the
   Long-range radar upgrade) in every direction, by day and by night. It needs no light
   and does not turn the rover. Firmware can always navigate.
 * **The operator view needs light.** What the player sees (and what gets permanently
@@ -105,12 +112,12 @@ The rover and the player "see" differently:
 | Night | The 1-tile ring around the rover (radius-1 disc, diagonals included). |
 | Night, `@HEADLIGHT 1` (powered) | Ring **plus a forward cone** along `@HEADING`: `1 ≤ forward ≤ 5`, `|lateral| ≤ 1` for `forward ≤ 2`, `≤ 2` beyond (21 tiles). |
 
-* So at night a player cannot look at unexplored ground and type `STEP NORTH 5`: they need
-  the headlight pointed that way, already-mapped terrain, or firmware that uses `SCAN`.
-* Each `SCAN` also sends a brief red **radar wave** around the rover out to the radar
+* So at night a player cannot look at unexplored ground and type `CALL STEP NORTH 5`: they
+  need the headlight pointed that way, already-mapped terrain, or code that uses the radar.
+* Each radar sweep also sends a brief red **radar wave** around the rover out to the radar
   range: tiles flash as the front passes, then fade, and unmapped terrain in range is
-  briefly outlined in red. It is a glimpse for the player only; it maps nothing. (`SCAN` still returns just the first hit along `dir`.)
-* The rover faces `@HEADING`. `STEP` and directional tools (`ACT TOOL_n dir`) turn it;
+  briefly outlined in red. It is a glimpse for the player only; it maps nothing. (The sweep still answers with just the first hit along `dir`.)
+* The rover faces `@HEADING`. The drive and directional tools (`CALL ACT TOOL_n dir`) turn it;
   writing `@HEADING` turns it in place (5 energy, value wraps mod 4, so `ADD @HEADING 1`
   turns right). Use it to aim the headlight.
 
@@ -119,7 +126,7 @@ The rover and the player "see" differently:
 | State | Meaning |
 | :--- | :--- |
 | `RUNNING` | Executing instructions. |
-| `BLOCKED` | Waiting for a hardware action (`STEP`, `SCAN`, `SLEEP`, ...). |
+| `BLOCKED` | **[M14]** Asleep in `WAIT @port` until the port reads 0 (inside `CALL STEP`, `CALL SLEEP`…), or the firmware inside `CALL PROGRAM` while the program runs. |
 | `HALTED` | **[M9]** Stopped by `BRK`; resumes on *Continue* or upload (§3.8.4). No watchdog. |
 | `FAULT` | Stack overflow/underflow. The **fault reset** (boot reason "watchdog") hard-reboots the CPU after 50 ticks. A hang without a fault is caught only by the firmware's `@WDT` (§3.9.5). |
 | `POWER_OFF` | Battery empty (§3.4). |
@@ -127,8 +134,9 @@ The rover and the player "see" differently:
 
 ### 3.3 Hard reboot (on code upload or watchdog)
 
-`IP = 0`, all registers zeroed, both stacks cleared, RAM zeroed (M14), any in-flight action
-aborted, `@STATUS = OK`. Physical state (position, battery, hull, cargo, actuator ports,
+`IP = 0`, all registers zeroed, both stacks cleared, RAM zeroed (M14), every device stopped
+(drive, tool, radar, image send / erase, both timers) with its latched arguments back to the
+reboot values and its result `OK` (M14, §5.9), `@STATUS = OK`. Physical state (position, battery, hull, cargo, actuator ports,
 image memory) is kept.
 
 Upload cost **[M4]**: `ceil((500 + 6 × bytes) × 100 / max(10, @SIGNAL_STR))` energy
@@ -615,22 +623,39 @@ running uplinked command sequences, or a small OS starting user programs:
 * **Separate contexts**: each slot has its own IP, registers (the chassis count each), data
   and call stack, and `@STATUS`. Everything physical is shared: ports, actuators, cargo,
   lights, the downlink.
-* Slot rules (compile errors): `RUN` and writes to `@PROG_STATE` only in the firmware;
-  `END` only in a program.
-* A firmware without `RUN` never runs the program (every pre-M10 firmware is like that).
+* Slot rules (compile errors): `CALL RUN` / `CALL PROGRAM` and writes to `@PROG_STATE`,
+  `@SLICE` (and the other firmware-only ports) only in the firmware; `END` only in a program.
+* A firmware without `CALL RUN` / `CALL PROGRAM` never runs the program (every pre-M10
+  firmware is like that).
 
-### 3.9.2 `RUN`, `END` and the program state
+### 3.9.2 `CALL PROGRAM`, `END` and the program state
 
-| Instruction | Cycles / ticks | Bytes | Semantics |
+**[M14]** The firmware **calls** the program like a subroutine, and a **timer interrupt**
+brings control back, as every real operating system runs a task (ARM's *SysTick*). Before
+M14 a `RUN ticks` instruction did this cooperatively (see below for what changed).
+
+| Code | Cycles | Bytes | Semantics |
 | :--- | :--- | :--- | :--- |
-| `RUN ticks` | hardware | 1 + v | Firmware only. If `@PROG_STATE` is `PROG_READY`: `@STATUS = OK` and the program runs for the next `max(1, ticks)` ticks with the full cycle budget each tick, while the firmware waits. Otherwise nothing runs and `@STATUS = ERR_INVALID`. Ends the tick either way. |
-| `END [value]` | 1 cycle | 1 (+ v) | Program only. `@PROG_STATE = PROG_DONE`, `@PROG_RESULT = value` (default 0); the slice ends. |
+| `MOV @SLICE ticks` | 1 cycle | 2+ | Firmware only: the ticks the next call may run, 0–30000; **0 = no time limit** (the reboot value). |
+| `CALL PROGRAM` | 1 cycle | 3 | Firmware only, no arguments. If `@PROG_STATE` is `PROG_READY`: `@STATUS = OK`, the return address goes on the firmware's call stack, and the program's context (its own registers, stacks, `@STATUS`, timer) continues where it was (from `0x000` after a restart) **in the same tick** with the cycles left. Otherwise nothing happens and `@STATUS = ERR_INVALID`. |
+| `CALL RUN ticks` | 4 + | 5 | ROM routine: `POP @SLICE`, `CALL PROGRAM`, `RET`. |
+| `END [value]` | 1 cycle | 1 (+ v) | Program only. `@PROG_STATE = PROG_DONE`, `@PROG_RESULT = value` (default 0); back to the firmware. |
+| `RET` at the program's top level | 1 cycle | 1 | Like `END r0`: "return from main" (the calling convention of §5.9). |
 
-* **The slice ends** when its ticks are used up *and* the program is between instructions
-  (a `SLEEP`, `STEP` or tool action started in the slice runs to completion first: a
-  cooperative system), or on `END`, a fault, or `BRK`. The firmware continues with the
-  instruction after `RUN` at the start of the next tick. Running off the end of a program
-  still wraps to its first line: a program loops until it `END`s.
+* **The program returns to the firmware**, which continues after its `CALL PROGRAM` (in the
+  same tick if cycles are left), on `END` or a top-level `RET` (`PROG_DONE`), when **its
+  slice runs out** (`PROG_READY`, `@PREEMPTED = 0`), on a `@PREEMPT` condition
+  (`PROG_READY`, `@PREEMPTED` = the bits), a fault (`PROG_FAULT`) or `BRK` (`PROG_HALTED`).
+* **Interrupts happen only at the start of a tick, between instructions.** `@SLICE` counts
+  down at the start of each tick of the call; at 0 the timer interrupt fires. A program
+  asleep in `WAIT` is simply suspended there and **its devices keep running** (a drive goes
+  on, its timer counts): called again, the `WAIT` checks again. Nothing is aborted. Slices
+  are exact, so a program's `CALL SLEEP 2000` no longer starves the firmware (§3.9.5).
+  Running off the end of a program still wraps to its first line: a program loops until it
+  `END`s. Read inside the program, `@SLICE` gives the ticks left.
+* *Before M14* `RUN ticks` was a hardware instruction: a slice ended only between
+  instructions, so a `SLEEP` or `STEP` started in it ran to completion first (cooperative),
+  and `@PREEMPT` aborted the action instead.
 * **`@PROG_STATE`** (RW): `PROG_NONE` 0 (nothing to run), `PROG_READY` 1 (the next `RUN` starts
   or resumes it), `PROG_RUNNING` 2 (only the program itself and dumps see this),
   `PROG_DONE` 3, `PROG_FAULT` 4, `PROG_HALTED` 5. The firmware writes `PROG_NONE` to
@@ -641,24 +666,24 @@ running uplinked command sequences, or a small OS starting user programs:
 * **Program faults** (stack overflow/underflow) set `PROG_FAULT` and end the slice. No
   watchdog: the firmware keeps running and decides what to do. A firmware fault still
   watchdog-reboots the whole CPU.
-* **Fault protection (`@PREEMPT`) [M13]:** slices are cooperative unless the firmware arms
-  conditions that end one at once. `@PREEMPT` (RW, firmware-only write, 0–7) is a mask of
+* **Fault protection (`@PREEMPT`) [M13, M14]:** the firmware can arm conditions that end a
+  slice at once. `@PREEMPT` (RW, firmware-only write, 0–7) is a mask of
   `PRE_ALERT` 1 (a world event is announced: its warning starts this tick), `PRE_DAMAGE` 2
   (hull, array or dish lost integrity this tick), `PRE_LOW_BAT` 4 (`@BAT` below
   `@BAT_ALARM`, RW firmware-only, 0–100). Checked at the start of every tick of a slice:
-  when one fires, the program's action in progress is **aborted** (a `STEP` stops before
-  the rover arrives on the next tile, the tile's energy is spent; a tool's effect is lost;
-  a `SLEEP` is cut short) and the program's `@STATUS` becomes `ERR_PREEMPTED` (9). The
-  program stays `PROG_READY`, so the next `RUN` resumes it after the aborted instruction.
-  The firmware continues after its `RUN` in the same tick; `@PREEMPTED` (R) holds the bits
-  that fired (0 when a slice ended normally) until the next `RUN` clears it. `@PREEMPT`,
+  when one fires, the program is **interrupted** between instructions, like a time-up. Its
+  devices keep running: **the firmware decides** what to do with them (`MOV @DRIVE_N 0`
+  stops the drive at the end of its tile; the program's `WAIT @DRIVE` then reads
+  `ERR_PREEMPTED`, 9: "stopped by a command"). The program stays `PROG_READY`, so the next
+  `CALL PROGRAM` resumes it where it was. `@PREEMPTED` (R) holds the bits that fired (0 when a
+  slice ended normally) until the next `CALL PROGRAM` clears it. `@PREEMPT`,
   `@BAT_ALARM` and `@PREEMPTED` are CPU state: 0 after every hard reboot. `PRE_LOW_BAT` is
-  level-triggered: below the alarm every new slice ends at once, so the firmware should
-  charge first. The default firmware does not arm it (its 50-tick slices already check
+  level-triggered: below the alarm every new slice ends at the next tick, so the firmware
+  should charge first. The default firmware does not arm it (its 50-tick slices already check
   between slices, and the dish needs that rhythm); the firmware template *Fault protection*
-  does (`PRE_ALERT + PRE_LOW_BAT`, logs `T_PREEMPT`).
+  does (`PRE_ALERT + PRE_LOW_BAT`, stops the drive, logs `T_PREEMPT`).
 * **`BRK` in a program** sets `PROG_HALTED` and ends the slice; the firmware runs on.
-  *Continue* (Program slot) sets `PROG_READY`, so the next `RUN` resumes after the `BRK`.
+  *Continue* (Program slot) sets `PROG_READY`, so the next `CALL PROGRAM` resumes after the `BRK`.
   `BRK` in the firmware halts the whole CPU as before (§3.8.4).
 * **Hard reboots** (firmware upload, watchdog, watchdog timeout, solar cold boot, admin) reset both contexts.
   `@PROG_STATE` becomes `PROG_READY` if a program is in flash (the task restarts from the
@@ -668,16 +693,16 @@ running uplinked command sequences, or a small OS starting user programs:
 
 * **Upload program**: `ceil((200 + 6 × program bytes) × 100 / max(10, @SIGNAL_STR))`
   energy (`programUploadBase`). No reboot, the firmware context is untouched. A running
-  slice ends (the program's in-flight action is aborted); the new program starts fresh as
+  slice ends (devices it started keep running, M14); the new program starts fresh as
   `PROG_READY`. Uploading an empty program erases it (`PROG_NONE`).
 * **Upload firmware**: as §3.3 (base 500 + 6 × firmware bytes, hard reboot); rejected if
   firmware + program would not fit the flash.
 * **Code tab**: a **Program** (default) / **Firmware** (advanced) switch, each slot with its
   own editor and templates (programs: the lesson set below and the *Image: …* examples;
   firmware: Default firmware and the pre-M10 all-in-one examples), *Upload program* or *Upload
-  firmware & reboot*, a flash bar `firmware 158 + program 46 = 204 / 512 B` (the
+  firmware & reboot*, a flash bar `firmware 166 + program 44 = 210 / 512 B` (the
   edited slot counts its draft, the other slot what is on the rover), and a warning when
-  the firmware has no `RUN`. New rovers ship the default firmware and no program (the
+  the firmware has no `CALL RUN` / `CALL PROGRAM`. New rovers ship the default firmware and no program (the
   Program slot shows *First steps* as an unsent draft).
 * **Commands per slot**: *Dump registers*, *Dump stacks* and *Resume after BRK* address one
   slot (the Code tab's). Program dumps are kinds 3 and 4, laid out like kinds 1 and 2
@@ -717,8 +742,8 @@ running uplinked command sequences, or a small OS starting user programs:
     weather, supplies, upgrades, admin, rejected actions, rover alarms). Receipts for what
     was sent are left to Comms (`LOG` event `category`: `world` / `sent` / `rover`).
   * Clarity pass: dumps of a program that is not running (`PROG_NONE`, `PROG_DONE`) say
-    *not running* and mark nothing; comments name the value's meaning (`ERR_BLOCKED ; STEP
-    hit an obstacle`, `PROG_HALTED ; stopped by BRK…`); a halted dump says *stopped at the
+    *not running* and mark nothing; comments name the value's meaning (`ERR_BLOCKED ; the
+    drive hit an obstacle`, `PROG_HALTED ; stopped by BRK…`); a halted dump says *stopped at the
     BRK on line 5; continues at line 6*. Source references are links: `fw L55` on a LOG row,
     a dump's *next* and return addresses open that line in the Code tab. A waiting request
     shows an estimate (`≈ 14 ticks at signal 94`; dumps go first, register dump 9 + 4 ×
@@ -735,29 +760,33 @@ running uplinked command sequences, or a small OS starting user programs:
 
 A **core** plus **comfort blocks**, each between marker comments with its byte cost, so
 experienced players can delete what they do not need and give the bytes to their program.
-The full default firmware is 158 B (comfort 55 B of it), leaving 354 B on Mk-I (512 B since
-M14): the shipped programs need 20–99 B (all fit; tested). **[M13]** Its core arms and kicks the
+The full default firmware is 166 B (comfort 55 B of it; 158 B before M14's `CALL RUN` /
+`CALL SLEEP`), leaving 346 B on Mk-I (512 B since M14): the shipped programs need 22–104 B
+(all fit; tested). **[M13]** Its core arms and kicks the
 watchdog (`CONST WDT_TICKS 1000`, a kick at the top of the main loop and in the charge loop,
 10 B). The firmware template *Fault protection* is the default firmware plus `@PREEMPT`
-(15 B more: programs up to 83 B fit next to it).
+and a drive stop (18 B more: programs up to 328 B fit next to it).
 
 **Program templates as lessons.** Each non-image template starts with a header: what it
 does, `; Learn:` (what it teaches) and `; Try:` (a change to make next); comments cost no
-Flash. Together the templates use every instruction except the firmware-only `RUN`
-(tested), and the tests run each one:
+Flash. Together the templates use every instruction (tested), and the tests run each one.
+**[M14]** The save v18 migration rewrote them onto the ROM (`CALL STEP`…); slice 4 of M14
+reworks them as device lessons.
 
 | Template | Teaches | B |
 |----------|---------|---|
-| First steps | registers, `ALIAS`, `STEP`, `@STATUS`, a loop, `END` | 20 |
-| Explorer | `SCAN`, tile constants, `MOD`, telling errors apart (`ERR_HAZARD`), `LOG` | 57 |
-| Photographer | `SNAP` / `SEND`, `@HEADING` for the headlight, `@REC_FREE` | 37 |
-| Prospector | tools (`ACT`), cargo (`PEEK`), `CALL` / `RET` | 88 |
-| Field repair | `USE slot system`, nested loops, picking a port with jumps | 68 |
-| Fetch supply crate | positions, `SUB`, direction from a sign, result codes | 73 |
-| Spiral | `CALL` with arguments, `POP` order, `LOG`, `BRK` | 50 |
-| Seismic survey | an upgrade tool (`TOOL_3`), searching for a minimum, `JGE` / `JLE` | 69 |
-| Weather station | `SLEEP` timing, `@TICK`, `DIV`, the alert ports | 35 |
-| Image: … (6) | image memory, bits, `PUSH` (guide `IMAGE_MEMORY.md`) | 27–95 |
+| First steps | registers, `ALIAS`, `CALL STEP`, `@STATUS`, a loop, `END` | 22 |
+| Drive yourself **[M14]** | devices: `@DRIVE_N`, `@DRIVE`, `WAIT`: what `CALL STEP` really is | 30 |
+| Explorer | the radar (`CALL SCAN`, `@RADAR_HIT`), tile constants, `MOD`, telling errors apart (`ERR_HAZARD`), `LOG` | 65 |
+| Photographer | `CALL SNAP` / `CALL SEND`, `@HEADING` for the headlight, `@REC_FREE` | 44 |
+| Prospector | tools (`CALL ACT`), cargo (`[CARGO+slot]`), `CALL` / `RET` | 104 |
+| Field repair | `CALL USE slot system`, nested loops, picking a port with jumps | 72 |
+| Fetch supply crate | positions, `SUB`, direction from a sign, result codes | 78 |
+| Spiral | `CALL` with arguments, `POP` order, `LOG`, `BRK` | 52 |
+| Seismic survey | an upgrade tool (`TOOL_3`), searching for a minimum, `JGE` / `JLE` | 75 |
+| Weather station | `CALL SLEEP` timing, `@TICK`, `DIV`, the alert ports | 37 |
+| Route **[M14]** | `DATA`, `LDF`, `VAR`, `LDB` / `STB` | 70 |
+| Image: … (6) | image memory, bits, `PUSH` (guide `IMAGE_MEMORY.md`) | 31–104 |
 
 * Core: keep the dish on the orbiter; stow the array on a squall warning; charge below a
   threshold (`CONST LOW_BAT`, `FULL_BAT`) and give the program no slices while charging;
@@ -782,19 +811,19 @@ software "kicks" it in time.
   nothing: once armed it cannot be switched off until the next hard reboot (like an
   independent watchdog on a real microcontroller). Read: ticks left, 0 = not armed.
 * It counts down once per tick while the firmware is `RUNNING` or `BLOCKED`, including
-  while a program slice runs. `BRK` (`HALTED`) freezes it, as a debugger does; a `FAULT`
+  while the program runs (the firmware is then inside `CALL PROGRAM`). `BRK` (`HALTED`) freezes it, as a debugger does; a `FAULT`
   leaves it to the fault reset; a powered-off rover does not count.
 * When it reaches 0: hard reboot (§3.3) with boot reason 5, *watchdog timeout*; the
   Comms tab shows `BOOT: watchdog timeout`. A hard reboot disarms it (0), so a firmware
   arms it again with its first kick.
 * After a reboot nothing is armed: firmware that never writes `@WDT` (every pre-M13
   firmware) behaves as before.
-* **Cooperative slices count:** while the firmware waits in `RUN`, the program holds the
-  CPU. A program instruction that blocks longer than the timeout (`SLEEP 2000` under the
-  default firmware) starves the firmware and trips the watchdog: the reboot restarts the
-  program. Choose the timeout longer than a slice plus the program's longest action, or
-  stop long actions with `@PREEMPT` (§3.9.2). The default firmware uses 1000 ticks; the
-  shipped programs block at most ~100.
+* **Slices count:** while the program runs, the firmware cannot kick. Since M14 slices are
+  exact (§3.9.2), so the firmware is back after `@SLICE` ticks whatever the program does;
+  choose the timeout longer than a slice. A call **without a time limit** (`@SLICE 0`)
+  trusts the program: one that sleeps longer than the timeout trips the watchdog, and the
+  reboot restarts it. (Before M14, a program's long `SLEEP` starved the firmware this way
+  under any slice.) The default firmware uses 1000 ticks and 50-tick slices.
 
 ## 4. World
 
@@ -827,7 +856,8 @@ software "kicks" it in time.
   frustration.
 * `;` starts a comment. Commas between arguments are optional.
 * Numbers: decimal (`-12`), hex (`0x1F`).
-* `->` is optional sugar for output operands (`SCAN dir -> r1 r2` ≡ `SCAN dir r1 r2`).
+* `->` is ignored (it was sugar for the output operands of `SCAN` and `PEEK`, retired in
+  M14).
 * **Running off the end of the program wraps to line 0**: every program is an implicit
   main loop, saving a `JMP` line.
 
@@ -840,10 +870,11 @@ software "kicks" it in time.
 | Immediate | `42`, `-7`, `0xFF` | |
 | Constant | `NORTH`, `IRON_ORE`, `ERR_BLOCKED`, any `CONST` name | Resolved at compile time. |
 | Port | `@BAT`, `@IND1`, ... | Writing a read-only port is a compile error. |
-| Label | `loop` | Jump/call targets only. |
+| Label | `loop` | Jump/call targets only. **[M14]** The ROM routines (`SLEEP`, `STEP`, `SCAN`, `ACT`, `USE`, `SNAP`, `SEND`, `ERASE`, `RUN`) and `PROGRAM` are labels every slot knows: reserved names. |
+| Port to wait on **[M14]** | `@DRIVE`, `@TIMER` | `WAIT` only: any readable port. |
 
 **Every value operand accepts a register, port, immediate or constant**, including
-directions, tool slots and cargo slots (`STEP r0`, `PEEK r1 -> r2`).
+directions, tool slots and cargo slots (`CALL STEP r0 1`, `CALL ACT TOOL_2 r1`).
 
 | Memory address **[M14]** | `[40]`, `[count]`, `[r1]`, `[r1+4]`, `[IMG+r0]`, `[route+i+1]` | Only in `LDB`, `STB`, `LDF` (a *load / store architecture*). One register at most (the base); numbers, `CONST`s, `VAR`s and labels add up to the offset. Spaces inside the brackets are allowed. |
 
@@ -873,34 +904,30 @@ friction, but the set should stay small enough to learn in one sitting.
 | | `SHL dst n` / `SHR dst n` | 1 cycle | **[M12]** Shift left / right by `n` bits; zeros come in (`SHR` is logical: `-8 SHR 1` = `0x7FFFFFFC`; use `DIV` for signed division). `n` is clamped to 0–32, so 32 or more gives 0. No `@STATUS`. 2-byte opcode. |
 | Flow | `JMP label` | 1 cycle | |
 | | `JEQ / JNE / JLT / JGT / JLE / JGE a b label` | 1 cycle | Compare and branch. |
-| | `CALL label [args...]` | 1 cycle | Pushes args in order to the data stack, return address to the call stack. |
-| | `RET` | 1 cycle | Pop call stack. Underflow → `FAULT`. |
-| Hardware | `SLEEP ticks` | blocks `ticks` | `ticks <= 0` just ends the tick. |
-| | `SCAN dir -> type dist` | blocks 1 | Radar ray across layers 1–3 up to the sensor range, day or night (§3.1.1; does not turn the rover). Returns the first hit's tile ID and distance, or `NONE` and `0`. |
-| | `STEP dir [tiles=1]` | blocks per tile | Moves tile by tile; aborts with `ERR_BLOCKED`, `ERR_LOW_POWER` or `ERR_HAZARD` (moved onto a hazard). |
-| | `ACT tool [arg]` | tool-defined | Fire the tool in hardpoint `tool` (§3.3.2). |
-| | `PEEK slot -> dst` | 1 cycle | Item ID in cargo `slot` (0 = empty); bad slot → `ERR_INVALID`. |
-| | `USE slot` | 5 ticks | Consume a cargo item (§3.3.2). |
-| | `SNAP dir [mode]` | blocks 10 | **[M9]** Photograph the subject in `dir` (§3.8.5); **[M12]** into image memory (§3.8.7). |
-| | `SEND [type]` | blocks 1 | **[M12]** Copy image memory into the science recorder as a photo product; 10 energy (§3.8.7). |
-| | `ERASE` | blocks 2 | **[M12]** Zero image memory and drop the capture; 10 energy (§3.8.7). |
+| | `CALL label [args...]` | 1 cycle | Pushes args in order to the data stack, return address to the call stack. **[M14]** `label` may be a ROM routine (§5.9; the assembler checks its argument count), or `PROGRAM` (firmware only, §3.9.2). |
+| | `RET` | 1 cycle | Pop call stack. Underflow → `FAULT`; **[M14]** in the program at its top level: return to the firmware with `@PROG_RESULT = r0`. |
+| Devices | `WAIT @port` | 1 cycle, then asleep | **[M14]** If the port reads non-zero the CPU sleeps (`BLOCKED`, the tick ends, no energy) and checks again at the start of every tick. When it reads 0: on a device's progress port (§5.9) the device's result goes into `@STATUS`; the program continues. Any readable port works (`WAIT @ALERT_ETA`). |
 | Memory | `LDB dst [addr]` | 1 cycle | **[M12, M14]** Load the byte (0–255) at data address `addr` (§5.8); compute. No memory there: `FAULT`. |
 | | `STB [addr] src` | 1 cycle | **[M12, M14]** Store `src & 255` at data address `addr`; compute. Cargo is read-only; no memory there: `FAULT`. |
-| | `LDF dst [addr]` | 1 cycle | **[M14]** Load the byte at `addr` of this slot's own Flash (code, then the data section); compute. Past the slot: `FAULT`. 2-byte opcode `1F 07`. |
+| | `LDF dst [addr]` | 1 cycle | **[M14]** Load the byte at `addr` of this slot's own Flash (code, then the data section), or of the ROM at `0xF000`+; compute. Past the slot: `FAULT`. Opcode 13 (`1F 07` in slice 2). |
 | Debug | `LOG tag [src]` | 1 cycle | **[M9]** Queue a log frame for the downlink; compute, no `@STATUS` (§3.8.3). |
-| Slots | `RUN ticks` | hardware | **[M10]** Firmware only: run the program for a time slice (§3.9.2). |
-| | `END [value]` | 1 cycle | **[M10]** Program only: finish with `PROG_DONE` and `@PROG_RESULT` (§3.9.2). |
+| Slots | `END [value]` | 1 cycle | **[M10]** Program only: finish with `PROG_DONE` and `@PROG_RESULT` (§3.9.2). |
 | | `BRK` | 1 cycle | **[M9]** Halt the CPU (`HALTED`) until *Continue* or an upload; the rover sends a register dump by itself **[M11]** (§3.8.4). |
 
-`@STATUS` is written by every hardware instruction and by arithmetic errors; pure
-compute instructions leave it alone.
+`@STATUS` is written by device start writes (accepted, or why not), by `WAIT` on a device
+port (how it ended), by `CALL PROGRAM` and by `DIV` / `MOD` by 0; everything else leaves it
+alone. **Retired in M14** (save v18 rewrites old code, §5.9): `SLEEP`, `SCAN`, `STEP`, `ACT`,
+`PEEK`, `USE`, `SNAP`, `SEND`, `ERASE`, `RUN` (now ROM routines or memory) and `@TX_DATA`
+(`LOG 0 v`).
 
 ### 5.5 Constants
 
 * Directions: `NORTH=0`, `EAST=1`, `SOUTH=2`, `WEST=3`.
 * Status: `OK=0`, `ERR_INVALID=1`, `ERR_FULL=2`, `ERR_LOW_POWER=3`, `ERR_BLOCKED=4`,
   `ERR_NO_TOOL=5`, `ERR_NO_SIGNAL=6`, `ERR_HAZARD=7`, `ERR_DEPLOYED=8`,
-  `ERR_PREEMPTED=9` **[M13]** (the program's action was aborted by fault protection).
+  `ERR_PREEMPTED=9` **[M13, M14]** (stopped by a command before it finished: a drive
+  stopped with `@DRIVE_N 0`), `ERR_BUSY=10` **[M14]** (the device, or one it shares the
+  chassis with, is still working).
 * Tools: `TOOL_0`…`TOOL_3`.
 * Systems: `SYS_HULL=0`, `SYS_SOLAR=1`, `SYS_ANTENNA=2`.
 * Alerts: `ALERT_NONE=0`, `ALERT_ECLIPSE=1`, `ALERT_SQUALL=2`.
@@ -917,20 +944,20 @@ compute instructions leave it alone.
 | `@BAT` | R | 0–100 | M1–M3 |
 | `@HULL` | R | 0–100 | M1–M3 |
 | `@X`, `@Y` | R | signed | M1–M3 |
-| `@STATUS` | R | 0–8; each slot has its own (M10) | M1–M3 |
+| `@STATUS` | R | 0–10; each slot has its own (M10) | M1–M3 |
 | `@TICK` | R | ticks since world start | M1–M3 |
 | `@GROUND` | R | layer 0 tile ID under the rover | M1–M3 |
 | `@GROUND_HAZARD` | R | 0–2 | M1–M3 |
 | `@HEADLIGHT` | RW | 0/1 | M4 (costs energy; M8.1: lights a forward cone for the operator at night) |
 | `@HEADING` | RW | 0–3 (`NORTH`…`WEST`); write turns in place, wraps mod 4 | M8.1 |
 | `@IND1`, `@IND2`, `@IND3` | RW | 0–4 (`OFF`…`AMBER`) | M8 (status lamps, visual only; replace the removed `@LIGHT_COLOR` / `@LIGHT_BLINK` beacon) |
-| `@SENSOR_RANGE` | R | SCAN (radar) range, any direction, day and night | M4, M8.1 |
+| `@SENSOR_RANGE` | R | radar range, any direction, day and night | M4, M8.1 |
 | `@SUN_AZIMUTH`, `@SUN_ELEV`, `@SUN_LIGHT` | R | 0–359, −70..70, 0–100 | M4 |
 | `@SOLAR_OPEN` | RW | 0/1 | M4 |
 | `@SOLAR_ANGLE` | RW | 0–359 (write = target, read = current) | M4 |
 | `@ORBIT_AZIMUTH`, `@SIGNAL_STR` | R | 0–359, 0–100 | M4 |
 | `@ANTENNA_ANGLE` | RW | 0–359 (write = target, read = current) | M4 |
-| `@TX_DATA` | W | any int | M4 (M9: = `LOG 0 value`) |
+| ~~`@TX_DATA`~~ | – | retired in M14 (it was `LOG 0 value`); number 30 stays unused | M4–M13 |
 | `@CARGO_FREE` | R | free cargo slots | M5 |
 | `@SOLAR_HEALTH`, `@ANTENNA_HEALTH` | R | 0–100 | M6 |
 | `@ALERT` | R | `ALERT_*` | M6 |
@@ -947,7 +974,9 @@ compute instructions leave it alone.
 | `@WDT` | RW (writes: firmware only) | 0–30000: write n > 0 arms / kicks (n ticks); read = ticks left, 0 = not armed | M13 |
 | `@PREEMPT` | RW (writes: firmware only) | 0–7, `PRE_*` bits that end a slice at once | M13 |
 | `@BAT_ALARM` | RW (writes: firmware only) | 0–100, threshold of `PRE_LOW_BAT` | M13 |
-| `@PREEMPTED` | R | `PRE_*` bits that ended the last slice early; cleared by `RUN` | M13 |
+| `@PREEMPTED` | R | `PRE_*` bits that ended the last slice early; cleared by `CALL PROGRAM` | M13 |
+| `@SLICE` | RW (writes: firmware only) | 0–30000 ticks for the next `CALL PROGRAM`, 0 = no limit; read in the program: ticks left | M14 |
+| Device ports | see §5.9 | `@TIMER`, `@DRIVE`, `@DRIVE_N`, `@RADAR`, `@RADAR_HIT`, `@RADAR_DIST`, `@TOOL`, `@TOOL_ARG`, `@REPAIR`, `@REPAIR_SYS`, `@CAM`, `@CAM_MODE`, `@SEND`, `@ERASE` | M14 |
 | `@TEMP`, `@HEATER` | R | °C; survival heaters 0/1 | M13 |
 | `@SOLAR_DUST` | R | 0–100 % dust on the array | M13 |
 
@@ -987,21 +1016,25 @@ an assembler listing (address, hex bytes, source line) and the final byte count 
 slot, assembled on the ground (free) while typing.
 
 * **Opcode byte** `kkknnnnn`: `nnnnn` is the instruction from a fixed table (`MOV` 01,
-  `PUSH` 02, … `BRK` 1A, `RUN` 1B, `END` 1C, in §5.4 order; the Reference tab lists them);
-  old numbers never change. 1D and 1E are `LDB` / `STB` (§3.8.7), the most frequent
-  instructions of image loops: the last one-byte numbers.
+  `PUSH` 02, … `RET` 11, `LOG` 19, `BRK` 1A, `END` 1C; the Reference tab lists them). 1D and
+  1E are `LDB` / `STB` (§3.8.7). **[M14]** The retired hardware instructions freed 12–18
+  and 1B; once (owner decision, every save is recompiled by the v18 migration) two were
+  reused: **12 `WAIT`, 13 `LDF`**. 14–18 and 1B are free for later.
 * **Extended instructions:** `nnnnn` = `1F` is a prefix; the next byte is the
-  instruction's number in a second table (append only): `AND` 01, `OR` 02, `SHL` 03,
-  `SHR` 04, `SEND` 05, `ERASE` 06. Like the prefix bytes of real CPUs (Z80 `CB` / `ED`, x86
+  instruction's number in a second table: `AND` 01, `OR` 02, `SHL` 03, `SHR` 04 (05–07,
+  once `SEND`, `ERASE`, `LDF`, are free). Like the prefix bytes of real CPUs (Z80 `CB` / `ED`, x86
   `0F`): one byte longer, same speed. `AND r0 3` = `1F 01 10 03`. `kkk` in the prefix byte
   counts optional operands as usual.
 * `kkk` counts the
-  optional operands present (`STEP d [n]`, `END [v]`, the arguments of `CALL`), because a
-  short-immediate or register byte looks like an opcode: `STEP 1` = `14 01`,
-  `STEP 1 2` = `34 01 02`, `END 1` = `3C 01`. Hence `CALL` passes at most 7 arguments.
+  optional operands present (`LOG t [v]`, `END [v]`, the arguments of `CALL`), because a
+  short-immediate or register byte looks like an opcode: `LOG 2` = `19 02`,
+  `LOG 2 r0` = `39 02 10`, `END 1` = `3C 01`. Hence `CALL` passes at most 7 arguments.
+  `CALL STEP 1 2` = `50 F0 05 01 02` (the ROM routine's address, two arguments).
 * **Operand byte**: `0000vvvv` short immediate 0–15 · `00010rrr` register r0–r7 ·
   `01pppppp` port (fixed port numbers 0–63, `PORT_CODES` in `ports.ts`: `@BAT` = 0 → `40`;
-  the Reference tab lists them; numbers of removed ports, 33–34, stay unused) · `00011000` / `00011001` / `00011010` followed by an
+  the Reference tab lists them; numbers of removed ports, 30 and 33–34, stay unused;
+  **[M14]** the devices took 49–63, so the table is full: the next port needs the extended
+  operand `00011011 pppppppp` reserved in `ASSEMBLER_CORE.md` §9) · `00011000` / `00011001` / `00011010` followed by an
   8 / 16 / 32-bit big-endian two's-complement immediate · **[M14]** `00011100` + 2 bytes
   `[n]` · `00100rrr` `[r]` · `00101rrr` + 2 bytes `[r+n]` (signed offset). Other values are
   invalid.
@@ -1017,6 +1050,10 @@ slot, assembled on the ground (free) while typing.
   executes decoded instructions (same cycle costs); running past the last byte wraps to
   0x000. A return address that does not start an instruction (only a corrupted one could)
   faults. Saves before v11 stored instruction indices; loading converts them.
+* **Code address space [M14]**: each slot from `0x000`, the `PROGRAM` gate `0xE000` (firmware
+  `CALL PROGRAM`; a dump of the firmware during a slice shows `next 0xE000`), the ROM
+  `0xF000`–`0xFFFF` (listing and dumps: `rom:0xF012`). A ROM instruction has no source line
+  in the player's code (the editor marks no line while the CPU is inside the ROM).
 * **Each slot starts at 0x000** (own address space): a firmware change never moves the
   program, so it never has to be re-uploaded. The listing labels addresses `fw:0x02A` /
   `prog:0x010`; the total shows `firmware 136 + program 46 = 182 / 256 B`.
@@ -1053,6 +1090,77 @@ Design and reasons: [`ASSEMBLER_CORE.md`](ASSEMBLER_CORE.md) §7 (slice 2 of M14
   `STB [IMG+a] v`); a rover whose code changed is hard-rebooted with boot reason 6
   (*software update*), because its saved instruction addresses no longer match.
 * Lesson template *Route* (`DATA`, `LDF`, `VAR`, `LDB`, `STB`).
+
+### 5.9 Devices and the ROM **[M14]**
+
+Design and reasons: [`ASSEMBLER_CORE.md`](ASSEMBLER_CORE.md) §3–§6 (slice 3 of M14 is built).
+The CPU only computes and moves data; everything physical is a **device** behind ports, as
+in a real machine (a CPU has no "drive" instruction: it writes a motor controller's
+registers).
+
+**A device** has a **start port** (write = start; the write sets `@STATUS`: `OK` = accepted,
+or why not), a **progress port** (read: work left, 0 = idle; for every device the start port
+itself), latched **argument ports** (they keep their value until written again; reboot
+values below) and **result ports**. `WAIT @port` sleeps until the progress port reads 0 and
+then copies the device's **result** (how its work ended) into `@STATUS`. A refused start
+also becomes the result, so a `WAIT` right after it reports the refusal.
+
+| Device | Arguments (reboot value) | Start (write) | Progress (read) | Results | Timing, energy (unchanged from the old instruction) | ROM routine |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| Timer, **one per slot** | – | `@TIMER` ticks (`OK`) | ticks left | – | free | `CALL SLEEP ticks` |
+| Drive | `@DRIVE_N` tiles (1) | `@DRIVE` direction | tiles left, counting the current one | `@X`, `@Y`, `@HEADING`; result `OK`, `ERR_BLOCKED`, `ERR_HAZARD`, `ERR_LOW_POWER`, `ERR_PREEMPTED` | 3–6 ticks, 40–120 energy per tile (§3.1); refused: `ERR_BUSY`, `ERR_DEPLOYED`, `ERR_BLOCKED`, `ERR_LOW_POWER`, `ERR_INVALID` (bad direction, `@DRIVE_N` 0) | `CALL STEP dir tiles` |
+| Radar | – | `@RADAR` direction | 1 while sweeping | `@RADAR_HIT` (tile ID, `NONE`), `@RADAR_DIST` (0 = nothing) | 1 tick, 10 energy; the answer is measured when the sweep ends | `CALL SCAN dir` |
+| Tools | `@TOOL_ARG` direction / slot (0) | `@TOOL` hardpoint 0–3 | ticks left | the tool's (cargo, `@SEISMIC_*`, spectra); result | per tool (§3.3.2); `ERR_NO_TOOL`, `ERR_INVALID`, `ERR_FULL`, `ERR_LOW_POWER` | `CALL ACT tool arg` |
+| Repair | `@REPAIR_SYS` (`SYS_HULL`) | `@REPAIR` cargo slot | ticks left | `@HULL`…; result | 10 ticks, 200 energy | `CALL USE slot system` |
+| Camera | `@CAM_MODE` (1) | `@CAM` direction | ticks left | image memory; result | 10 ticks, 200 energy | `CALL SNAP dir mode` |
+| Image send | – | `@SEND` type (0 = the mode of the last photo) | ticks left | a product in the recorder | 1 tick, 10 energy; `ERR_FULL`, `ERR_INVALID`, `ERR_LOW_POWER` | `CALL SEND type` |
+| Image erase | – | `@ERASE` any value | ticks left | image memory zeroed | 2 ticks, 10 energy | `CALL ERASE` |
+| Program slice | – | `@SLICE` ticks (firmware) | ticks left | `@PROG_STATE` | §3.9.2 | `CALL RUN ticks` |
+
+* **Interlocks** (physical): drive, tools, repair and camera share the chassis and the arm:
+  one at a time, the others answer `ERR_BUSY` (10). `@SEND` and `@ERASE` are refused while
+  the camera exposes, and one at a time. Radar and timers work alongside anything: a rover
+  can **sweep the radar while it drives**, and compute, log and use memory while any device
+  works.
+* **Stopping the drive:** writing `@DRIVE_N` while driving sets the tiles left (counting the
+  current one); `0` stops at the end of the current tile, and the drive's result is
+  `ERR_PREEMPTED` ("stopped by a command").
+* **Cargo** is memory, not a device: `LDB item [CARGO+slot]` (was `PEEK`, §5.8).
+* A hard reboot (§3.3) stops every device and resets the arguments and results; the timers
+  are part of each slot's context.
+
+**The ROM** is a fixed library at code addresses `0xF000`… that both slots can `CALL`
+(`ROM_SOURCE` in `src/core/rom.ts`, 90 B). It costs no Flash, runs in the caller's context
+(its registers, stacks, `@STATUS`) and takes normal cycles; **Reference → ROM** shows its
+listing, so a player can read exactly what `STEP` does, copy it and change it. Calling
+convention: `CALL NAME args…` pushes the arguments; each routine pops all of them. The
+drivers use no registers: they pop straight into the ports, start the device, return at once
+if it refused, else `WAIT` for it:
+
+```
+STEP:   POP @DRIVE_N          ; tiles (pushed last: popped first)
+        POP @DRIVE            ; direction: starts the drive, @STATUS = accepted?
+        JNE @STATUS OK step_x
+        WAIT @DRIVE           ; until the drive is idle; @STATUS = how it ended
+step_x: RET
+```
+
+* Routines: `SLEEP ticks`, `STEP dir tiles`, `SCAN dir`, `ACT tool arg`, `USE slot system`,
+  `SNAP dir mode`, `SEND type`, `ERASE`, `RUN ticks` (firmware only). Every argument is
+  required; the assembler checks the count (a routine that pops more or fewer than were
+  pushed would unbalance the data stack). Their names, `PROGRAM` and `WAIT` are reserved.
+* `LDF` reads ROM bytes too (`LDF r0 [STEP]`).
+* Not built yet (decided for M14, see ROADMAP): helper routines (`ABS`, `DIR_TO`, `PUT16`,
+  `GET16`, `PLOT`), the boot ROM with safe mode.
+
+**Save v18:** device state (latched arguments, radar, image send / erase, results) and each
+slot's timer are saved. v17 code is rewritten on load (`ASSEMBLER_CORE.md` §10: `STEP d n` →
+`CALL STEP d n`, `STEP d` → `CALL STEP d 1`, `SCAN d -> a b` → `CALL SCAN d` + `MOV a
+@RADAR_HIT` + `MOV b @RADAR_DIST`, `ACT t` → `CALL ACT t 0`, `USE s` → `CALL USE s SYS_HULL`,
+`SNAP d` → `CALL SNAP d 1`, `SEND` → `CALL SEND 0`, `ERASE` → `CALL ERASE`, `PEEK s -> d` →
+`LDB d [CARGO+s]`, `RUN t` → `CALL RUN t`, `MOV @TX_DATA v` → `LOG 0 v`; player names that
+are now reserved get a `_`: `step:` → `step_:`). A rover whose code changed (or that uses the
+renumbered `LDF`) is hard-rebooted with boot reason 6 (*software update*).
 
 ## 6. Milestones
 
