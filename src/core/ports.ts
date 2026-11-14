@@ -268,9 +268,10 @@ export const PORTS: PortDef[] = [
 /**
  * Fixed machine-code port numbers 0–63 (SPEC §5.7.1): the operand byte `01pppppp`.
  * Append only: a port keeps its number forever, also if it moves in PORTS. A retired
- * port leaves an empty slot ('') that is never reused (33, 34: the old status beacon;
- * 30: `@TX_DATA`, retired in M14). M14's devices took the last free numbers (49–63); the
- * next port needs the extended operand of docs/ASSEMBLER_CORE.md §9.
+ * port leaves an empty slot ('') (33, 34: the old status beacon;
+ * 30: `@TX_DATA`, retired in M14). M14's devices took the last free numbers (49–63). Owner
+ * decision 2026-11-14: the next ports reuse 30, 33 and 34 once (like the opcodes; the save
+ * migration recompiles everything), then the extended operand of docs/ASSEMBLER_CORE.md §9.
  */
 export const PORT_CODES: readonly string[] = [
   'BAT', 'HULL', 'SOLAR_HEALTH', 'ANTENNA_HEALTH', 'X', 'Y', 'STATUS', 'TICK',

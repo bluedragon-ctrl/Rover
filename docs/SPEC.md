@@ -957,7 +957,7 @@ alone. **Retired in M14** (save v18 rewrites old code, §5.9): `SLEEP`, `SCAN`, 
 | `@SOLAR_ANGLE` | RW | 0–359 (write = target, read = current) | M4 |
 | `@ORBIT_AZIMUTH`, `@SIGNAL_STR` | R | 0–359, 0–100 | M4 |
 | `@ANTENNA_ANGLE` | RW | 0–359 (write = target, read = current) | M4 |
-| ~~`@TX_DATA`~~ | – | retired in M14 (it was `LOG 0 value`); number 30 stays unused | M4–M13 |
+| ~~`@TX_DATA`~~ | – | retired in M14 (it was `LOG 0 value`); number 30 free for one reuse | M4–M13 |
 | `@CARGO_FREE` | R | free cargo slots | M5 |
 | `@SOLAR_HEALTH`, `@ANTENNA_HEALTH` | R | 0–100 | M6 |
 | `@ALERT` | R | `ALERT_*` | M6 |
@@ -1032,9 +1032,10 @@ slot, assembled on the ground (free) while typing.
   `CALL STEP 1 2` = `50 F0 05 01 02` (the ROM routine's address, two arguments).
 * **Operand byte**: `0000vvvv` short immediate 0–15 · `00010rrr` register r0–r7 ·
   `01pppppp` port (fixed port numbers 0–63, `PORT_CODES` in `ports.ts`: `@BAT` = 0 → `40`;
-  the Reference tab lists them; numbers of removed ports, 30 and 33–34, stay unused;
-  **[M14]** the devices took 49–63, so the table is full: the next port needs the extended
-  operand `00011011 pppppppp` reserved in `ASSEMBLER_CORE.md` §9) · `00011000` / `00011001` / `00011010` followed by an
+  the Reference tab lists them; numbers of removed ports: 30 and 33–34;
+  **[M14]** the devices took 49–63; owner decision 2026-11-14: the next ports reuse the
+  retired numbers 30, 33, 34 once, and only then the extended operand `00011011 pppppppp`
+  of `ASSEMBLER_CORE.md` §9) · `00011000` / `00011001` / `00011010` followed by an
   8 / 16 / 32-bit big-endian two's-complement immediate · **[M14]** `00011100` + 2 bytes
   `[n]` · `00100rrr` `[r]` · `00101rrr` + 2 bytes `[r+n]` (signed offset). Other values are
   invalid.
@@ -1130,12 +1131,14 @@ also becomes the result, so a `WAIT` right after it reports the refusal.
   are part of each slot's context.
 
 **The ROM** is a fixed library at code addresses `0xF000`… that both slots can `CALL`
-(`ROM_SOURCE` in `src/core/rom.ts`, 90 B). It costs no Flash, runs in the caller's context
+(`ROM_SOURCE` in `src/core/rom.ts`, 330 B). It costs no Flash, runs in the caller's context
 (its registers, stacks, `@STATUS`) and takes normal cycles; **Reference → ROM** shows its
 listing, so a player can read exactly what `STEP` does, copy it and change it. Calling
 convention: `CALL NAME args…` pushes the arguments; each routine pops all of them. The
 drivers use no registers: they pop straight into the ports, start the device, return at once
-if it refused, else `WAIT` for it:
+if it refused, else `WAIT` for it. **Helpers** return their answer in `r0`; they may change
+`r0` and `r1` and keep every other register (owner, 2026-11-14; like ARM's scratch
+registers: with two arguments there is no other way to reach the second one):
 
 ```
 STEP:   POP @DRIVE_N          ; tiles (pushed last: popped first)
@@ -1145,13 +1148,18 @@ STEP:   POP @DRIVE_N          ; tiles (pushed last: popped first)
 step_x: RET
 ```
 
-* Routines: `SLEEP ticks`, `STEP dir tiles`, `SCAN dir`, `ACT tool arg`, `USE slot system`,
-  `SNAP dir mode`, `SEND type`, `ERASE`, `RUN ticks` (firmware only). Every argument is
+* Drivers: `SLEEP ticks`, `STEP dir tiles`, `SCAN dir`, `ACT tool arg`, `USE slot system`,
+  `SNAP dir mode`, `SEND type`, `ERASE`, `RUN ticks` (firmware only).
+* Helpers: `ABS v` (`r0` = |v|); `DIR_TO dx dy` (`r0` = the direction that shrinks the
+  larger of |dx|, |dy|, a tie goes north / south, −1 if both are 0); `PUT16 addr v` (two
+  bytes, high first, at a data address; `r0` = addr + 2); `GET16 addr` (`r0` = that
+  16-bit value with its sign); `PLOT x y grey` (one pixel of a 32×32 2-bpp photo in image
+  memory).
+* Every argument is
   required; the assembler checks the count (a routine that pops more or fewer than were
   pushed would unbalance the data stack). Their names, `PROGRAM` and `WAIT` are reserved.
 * `LDF` reads ROM bytes too (`LDF r0 [STEP]`).
-* Not built yet (decided for M14, see ROADMAP): helper routines (`ABS`, `DIR_TO`, `PUT16`,
-  `GET16`, `PLOT`), the boot ROM with safe mode.
+* Not built yet (decided for M14, see ROADMAP): the boot ROM with safe mode.
 
 **Save v18:** device state (latched arguments, radar, image send / erase, results) and each
 slot's timer are saved. v17 code is rewritten on load (`ASSEMBLER_CORE.md` §10: `STEP d n` →

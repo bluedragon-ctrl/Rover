@@ -40,8 +40,36 @@ describe('ROM library (docs/ASSEMBLER_CORE.md §6)', () => {
     expect(rom.base).toBe(ROM_BASE);
     expect(rom.instrs[0].addr).toBe(ROM_BASE);
     for (const n of ROM_ENTRIES) expect(romLabels()[n]).toBeGreaterThanOrEqual(ROM_BASE);
-    expect(rom.code.length).toBeLessThanOrEqual(256);
-    expect(rom.instrs.some((i) => i.args.some((a) => a.k === 'reg' || (a.k === 'mem' && a.base >= 0)))).toBe(false);
+    expect(rom.code.length).toBeLessThanOrEqual(0x1000 - 0x200); // drivers + helpers: a few hundred bytes of 0xF000–0xFFFF
+    const drivers = rom.instrs.filter((i) => i.addr < romLabels().ABS);
+    expect(drivers.some((i) => i.args.some((a) => a.k === 'reg' || (a.k === 'mem' && a.base >= 0)))).toBe(false);
+  });
+
+  /** Run `body` in the firmware with r2 = 22, r3 = 33; returns the rover after `ticks`. */
+  const helper = (body: string, ticks = 20) => {
+    const { e, u } = rover(`MOV r2 22\nMOV r3 33\n${body}\nCALL SLEEP 1000`);
+    run(e, ticks);
+    expect([u.vm.regs[2], u.vm.regs[3]]).toEqual([22, 33]); // helpers keep every register but r0, r1
+    expect(u.vm.dataStack).toEqual([]); // and pop all their arguments
+    return u;
+  };
+
+  it('helpers (owner 2026-11-14: may change r0 and r1): ABS, DIR_TO', () => {
+    expect(helper('CALL ABS -7\nMOV @POST r0').post).toBe(7);
+    const dir = (dx: number, dy: number) => helper(`CALL DIR_TO ${dx} ${dy}\nMOV @POST r0`).post;
+    expect([dir(5, 2), dir(-5, 2), dir(1, 3), dir(2, -4), dir(3, 3), dir(0, 0)]).toEqual([1, 3, 0, 2, 0, 0]); // 0 0: -1, clamped by @POST
+    expect(helper('CALL DIR_TO 0 0\nMOV r1 r0\nADD r1 10\nMOV @POST r1').post).toBe(9);
+  });
+
+  it('helpers: PUT16 / GET16 round-trip signed 16-bit values; PLOT sets one pixel', () => {
+    const u = helper('CALL PUT16 4 -300\nMOV r1 r0\nCALL PUT16 r1 1234\nCALL GET16 4\nADD r0 301\nMOV @POST r0\nCALL GET16 6\nSUB r0 1232\nMOV @IND1 r0', 30);
+    expect([...u.ram.slice(4, 8)]).toEqual([0xfe, 0xd4, 0x04, 0xd2]); // PUT16 returned addr + 2 for the second value
+    expect(u.post).toBe(1); // GET16 4 = -300: the sign came back
+    expect(u.indicators[0]).toBe(2); // GET16 6 = 1234
+    const p = helper('CALL PLOT 10 3 2\nCALL PLOT 31 31 3');
+    expect(p.img[3 * 8 + 2]).toBe(0b00001000); // x 10 = third pixel of byte 2: bits 3-2
+    expect(p.img[255]).toBe(0b11);
+    expect(p.img.reduce((n, b) => n + (b ? 1 : 0), 0)).toBe(2);
   });
 
   it('its listing shows ROM addresses (Reference → ROM)', () => {

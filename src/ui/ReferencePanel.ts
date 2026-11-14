@@ -169,6 +169,8 @@ function romHtml(): string {
     they cost no Flash, run with the caller's registers, stacks and <code>@STATUS</code> and take normal cycles. Each driver pops its
     arguments into the device's ports, starts the device and <code>WAIT</code>s until it is done, so <code>@STATUS</code> says how it ended.
     Write the ports yourself to do more: drive and sweep the radar at the same time, stop a drive early (<code>@DRIVE_N 0</code>).
+    The <b>helpers</b> (<code>ABS</code>, <code>DIR_TO</code>, <code>PUT16</code>, <code>GET16</code>, <code>PLOT</code>) return their answer in
+    <code>r0</code>; they may change <code>r0</code> and <code>r1</code> and keep every other register.
     Routine names are reserved: <code>${ROM_ENTRIES.join(' ')}</code> (and <code>PROGRAM</code>).</p>
     <pre class="ref-diagram">${esc(listing)}</pre>`;
 }

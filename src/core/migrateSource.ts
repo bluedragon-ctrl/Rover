@@ -27,7 +27,7 @@ export function migrateImageMemory(src: string): string {
 }
 
 /** Names that became ROM routines, the program gate or the new WAIT instruction in M14: reserved since save v18. */
-const M14_RESERVED = ['SLEEP', 'STEP', 'SCAN', 'ACT', 'USE', 'SNAP', 'SEND', 'ERASE', 'RUN', 'PROGRAM', 'WAIT'];
+const M14_RESERVED = ['SLEEP', 'STEP', 'SCAN', 'ACT', 'USE', 'SNAP', 'SEND', 'ERASE', 'RUN', 'PROGRAM', 'WAIT', 'ABS', 'DIR_TO', 'PUT16', 'GET16', 'PLOT'];
 
 /**
  * M14 (save v18, docs/ASSEMBLER_CORE.md §10): the hardware instructions became device ports
