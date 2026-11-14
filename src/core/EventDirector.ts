@@ -120,6 +120,11 @@ export class EventDirector {
   }
 
   /** Most urgent announced or active event, for the @ALERT port and the HUD. */
+  /** Was a world event announced at tick `t` (its warning starts)? Fault protection (PRE_ALERT) listens for this. */
+  announcedAt(t: number): boolean {
+    return this.events.some((ev) => ev.warnTick === t);
+  }
+
   alert(t: number): { type: Alert; eta: number; event: ScheduledEvent | null } {
     let best: ScheduledEvent | null = null;
     for (const ev of this.events) {

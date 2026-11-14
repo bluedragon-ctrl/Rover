@@ -145,6 +145,16 @@ describe('program templates (lessons)', () => {
     expect(u.cargo).toContain(T.IRON_ORE);
   });
 
+  it('Route reads its legs from Flash (DATA / LDF), counts them in RAM (VAR) and drives back to the start', () => {
+    const { e, u } = rover('Route');
+    expect(result(e, u)).toBe(4);
+    expect([u.x, u.y]).toEqual([0, 0]);
+    expect(logged(e, 2)).toEqual([4]);
+    expect(u.ram[0]).toBe(4); // the program's VAR good sits at the bottom of RAM
+    const blocked = rover('Route', (e2) => e2.world.setTile(1, 0, Layer.OBSTACLE, T.CLIFF_WALL));
+    expect(result(blocked.e, blocked.u)).toBeLessThan(4);
+  });
+
   it('Weather station logs the hour and the light every 100 ticks', () => {
     const { e } = rover('Weather station');
     run(e, 450);

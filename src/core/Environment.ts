@@ -77,3 +77,9 @@ export function solarGain(panelAngle: number, sun: SunState): number {
   if (c <= 0) return 0;
   return Math.floor((BALANCE.solarMaxPerTick * sun.light * c) / 100_000);
 }
+
+/** Ambient temperature in °C for an illumination of 0..100 (night and eclipses are cold). */
+export function ambientTemp(light: number): number {
+  const { ambientNightC: lo, ambientDayC: hi } = BALANCE;
+  return lo + Math.floor(((hi - lo) * light) / 100);
+}

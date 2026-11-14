@@ -2,7 +2,7 @@ import { HighlightStyle, StreamLanguage, syntaxHighlighting } from '@codemirror/
 import { tags as t } from '@lezer/highlight';
 import { OPCODES } from '../core/vm/Compiler';
 
-const OPS = new Set([...OPCODES, 'ALIAS', 'CONST']);
+const OPS = new Set([...OPCODES, 'ALIAS', 'CONST', 'VAR', 'DATA']);
 
 /** Minimal tokenizer for syntax highlighting. */
 export const roverAsm = StreamLanguage.define<{ start: boolean }>({

@@ -90,6 +90,21 @@ export class Unit {
   /** Ticks left in the program's current RUN slice; -1 when the firmware has control. */
   slice = -1;
 
+  /**
+   * @WDT (SPEC §3.9.5): ticks until the watchdog reboots the rover; 0 = not armed. CPU state:
+   * a hard reboot disarms it.
+   */
+  wdt = 0;
+  /** @PREEMPT condition mask, @BAT_ALARM threshold and @PREEMPTED (what ended the last slice early). CPU state. */
+  preemptMask = 0;
+  batAlarm = 0;
+  preempted = 0;
+  /** Internal temperature in °C (@TEMP, SPEC §3.3.4) and whether the survival heaters ran this tick (@HEATER). */
+  temp = 0;
+  heater = 0;
+  /** Dust on the solar array, 0–100 % (@SOLAR_DUST): charging is scaled by what is left. */
+  solarDust = 0;
+
   /** Last seismic scan result (TOOL_3 SEISMIC). */
   seismicType = 0;
   seismicDist = 0;
@@ -109,6 +124,26 @@ export class Unit {
     return this.img;
   }
 
+  /**
+   * M14 RAM (docs/ASSEMBLER_CORE.md §7): shared by firmware and program, zero after a hard
+   * reboot. Grows with RAM upgrades; read it through ramMemory().
+   */
+  ram = new Uint8Array(0);
+  /** RAM top the firmware was assembled for (its VARs count down from here); 0 = the chassis RAM. */
+  fwRamTop = 0;
+  /** RAM taken by each slot's VARs, [low, high), from their last successful compile. */
+  firmwareRam = { low: 0, high: 0 };
+  programRam = { low: 0, high: 0 };
+
+  ramMemory(): Uint8Array {
+    if (this.ram.length < this.chassis.ramBytes) {
+      const grown = new Uint8Array(this.chassis.ramBytes);
+      grown.set(this.ram);
+      this.ram = grown;
+    }
+    return this.ram;
+  }
+
   /** ERASE: image memory zeroed, the capture dropped (SPEC §3.8.7). */
   clearImageMemory(): void {
     this.img.fill(0);
@@ -123,6 +158,7 @@ export class Unit {
     this.prog = new RoverVM(chassis);
     this.cargo = new Array(chassis.cargoSlots).fill(0);
     this.img = new Uint8Array(imageBytes(chassis));
+    this.ram = new Uint8Array(chassis.ramBytes);
   }
 
   /** The context that executes now: the program inside a RUN slice, else the firmware. */

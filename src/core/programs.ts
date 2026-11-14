@@ -182,8 +182,10 @@ CONST SLICE 50              ; ticks per program time slice
 CONST T_BAT 1               ; log tags: the Comms tab shows "T_BAT = 97"
 CONST T_RESULT 13
 CONST T_END 14              ; T_END = 3: program done, 4: fault
+CONST WDT_TICKS 1000        ; watchdog: no kick for this long = hang, reboot
 
-fw:     MOV @ANTENNA_ANGLE @ORBIT_AZIMUTH ; keep the dish on the orbiter
+fw:     MOV @WDT WDT_TICKS                 ; kick the watchdog (arms it at boot)
+        MOV @ANTENNA_ANGLE @ORBIT_AZIMUTH ; keep the dish on the orbiter
 ;--- comfort: lamp 3 blue while the dish is on the orbiter (12 B) ---
         MOV @IND3 OFF
         JLT @SIGNAL_STR 20 link
@@ -235,7 +237,8 @@ charge: MOV @HEADLIGHT 0
 ;--- comfort: lamp 2 amber while charging (3 B) ---
         MOV @IND2 AMBER
 ;--- end ---
-chg:    MOV @SOLAR_OPEN 1
+chg:    MOV @WDT WDT_TICKS                 ; charging can take a whole night: keep kicking
+        MOV @SOLAR_OPEN 1
         JNE @ALERT ALERT_SQUALL aim
         MOV @SOLAR_OPEN 0                  ; squall: keep the array stowed
 aim:    MOV @SOLAR_ANGLE @SUN_AZIMUTH
@@ -246,6 +249,65 @@ aim:    MOV @SOLAR_ANGLE @SUN_AZIMUTH
         MOV @IND2 OFF
 ;--- end ---
 `;
+
+/** Apply exact text edits; a missing anchor is a bug (the template would silently drift). */
+function edited(src: string, edits: [string, string][]): string {
+  return edits.reduce((out, [from, to]) => {
+    if (!out.includes(from)) throw new Error(`template anchor not found: ${from}`);
+    return out.replace(from, to);
+  }, src);
+}
+
+/**
+ * Firmware template (SPEC §3.9.2): the default firmware plus fault protection. Built from
+ * DEFAULT_FIRMWARE so the two never drift apart.
+ */
+export const FIRMWARE_FAULT_PROTECTION = edited(DEFAULT_FIRMWARE, [
+  [
+    `; DEFAULT FIRMWARE: keeps the rover alive and runs your program
+; in time slices (RUN). Upload programs in the Program slot.
+`,
+    `; FAULT PROTECTION FIRMWARE: the default firmware, plus it takes
+; control back at once when something goes wrong.
+;
+; The default firmware only looks around between time slices, so a
+; program in a long SLEEP or STEP keeps it waiting. Here the hardware
+; ends a slice at once when a world event is announced or the battery
+; drops below LOW_BAT (@PREEMPT, @BAT_ALARM). The program's action is
+; aborted (its @STATUS reads ERR_PREEMPTED); the next RUN resumes it
+; after that instruction. Comms shows "T_PREEMPT = 1" (alert) or 4.
+;
+; Learn: @PREEMPT and the PRE_* bits, @BAT_ALARM, @PREEMPTED: why
+; flight software must be able to stop a running task. It is 15 B
+; bigger than the default firmware: programs up to 83 B fit with it.
+; Try: also stop for damage: CONST PROTECT 7 (PRE_ALERT + PRE_DAMAGE
+; + PRE_LOW_BAT = 1 + 2 + 4).
+;
+`,
+  ],
+  [
+    `CONST WDT_TICKS 1000        ; watchdog: no kick for this long = hang, reboot
+`,
+    `CONST WDT_TICKS 1000        ; watchdog: no kick for this long = hang, reboot
+CONST PROTECT 5             ; PRE_ALERT (1) + PRE_LOW_BAT (4)
+CONST T_PREEMPT 12          ; T_PREEMPT = why a slice was cut short (PRE_* bits)
+`,
+  ],
+  [
+    `fw:     MOV @WDT WDT_TICKS`,
+    `boot:   MOV @PREEMPT PROTECT               ; set once: a reboot switches it off
+        MOV @BAT_ALARM LOW_BAT             ; PRE_LOW_BAT below this
+fw:     MOV @WDT WDT_TICKS`,
+  ],
+  [
+    `        RUN SLICE
+        JEQ @PROG_STATE PROG_READY fw`,
+    `        RUN SLICE
+        JEQ @PREEMPTED 0 cont              ; slice cut short? tell mission control why
+        LOG T_PREEMPT @PREEMPTED
+cont:   JEQ @PROG_STATE PROG_READY fw`,
+  ],
+]);
 
 /*
  * Program templates (M10; reworked as lessons after M12). Each header says what the
@@ -595,6 +657,49 @@ calm:   SLEEP 100
         JMP loop
 `;
 
+/** Program 10 (M14): constant data in Flash and a variable in RAM. */
+export const PROGRAM_ROUTE = `; ROUTE: drive a route stored in Flash, then report how many legs
+; worked.
+;
+; Learn: constant data in Flash (DATA, LDF), a variable in RAM (VAR,
+; LDB, STB), addresses in brackets.
+;
+; DATA puts bytes into Flash; the assembler moves them after the code,
+; so the program never runs into them. LDF reads one byte: route is the
+; address of the first one, [route+i] the address of entry i. The route
+; is pairs (direction, tiles) and ends with STOP. VAR reserves RAM and
+; names its address: good is one byte that counts the legs that worked.
+; RAM is shared with the firmware and is zero after a reboot.
+; Try: add legs; LOG the number of a leg that failed; drive it backwards.
+
+CONST T_LEGS 2              ; log tag
+CONST STOP 255              ; end of the route
+
+VAR good                    ; legs driven without a problem (1 byte of RAM)
+
+ALIAS r0 i          ; index into the route
+ALIAS r1 dir
+ALIAS r2 tiles
+ALIAS r3 n
+
+        STB [good] 0              ; start counting from 0
+next:   LDF dir [route+i]         ; read the route from Flash
+        JEQ dir STOP done
+        LDF tiles [route+i+1]
+        STEP dir tiles
+        ADD i 2                   ; next pair
+        JNE @STATUS OK next       ; blocked: try the next leg
+        LDB n [good]              ; good = good + 1: load, add, store
+        ADD n 1
+        STB [good] n
+        JMP next
+done:   LDB n [good]
+        LOG T_LEGS n
+        END n
+
+route:  DATA EAST 3, NORTH 2, WEST 3, SOUTH 2, STOP
+`;
+
 /**
  * Image memory examples (M12, SPEC §3.8.7): the six worked examples of docs/IMAGE_MEMORY.md,
  * word for word (a test keeps them identical). Programs: they END, except the memory map.
@@ -606,7 +711,7 @@ ALIAS r0 addr
 
         ERASE                 ; every byte 0 = 00 00 00 00 = four black pixels
         MOV addr 128          ; row 16 starts at byte 16 × 8 = 128
-line:   STB addr 0xFF         ; 0xFF = 11 11 11 11 = four white pixels
+line:   STB [IMG+addr] 0xFF   ; 0xFF = 11 11 11 11 = four white pixels
         ADD addr 1
         JLT addr 136 line     ; one row = 8 bytes = 32 pixels
         SEND 1                ; decode as a 32×32 grey photo
@@ -625,7 +730,7 @@ fill:   MOV grey addr
         MOD grey 8            ; which byte of its row (0–7)
         DIV grey 2            ; 2 bytes = 8 pixels per bar: level 0–3
         MUL grey 85
-        STB addr grey
+        STB [IMG+addr] grey
         ADD addr 1
         JLT addr 256 fill
         SEND 1
@@ -641,10 +746,10 @@ ALIAS r1 byte
         SNAP NORTH            ; into image memory: nothing is sent yet
         JNE @STATUS OK fail   ; ERR_LOW_POWER, ERR_INVALID...
         MOV addr 0
-inv:    LDB byte addr         ; read
+inv:    LDB byte [IMG+addr]   ; read
         MUL byte -1
         ADD byte 255          ; byte = 255 − byte
-        STB addr byte         ; write back
+        STB [IMG+addr] byte   ; write back
         ADD addr 1
         JLT addr 256 inv
         SEND                  ; same format as the SNAP (mode 1)
@@ -677,9 +782,9 @@ put16:  MOV low value
         AND low 0xFF          ; keep bits 7–0: the low byte
         SHR value 8           ; bits 15–8 move down to 7–0
         AND value 0xFF        ; the high byte: −300 → FE D4
-        STB addr value
+        STB [IMG+addr] value
         ADD addr 1
-        STB addr low
+        STB [IMG+addr] low
         ADD addr 1
         RET
 `;
@@ -714,17 +819,18 @@ plot:   PUSH r0
         SHL r2 r3             ; new colour moved into place
         MOV r0 3
         SHL r0 r3             ; r0 = mask: the pixel's two bits
-        LDB r3 r1             ; the byte
+        LDB r3 [IMG+r1]       ; the byte
         OR r3 r0              ; set the pixel's bits...
         SUB r3 r0             ; ...and take them away: now 00
         OR r3 r2              ; put the new colour in
-        STB r1 r3
+        STB [IMG+r1] r3
         POP r0
         RET
 `;
 
 export const IMAGE_MEMORY_MAP = `; MEMORY MAP: Explorer that remembers where it has been. Image
-; memory is used as plain RAM: one byte per tile counts the visits,
+; memory is used as a big scratch RAM (the rover's real RAM has only
+; 64 B): one byte per tile counts the visits,
 ; a 16×16 map that repeats every 16 tiles. Back on a known tile, the
 ; rover turns by the number of earlier visits, so it leaves a loop
 ; differently every time instead of circling forever.
@@ -751,11 +857,11 @@ go:     STEP dir 1
         MOV seen @X
         MOD seen 16           ; map column 0–15
         ADD cell seen         ; byte address 0–255
-        LDB seen cell         ; earlier visits
+        LDB seen [IMG+cell]   ; earlier visits
         ADD dir seen          ; known tile: turn by that many quarters
         MOD dir 4
         ADD seen 1
-        STB cell seen         ; one more visit (wraps at 256)
+        STB [IMG+cell] seen   ; one more visit (wraps at 256)
         JMP loop
 `;
 
@@ -770,6 +876,7 @@ export const PROGRAM_TEMPLATES: Record<string, string> = {
   Spiral: PROGRAM_SPIRAL,
   'Seismic survey': PROGRAM_SEISMIC,
   'Weather station': PROGRAM_WEATHER,
+  Route: PROGRAM_ROUTE,
   'Image: Line': IMAGE_LINE,
   'Image: Test pattern': IMAGE_TEST_PATTERN,
   'Image: Negative': IMAGE_NEGATIVE,
@@ -779,11 +886,12 @@ export const PROGRAM_TEMPLATES: Record<string, string> = {
 };
 
 /**
- * Firmware examples (M10, Code tab Firmware slot): the default firmware, then the
- * pre-M10 all-in-one firmwares, which do everything themselves and never RUN a program.
+ * Firmware examples (M10, Code tab Firmware slot): the default firmware, its fault
+ * protection variant, then the pre-M10 all-in-one firmwares, which do everything themselves and never RUN a program.
  */
 export const FIRMWARE_TEMPLATES: Record<string, string> = {
   'Default firmware': DEFAULT_FIRMWARE,
+  'Fault protection': FIRMWARE_FAULT_PROTECTION,
   'All-in-one Explorer (no RUN)': DEMO_EXPLORER,
   'All-in-one Prospector (no RUN)': PROSPECTOR,
   'All-in-one Fetch (no RUN)': FETCH_SUPPLY,

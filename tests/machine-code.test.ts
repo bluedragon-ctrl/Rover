@@ -41,7 +41,7 @@ describe('machine code (SPEC §5.7.1)', () => {
     const p = prog(src);
     expect(p.instrs.map((i) => i.size)).toEqual([4, 4, 4, 5]);
     expect(p.code.length).toBe(17);
-    const back = decodeProgram(p.code);
+    const back = decodeProgram(p.code, p.codeBytes);
     expect(back.map((i) => i.op)).toEqual(['AND', 'OR', 'SHL', 'SHR']);
     expect(back.map((i) => i.addr)).toEqual([0, 4, 8, 12]);
     expect(back[3].args).toEqual([{ k: 'reg', i: 3 }, { k: 'imm', v: -1 }]);
@@ -121,7 +121,7 @@ describe('machine code (SPEC §5.7.1)', () => {
     expect(p.code.length).toBe(r.flashUsed);
     for (const ins of p.instrs) expect(ins.size).toBe(r.lineBytes[ins.line]);
     const strip = (args: Program['instrs'][number]['args']) => args.map((a) => (a.k === 'label' ? { k: 'label', target: a.target } : a));
-    expect(decodeProgram(p.code).map((d) => ({ op: d.op, args: strip(d.args), addr: d.addr, size: d.size }))).toEqual(
+    expect(decodeProgram(p.code, p.codeBytes).map((d) => ({ op: d.op, args: strip(d.args), addr: d.addr, size: d.size }))).toEqual(
       p.instrs.map((i) => ({ op: i.op, args: strip(i.args), addr: i.addr, size: i.size })),
     );
   });
@@ -129,7 +129,7 @@ describe('machine code (SPEC §5.7.1)', () => {
   it('rejects invalid machine code', () => {
     expect(() => decodeProgram([0x00])).toThrow(/Unknown opcode/);
     expect(() => decodeProgram([0x01, 0x10])).toThrow(/Truncated/);
-    expect(() => decodeProgram([0x01, 0x10, 0x20])).toThrow(/Invalid operand/);
+    expect(() => decodeProgram([0x01, 0x10, 0x30])).toThrow(/Invalid operand/);
   });
 });
 

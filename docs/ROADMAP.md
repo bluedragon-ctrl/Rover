@@ -24,6 +24,78 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | **M10** | **Firmware + program slot (SPEC §3.9)** | 🚧 slice 1 (core, save v10) done; slice 2 (machine code + byte addresses, save v11, Code tab / Console redesign, listing pane) in review |
 | M11 | User interface review (after M10) | 🚧 Comms tab, Code tab dump box, Reference → Radio, Mission events: default since 2026-11-13 (save v13); `BRK` reports itself |
 | M12 | Image memory: `SNAP` → `LDB` / `STB` → `SEND` (SPEC §3.8.7, guide [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md)) | ✅ done (bit instructions; image memory in the core, save v14; templates, Reference → Image, Gallery labels + hex view, `SNAP` warning; goal *Darkroom* + first-edit bonus per camera mode, save v15) |
+| **M14** | **Assembler core**: hardware through device ports + `WAIT`, ROM library, RAM / `VAR` / addressing modes / `DATA`, program called like a subroutine (design [`ASSEMBLER_CORE.md`](ASSEMBLER_CORE.md)) | 🚧 design approved; slice 2 (memory model, save v17) done; slice 3 (devices, ROM) next |
+| M13 | Realism pass 1: watchdog `@WDT`, thermal model + array dust, fault protection `@PREEMPT` (SPEC §3.3.4, §3.9.2, §3.9.5) | 🚧 core, default firmware, *Fault protection* template, Reference, save v16 done; in review (balance numbers to playtest) |
+
+## M14 — Assembler core (in progress)
+
+Owner, 2026-11-13: the game is a fun introduction to how assembler works, so the hardware
+instructions (`STEP`, `SCAN`, …) should become communication with ports, with the old
+instructions as subroutines; bigger memory is fine; programs may need rewriting. Full draft:
+[`ASSEMBLER_CORE.md`](ASSEMBLER_CORE.md) (principle, sizes, devices, `WAIT`, the program as a
+subroutine with a timer interrupt, ROM library and its other uses, memory map, `VAR`,
+addressing modes, `DATA` / `LDF`, examples, machine code, save v17 migration, slices, open
+questions).
+
+Agreed: ports instead of hardware instructions; a small ROM library; Mk-I 512 B Flash, 64 B
+RAM, 8 cycles per tick; the memory proposal; on preemption the firmware decides; the
+program is called like a subroutine (`CALL PROGRAM`, `@SLICE`). Decisions 2026-11-14 (design
+§12): reuse freed opcode numbers once; shared RAM (overflows are allowed: a real bug to
+learn from); `CALL PROGRAM` in the same tick; `@SLICE 0` = no limit; top-level `RET` returns
+`r0`; `LOG` stays an instruction; image addresses fault outside memory; the boot ROM with
+safe mode goes into M14 (option ROMs, tables, `RAND` later); upload 6 energy per byte.
+
+- [x] Slice 1: owner review of the draft (decisions above).
+- [x] Slice 2: memory model (SPEC §5.8): data address space (RAM `0x000`, `IMG` `0x100`,
+      `CARGO` `0x600`, faults elsewhere), bracket addresses `[n]` / `[r]` / `[r+n]` (new
+      operand bytes), `LDB` / `STB` on the whole space, `LDF` (`1F 07`, a two-byte opcode
+      until slice 3 frees one-byte numbers), `VAR` (program up, firmware down, overlap
+      check, `fwRamTop` keeps a firmware's layout after a RAM upgrade), `DATA` in a data
+      section after the code (the CPU wraps at the end of the code), Mk-I 512 B Flash /
+      64 B RAM, upgrades Flash 768 / 1024 and RAM 128 / 256, upload 6 energy per byte; image
+      templates and `IMAGE_MEMORY.md` on `[IMG+…]`; lesson template *Route*; listing shows
+      the data section, Code tab RAM totals, Reference *Memory*, admin RAM view; save v17
+      (RAM, `fwRamTop`, v16 code rewritten, rebooted with boot reason 6). Tests:
+      `tests/memory.test.ts`.
+- [ ] Slice 3: devices, `WAIT`, ROM, `CALL PROGRAM`, removal of the old instructions, migration.
+- [ ] Slice 4: templates as lessons, image guide, Reference, tests.
+
+## M13 — Realism pass 1 (in review)
+
+From a review of how the virtual hardware compares with real rovers (2026-11-13). The owner
+picked three items for now; the rest are in the Backlog (*Realism review*).
+
+- [x] **Watchdog timer `@WDT`** (SPEC §3.9.5): firmware arms and kicks it; expiry = hard
+      reboot, boot reason 5 *watchdog timeout*; cannot be disarmed until a reboot; `BRK`
+      freezes it; firmware-only writes (compiler rule generalised: `FIRMWARE_ONLY_PORTS`).
+      The default firmware kicks it in its main and charge loops (`WDT_TICKS 1000`; 148 →
+      158 B, still room for every shipped program).
+- [x] **Thermal model** (SPEC §3.3.4): `@TEMP` follows `ambientTemp(@SUN_LIGHT)` (−80..+20 °C)
+      at 1 °C / 4 ticks; thermostat survival heaters hold −40 °C for 6 energy/tick
+      (`@HEATER`): ≈ 1450 ticks / 9 % battery per sol. Eclipses cool the rover too.
+- [x] **Dust** (SPEC §3.3.4): `@SOLAR_DUST` +1 % / 800 ticks open, scales charging; a full
+      stow sheds half; the *Dust squall* dusts an open array.
+- [x] **Fault protection `@PREEMPT`** (SPEC §3.9.2): `PRE_ALERT` / `PRE_DAMAGE` /
+      `PRE_LOW_BAT` (+ `@BAT_ALARM`) end a slice at once, aborting the program's action
+      (`ERR_PREEMPTED` = 9); `@PREEMPTED` says why; the next `RUN` resumes. Firmware template
+      *Fault protection* (default firmware + `PRE_ALERT + PRE_LOW_BAT`, logs `T_PREEMPT`).
+- [x] Reference: ports grouped (*Watchdog and fault protection*), `PRE_*` constants,
+      `ERR_PREEMPTED` note in Comms; admin debugger shows temperature, heaters, dust,
+      watchdog and preemption.
+- [x] Save v16 (watchdog, fault protection, thermal, dust; v15 saves start disarmed with a
+      clean array at the ambient temperature). Tests: `tests/fault-protection.test.ts`,
+      `tests/thermal.test.ts` (incl. save round trip at night with everything armed).
+
+Open decisions (owner):
+1. `@WDT` cannot be disarmed once armed (like an independent watchdog). Allow `0` = off?
+2. Heater balance: −40 °C setpoint at ambient light 40 means the heaters also run in the
+   evening and early morning (≈ 60 % of a sol). Tune `ambientDayC` / `heaterPerTick`?
+3. Dust shed by folding the array is a game liberty (real rovers wait for wind). Keep, or
+   replace with storyteller cleaning events (dust devils)?
+4. The default firmware arms the watchdog but not `@PREEMPT` (bytes: *Image: Plot* needs
+   95 B; and its 50-tick slices already poll). OK, or make preemption the default?
+5. Cold has no consequence yet (a powered-off rover just gets cold). Later: battery
+   cannot charge below a temperature, or cold-soaked motors?
 
 ## Done: program templates as lessons
 
@@ -595,6 +667,12 @@ window with a fixed dish?
   Changes what the player knows before exploring (fog rules in `src/core/`), so it is a
   gameplay decision; pair it with a visible sky (horizon, orbiting satellite passes).
 
+- **Realism review (2026-11-13), still open** after M13: light-time delay on uplink and
+  commands (configurable; the biggest "feel" change); relay-orbiter elevation with rise
+  and set (pass windows instead of a link whenever the dish is aimed); odometry drift and
+  wheel slip on gravel (`@X`/`@Y` become estimates); onboard compression as a player
+  exercise with `LDB`/`STB`; the operator view and fog reveal cost no downlink bytes
+  (justify as orbital imagery, or charge bandwidth).
 - More storyteller events using the catalogue: dust devils that push the rover, solar
   flares that scramble the uplink, ore-rich meteor falls (reward events), distress beacon
   missions. Teaching variants first.
@@ -653,3 +731,6 @@ window with a fixed dish?
 | 2026-11-13 | `claude/gallant-bell-hb1kyd` (5) | M12 slice 2: six *Image: …* program templates (= the guide's examples, test-enforced), Reference → Image sub-tab, Gallery *raw / edited / drawn* chips and hex view, Code tab warning for `SNAP` without `SEND`. |
 | 2026-11-13 | `claude/gallant-bell-hb1kyd` (6) | M12 slice 3: goal *Darkroom* (a lit edited photo, 15 cr); first-edit bonus +5 per camera mode (`editedTypes`, save v15). M12 complete. |
 | 2026-11-13 | `claude/gallant-bell-hb1kyd` (7) | Program templates reworked as lessons (owner: they are teaching material): headers with *Learn* / *Try*, five new templates (Photographer, Field repair, Spiral, Seismic survey, Weather station), Explorer logs acid vents, Prospector `CALL lab` + `PEEK`, Fetch result 2 when blocked; tests: every instruction used, every template run. |
+| 2026-11-13 | `claude/intelligent-faraday-lx8xgo` | Realism review of the virtual hardware; M13 realism pass 1: watchdog `@WDT` (boot reason 5, default firmware kicks it, 158 B), thermal model (`@TEMP`, survival heaters `@HEATER`), array dust (`@SOLAR_DUST`, shed on stow, dust squall), fault protection (`@PREEMPT`, `@BAT_ALARM`, `@PREEMPTED`, `ERR_PREEMPTED`, *Fault protection* firmware template), save v16; remaining realism items in Backlog. |
+| 2026-11-13 | `claude/intelligent-faraday-lx8xgo` (2) | Review of the language and the player's development workflow against real assembler and flight-software practice; M14 *Assembler core* design draft (`docs/ASSEMBLER_CORE.md`): device ports + `WAIT`, ROM library, RAM / `VAR` / addressing modes / `DATA` / `LDF`, the program as a subroutine with a slice timer, migration plan, open questions. |
+| 2026-11-14 | `claude/intelligent-faraday-lx8xgo` (3) | M14 design approved (decisions §12 of `ASSEMBLER_CORE.md`); slice 2 memory model: RAM / `VAR` / `DATA` / `LDF`, bracket addresses, data address space with image memory at `IMG` and cargo at `CARGO`, Mk-I 512 B Flash + 64 B RAM, RAM upgrades, upload 6/B, image templates and guide on `[IMG+…]`, template *Route*, save v17 with code migration. |

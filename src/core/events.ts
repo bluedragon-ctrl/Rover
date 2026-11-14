@@ -12,6 +12,8 @@ export interface SquallDamage {
   /** `solarDamage` to an array that is not fully stowed every N ticks. 0 = none. */
   solarEvery: number;
   solarDamage: number;
+  /** +1 % dust on an array that is not fully stowed every N ticks (SPEC §3.3.4). 0 / absent = none. */
+  dustEvery?: number;
 }
 
 export interface EventRequirements {
@@ -54,7 +56,7 @@ export const EVENT_DEFS: EventDef[] = [
     chancePerSol: 0.15,
     ticks: 60,
     warnTicks: 400,
-    damage: { hullEvery: 20, antennaEvery: 0, solarEvery: 3, solarDamage: 1 },
+    damage: { hullEvery: 20, antennaEvery: 0, solarEvery: 3, solarDamage: 1, dustEvery: 2 },
     requires: { goals: ['first_contact'] },
   },
   {

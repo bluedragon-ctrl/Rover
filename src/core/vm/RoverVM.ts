@@ -16,10 +16,13 @@ export interface VmHost {
   log?(tag: number, value: number | null): void;
   /** END (program slot, M10): the program finished with `value`. */
   end?(value: number): void;
-  /** LDB (M12): the byte (0–255) at `addr` of image memory. Compute: no @STATUS. */
-  load?(addr: number): number;
-  /** STB (M12): store `value & 255` at `addr` of image memory. Compute: no @STATUS. */
-  store?(addr: number, value: number): void;
+  /**
+   * LDB: the byte (0–255) at data address `addr` (M14 memory map: RAM, image memory, cargo),
+   * or undefined if no memory answers there (the CPU faults). Compute: no @STATUS.
+   */
+  load?(addr: number): number | undefined;
+  /** STB: store `value & 255` at data address `addr`; returns why not (the CPU faults), or null. */
+  store?(addr: number, value: number): string | null;
 }
 
 export type StepResult = 'continue' | 'endTick';
@@ -95,7 +98,7 @@ export class RoverVM {
 
   /** Byte address of the instruction that will run next (after wrap-around). */
   get nextIp(): number {
-    const n = this.program?.code.length ?? 0;
+    const n = this.program?.codeBytes ?? 0;
     return n === 0 || this.ip >= n || this.ip < 0 ? 0 : this.ip;
   }
 
@@ -114,7 +117,7 @@ export class RoverVM {
   step(host: VmHost, watchdogTicks: number): StepResult {
     const prog = this.program;
     if (!prog || prog.instrs.length === 0) return 'endTick';
-    if (this.ip >= prog.code.length || this.ip < 0) this.ip = 0; // implicit main loop
+    if (this.ip >= prog.codeBytes || this.ip < 0) this.ip = 0; // implicit main loop (the data section is not code)
     const k = prog.indexAt.get(this.ip);
     if (k === undefined) {
       // Only reachable through a corrupted return address: no instruction starts here.
@@ -135,8 +138,15 @@ export class RoverVM {
           return i32(host.readPort(o.name));
         case 'label':
           return o.target;
+        case 'mem':
+          return addrOf(o);
       }
     };
+    const addrOf = (o: Operand): number => {
+      const m = o as { base: number; off: number };
+      return (m.base >= 0 ? this.regs[m.base] : 0) + m.off;
+    };
+    const hex = (n: number) => `0x${(n >>> 0).toString(16).toUpperCase().padStart(3, '0')}`;
     const put = (o: Operand, v: number): void => {
       if (o.k === 'reg') this.regs[o.i] = v;
       else if (o.k === 'port') host.writePort(o.name, i32(v));
@@ -251,12 +261,35 @@ export class RoverVM {
         this.ip = next;
         host.end?.(a.length ? val(a[0]) : 0);
         return 'endTick';
-      case 'LDB':
-        put(a[0], host.load?.(val(a[1])) ?? 0);
+      case 'LDB': {
+        const at = addrOf(a[1]);
+        const b = host.load?.(at);
+        if (b === undefined) {
+          this.fault(`No memory at ${hex(at)} (LDB)`, watchdogTicks);
+          return 'endTick';
+        }
+        put(a[0], b);
         break;
-      case 'STB':
-        host.store?.(val(a[0]), val(a[1]));
+      }
+      case 'STB': {
+        const at = addrOf(a[0]);
+        const why = host.store ? host.store(at, val(a[1])) : 'no memory';
+        if (why) {
+          this.fault(`${why} at ${hex(at)} (STB)`, watchdogTicks);
+          return 'endTick';
+        }
         break;
+      }
+      case 'LDF': {
+        // Flash of this slot: instructions, then the DATA section.
+        const at = addrOf(a[1]);
+        if (at < 0 || at >= prog.code.length) {
+          this.fault(`No Flash at ${hex(at)} (LDF: this slot has ${prog.code.length} B)`, watchdogTicks);
+          return 'endTick';
+        }
+        put(a[0], prog.code[at]);
+        break;
+      }
       case 'PEEK': {
         // Cargo is [later]; route through host so it can implement it without VM changes.
         const out = host.hardware(ins, [val(a[0])]) ?? [];

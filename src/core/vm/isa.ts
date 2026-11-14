@@ -17,13 +17,20 @@ export type Op =
   | 'SLEEP' | 'SCAN' | 'STEP' | 'ACT' | 'PEEK' | 'USE' | 'SNAP'
   | 'LOG' | 'BRK'
   | 'RUN' | 'END'
-  | 'LDB' | 'STB' | 'SEND' | 'ERASE';
+  | 'LDB' | 'STB' | 'SEND' | 'ERASE'
+  | 'LDF';
 
 export type Operand =
   | { k: 'imm'; v: number }
   | { k: 'reg'; i: number }
   | { k: 'port'; name: string }
-  | { k: 'label'; target: number; name: string };
+  | { k: 'label'; target: number; name: string }
+  /**
+   * M14 memory operand `[n]`, `[r]`, `[r+n]` (only LDB / STB / LDF): the address is
+   * `off` plus register `base` (-1 = none). `wide`: written with an offset term (`[r+n]`),
+   * so it is encoded with a 16-bit offset even when that offset is 0 (sizes follow the syntax).
+   */
+  | { k: 'mem'; base: number; off: number; wide?: boolean };
 
 export interface Instr {
   op: Op;
@@ -43,6 +50,7 @@ export interface Instr {
  *  m  read-modify-write destination (reg or read+write port)
  *  l  label
  *  k  compile-time constant (number or CONST), no register/port
+ *  a  memory address in brackets: [n], [r], [r+n] (M14; load / store instructions only)
  *  suffix '?' optional, '*' variadic
  */
 export const SIGNATURES: Record<Op, string[]> = {
@@ -78,10 +86,11 @@ export const SIGNATURES: Record<Op, string[]> = {
   BRK: [],
   RUN: ['v'],
   END: ['v?'],
-  LDB: ['d', 'v'],
-  STB: ['v', 'v'],
+  LDB: ['d', 'a'],
+  STB: ['a', 'v'],
   SEND: ['v?'],
   ERASE: [],
+  LDF: ['d', 'a'],
 };
 
 export const OPCODES = Object.keys(SIGNATURES) as Op[];
@@ -101,6 +110,8 @@ export const OPCODE_NUMBERS: Readonly<Partial<Record<Op, number>>> = {
   LOG: 0x19, BRK: 0x1a,
   RUN: 0x1b, END: 0x1c,
   LDB: 0x1d, STB: 0x1e,
+  // M14 slice 2: LDF reads Flash. It takes a two-byte number until the hardware
+  // instructions retire (slice 3) and free one-byte numbers (owner: reuse them once).
 };
 
 /**
@@ -113,6 +124,7 @@ export const EXT_PREFIX = 0x1f;
 export const EXT_OPCODE_NUMBERS: Readonly<Partial<Record<Op, number>>> = {
   AND: 0x01, OR: 0x02, SHL: 0x03, SHR: 0x04,
   SEND: 0x05, ERASE: 0x06,
+  LDF: 0x07,
 };
 const OP_BY_NUMBER = new Map(Object.entries(OPCODE_NUMBERS).map(([op, n]) => [n, op as Op]));
 const OP_BY_EXT_NUMBER = new Map(Object.entries(EXT_OPCODE_NUMBERS).map(([op, n]) => [n, op as Op]));
@@ -154,6 +166,10 @@ export const OPERAND = {
   imm32: 0x1a,
   /** 01pppppp: port 0–63. */
   port: 0x40,
+  /** M14 memory operands: 00011100 + 16-bit address `[n]`; 00100rrr `[r]`; 00101rrr + 16-bit signed offset `[r+n]`. */
+  memAbs: 0x1c,
+  memReg: 0x20,
+  memIndexed: 0x28,
 } as const;
 
 /** Encoded size of an integer immediate. */
@@ -174,7 +190,14 @@ export function operandBytes(o: Operand): number {
       return ENCODING.label;
     case 'imm':
       return immBytes(o.v);
+    case 'mem':
+      return memBytes(o);
   }
+}
+
+/** Encoded size of a memory operand: `[r]` 1 B, `[n]` and `[r+n]` 3 B. */
+export function memBytes(o: { base: number; off: number; wide?: boolean }): number {
+  return o.base >= 0 && o.off === 0 && !o.wide ? ENCODING.memReg : ENCODING.memAddr;
 }
 
 export function instrBytes(i: Pick<Instr, 'op' | 'args'>): number {
@@ -222,6 +245,11 @@ export function encodeInstr(ins: Pick<Instr, 'op' | 'args'>): number[] {
         else out.push(OPERAND.imm32, ...be(o.v, 4));
         break;
       }
+      case 'mem':
+        if (o.base < 0) out.push(OPERAND.memAbs, ...be(o.off, 2));
+        else if (o.off === 0 && !o.wide) out.push(OPERAND.memReg | o.base);
+        else out.push(OPERAND.memIndexed | o.base, ...be(o.off, 2));
+        break;
     }
   }
   return out;
@@ -237,12 +265,15 @@ export interface DecodedInstr {
 
 export class DecodeError extends Error {}
 
-/** Disassemble a slot's machine code (the inverse of encodeInstr over a whole program). */
-export function decodeProgram(code: ArrayLike<number>): DecodedInstr[] {
+/**
+ * Disassemble a slot's machine code (the inverse of encodeInstr over a whole program). `end`:
+ * where the instructions stop (M14: the data section after them is not code).
+ */
+export function decodeProgram(code: ArrayLike<number>, end = code.length): DecodedInstr[] {
   const out: DecodedInstr[] = [];
   let at = 0;
   const byte = (): number => {
-    if (at >= code.length) throw new DecodeError(`Truncated instruction at 0x${at.toString(16)}`);
+    if (at >= end) throw new DecodeError(`Truncated instruction at 0x${at.toString(16)}`);
     return code[at++];
   };
   const signed = (n: number): number => {
@@ -250,7 +281,7 @@ export function decodeProgram(code: ArrayLike<number>): DecodedInstr[] {
     for (let i = 0; i < n; i++) v = v * 256 + byte();
     return n === 4 ? v | 0 : v >= 2 ** (8 * n - 1) ? v - 2 ** (8 * n) : v;
   };
-  while (at < code.length) {
+  while (at < end) {
     const addr = at;
     const ob = byte();
     const ext = (ob & OP_MASK) === EXT_PREFIX ? byte() : null;
@@ -273,6 +304,9 @@ export function decodeProgram(code: ArrayLike<number>): DecodedInstr[] {
       else if (b === OPERAND.imm8) args.push({ k: 'imm', v: signed(1) });
       else if (b === OPERAND.imm16) args.push({ k: 'imm', v: signed(2) });
       else if (b === OPERAND.imm32) args.push({ k: 'imm', v: signed(4) });
+      else if (b === OPERAND.memAbs) args.push({ k: 'mem', base: -1, off: (byte() << 8) | byte() });
+      else if ((b & 0xf8) === OPERAND.memReg) args.push({ k: 'mem', base: b & 7, off: 0 });
+      else if ((b & 0xf8) === OPERAND.memIndexed) args.push({ k: 'mem', base: b & 7, off: signed(2), wide: true });
       else if ((b & 0xc0) === OPERAND.port && PORT_CODES[b & 0x3f]) args.push({ k: 'port', name: PORT_CODES[b & 0x3f] });
       else throw new DecodeError(`Invalid operand byte 0x${b.toString(16)} at 0x${(at - 1).toString(16)}`);
     }

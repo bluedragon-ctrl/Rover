@@ -23,6 +23,8 @@ export enum Status {
   ERR_NO_SIGNAL = 6,
   ERR_HAZARD = 7,
   ERR_DEPLOYED = 8,
+  /** The firmware took control back in the middle of the program's action (@PREEMPT, SPEC §3.9.2). */
+  ERR_PREEMPTED = 9,
 }
 
 export enum LightColor {
@@ -61,6 +63,13 @@ export enum ProgState {
   PROG_DONE = 3,
   PROG_FAULT = 4,
   PROG_HALTED = 5,
+}
+
+/** @PREEMPT condition bits (SPEC §3.9.2): what ends a program slice at once. */
+export enum Preempt {
+  PRE_ALERT = 1,
+  PRE_DAMAGE = 2,
+  PRE_LOW_BAT = 4,
 }
 
 export enum CpuState {

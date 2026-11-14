@@ -2,12 +2,12 @@ import { PORT_CODES, PORTS } from '../core/ports';
 import { HARDWARE_OPS, opcodeHex, type Op } from '../core/vm/isa';
 import { formatSig, OPCODES } from '../core/vm/Compiler';
 import type { TileDef, WorldRegistry } from '../core/WorldRegistry';
-import { BALANCE, CHASSIS_MK1, ENCODING as E } from '../core/balance';
+import { BALANCE, CHASSIS_MK1, ENCODING as E, MEMORY_MAP } from '../core/balance';
 import { BOOT_REASON_NAMES, DumpKind, encodeCpuDump, encodeLog, encodeStackDump } from '../core/downlink';
 import { emptyDictionary, fieldsHtml, frameFields, type Dictionaries } from './comms';
 import { TOOLS } from '../core/tools';
 import { UPGRADES } from '../core/upgrades';
-import { Alert, Dir, Layer, LightColor, ProgState, Status, SystemId } from '../core/types';
+import { Alert, Dir, Layer, LightColor, Preempt, ProgState, Status, SystemId } from '../core/types';
 import { PHOTO_FORMATS, photoBytes } from '../core/photos';
 import { imageBytes } from '../core/Unit';
 import { PROGRAM_TEMPLATES } from '../core/programs';
@@ -24,13 +24,14 @@ const NOTES: Record<string, string> = {
   CALL: 'push args, call', RET: 'return',
   SLEEP: 'wait N ticks', SCAN: 'ray: dest1 = tile type, dest2 = distance', STEP: 'drive [tiles] in dir', ACT: 'fire tool in hardpoint (see Tools)', PEEK: 'dest = item ID in cargo slot', USE: 'repair [system] (default SYS_HULL) by consuming the material in cargo slot (see Tools)',
   SNAP: 'photograph the subject in dir into image memory (see Tools); nothing is sent until SEND. Mk-I modes 1 (grey) and 2 (dithered), 256 B each; needs daylight or the headlight aimed at dir',
-  LDB: 'dst = byte at addr of image memory (0–255); the address wraps at the memory size (Mk-I 256 B). 1 cycle, no @STATUS',
-  STB: 'byte at addr of image memory = v (only the low 8 bits: 256 → 0, −1 → 255). 1 cycle, no @STATUS. Makes the next SEND of the photo "edited"',
+  LDB: 'LDB dst [addr]: dst = the byte (0–255) at data address addr: RAM from 0, image memory from IMG, cargo from CARGO (Basics → Memory). [r], [n], [r+n]. No memory there: FAULT. 1 cycle, no @STATUS',
+  STB: 'STB [addr] v: byte at data address addr = v (only the low 8 bits: 256 → 0, −1 → 255). Cargo is read-only; no memory there: FAULT. 1 cycle, no @STATUS. Into image memory: makes the next SEND of the photo "edited"',
+  LDF: 'LDF dst [addr]: dst = the byte at addr of this slot\'s own Flash, e.g. a DATA table: LDF r0 [route+r1]. Past the end of the slot: FAULT. 1 cycle, no @STATUS',
   SEND: 'copy image memory into the science recorder as a photo of [type] (default: the last SNAP\'s mode; SEND 1 = 32×32 grey). The first SEND after a SNAP carries its credits; any other SEND is a "drawn" picture worth nothing. Image memory is kept. 1 tick, 10 energy; ERR_FULL (recorder), ERR_INVALID (type), ERR_LOW_POWER',
   ERASE: 'zero all of image memory and forget the last SNAP (the next SEND is a drawn picture). Image memory keeps its contents through reboots and power loss until ERASE or a new SNAP. 2 ticks, 10 energy',
   LOG: 'queue a log frame for the downlink (Comms tab). tag: number or CONST 0–14 (15 = system). 1 cycle, no @STATUS; dropped if the FIFO is full (@LOG_LOST)',
   BRK: 'breakpoint: halt the CPU (HALTED) until mission control sends Resume (Continue) or you upload; the world keeps running, no watchdog. The rover sends a register dump by itself (Comms: "sent by BRK"). 1 cycle. In a program: halts only the program (PROG_HALTED)',
-  RUN: 'firmware only: run the program for N ticks (a STEP or SLEEP in progress finishes first), then continue here. @STATUS ERR_INVALID if @PROG_STATE is not PROG_READY',
+  RUN: 'firmware only: run the program for N ticks (a STEP or SLEEP in progress finishes first, unless a @PREEMPT condition ends the slice at once), then continue here. @STATUS ERR_INVALID if @PROG_STATE is not PROG_READY',
   END: 'program only: finish with @PROG_STATE = PROG_DONE and @PROG_RESULT = value (default 0); control returns to the firmware',
 };
 
@@ -41,21 +42,23 @@ const OP_GROUPS: [string, Op[]][] = [
   ['Bits (2-byte opcodes)', ['AND', 'OR', 'SHL', 'SHR']],
   ['Flow control', ['JMP', 'JEQ', 'JNE', 'JLT', 'JGT', 'JLE', 'JGE', 'CALL', 'RET']],
   ['Hardware (end the tick, write @STATUS)', ['SLEEP', 'SCAN', 'STEP', 'ACT', 'PEEK', 'USE', 'SNAP']],
-  ['Image memory (SNAP → LDB / STB → SEND)', ['LDB', 'STB', 'SEND', 'ERASE']],
+  ['Memory (load / store: the only instructions that touch memory)', ['LDB', 'STB', 'LDF']],
+  ['Image memory (SNAP → LDB / STB → SEND)', ['SEND', 'ERASE']],
   ['Program, log and debug', ['RUN', 'END', 'LOG', 'BRK']],
 ];
 
 /** Port sections. A port not listed here lands in "Other", so new ones still show up. */
 const PORT_GROUPS: [string, string[]][] = [
-  ['Health and power', ['BAT', 'HULL', 'SOLAR_HEALTH', 'ANTENNA_HEALTH']],
+  ['Health and power', ['BAT', 'HULL', 'SOLAR_HEALTH', 'ANTENNA_HEALTH', 'TEMP', 'HEATER']],
   ['Position and motion', ['X', 'Y', 'HEADING', 'TICK', 'STATUS']],
   ['Sensors and ground', ['GROUND', 'GROUND_HAZARD', 'SENSOR_RANGE', 'SEISMIC_TYPE', 'SEISMIC_DIST']],
   ['Cargo, science and supplies', ['CARGO_FREE', 'SCIENCE_READY', 'REC_FREE', 'DROPS', 'DROP_X', 'DROP_Y']],
-  ['Sun and solar array', ['SUN_AZIMUTH', 'SUN_ELEV', 'SUN_LIGHT', 'SOLAR_OPEN', 'SOLAR_ANGLE']],
+  ['Sun and solar array', ['SUN_AZIMUTH', 'SUN_ELEV', 'SUN_LIGHT', 'SOLAR_OPEN', 'SOLAR_ANGLE', 'SOLAR_DUST']],
   ['Comms and log', ['ORBIT_AZIMUTH', 'ANTENNA_ANGLE', 'SIGNAL_STR', 'TX_DATA', 'LOG_FREE', 'LOG_LOST']],
   ['World events', ['ALERT', 'ALERT_ETA']],
   ['Lights and displays', ['HEADLIGHT', 'IND1', 'IND2', 'IND3', 'POST']],
   ['Firmware and program', ['PROG_STATE', 'PROG_RESULT']],
+  ['Watchdog and fault protection (firmware writes)', ['WDT', 'PREEMPT', 'BAT_ALARM', 'PREEMPTED']],
 ];
 
 /** Builtin constant families (the same enums `builtinConstants()` merges for the compiler). */
@@ -66,6 +69,8 @@ const CONST_GROUPS: [string, object][] = [
   ['Systems (USE)', SystemId],
   ['Alerts (@ALERT)', Alert],
   ['Program states (@PROG_STATE)', ProgState],
+  ['Memory map (data addresses)', MEMORY_MAP],
+  ['Fault protection (@PREEMPT bits)', Preempt],
 ];
 
 const SECTIONS = [
@@ -114,11 +119,23 @@ function basicsHtml(): string {
     <code>ALIAS r0 dir</code> gives a register a name (free, compile time only); the shipped firmware's <code>dir</code> is just its own choice.
     The firmware and the program each have their own set. A reboot (upload or watchdog) zeroes them; a register the chassis
     does not have is a compile error.</p>
+    <h4>Memory</h4>
+    <p>Data addresses (the memory map): <b>RAM</b> <code>0x000</code>–<code>0x${(CHASSIS_MK1.ramBytes - 1).toString(16).toUpperCase().padStart(3, '0')}</code>
+    (Mk-I ${CHASSIS_MK1.ramBytes} B, shared by firmware and program, zero after a reboot; RAM upgrades add more), <b>image memory</b> from
+    <code>IMG</code> = <code>0x100</code>, <b>cargo</b> from <code>CARGO</code> = <code>0x600</code> (one read-only byte per slot: the item).
+    Anything else: nothing answers, the CPU faults. Only <code>LDB</code>, <code>STB</code> and <code>LDF</code> touch memory, with the
+    address in brackets: <code>[40]</code>, <code>[r1]</code> (a pointer), <code>[r1+4]</code>, <code>[IMG+r0]</code>.</p>
+    <p><code>VAR name [size]</code> reserves RAM (default 1 byte) and makes <code>name</code> its address: <code>VAR count</code>, then
+    <code>LDB r0 [count]</code>, <code>STB [count] r0</code>. Program VARs count up from 0, firmware VARs down from the top; if they would
+    overlap it is a compile error. Absolute addresses still reach everything: both slots can share data that way, or overwrite each other's.</p>
+    <p><code>name: DATA 3, 1, 4</code> puts bytes (−128…255) into Flash; the assembler moves them behind the code, so the CPU never runs into
+    them. <code>LDF r0 [name+r1]</code> reads them.</p>
     <h4>Program size</h4>
     <p>Flash is counted in bytes: opcode ${E.opcode} B; register ${E.register} B; port ${E.port} B;
     number 0–${E.shortImmMax} ${E.shortImm} B, −128…127 ${E.imm8} B, up to ±32767 ${E.imm16} B, larger ${E.imm32} B; label used as a jump/call target ${E.label} B.
     Constants cost what their value costs (<code>NORTH</code> 1 B, <code>IRON_ORE</code> 1 B).
-    Labels, comments, <code>ALIAS r0 name</code> and <code>CONST NAME 5</code> themselves cost nothing.
+    Address in brackets: <code>[r]</code> ${E.memReg} B, <code>[n]</code> or <code>[r+n]</code> ${E.memAddr} B. <code>DATA</code> costs one byte per value.
+    Labels, comments, <code>ALIAS r0 name</code>, <code>CONST NAME 5</code> and <code>VAR name</code> themselves cost nothing.
     Example: <code>JLE @BAT 20 home</code> = ${E.opcode}+${E.port}+${E.imm8}+${E.label} = ${E.opcode + E.port + E.imm8 + E.label} B.</p>
     <h4>Machine code</h4>
     <p>The listing beside the editor shows it while you type. Opcode byte = instruction number (hex column in Instructions), plus 0x20 per
@@ -126,7 +143,8 @@ function basicsHtml(): string {
     (the bit instructions) have a 2-byte opcode: the prefix <code>1F</code>, then their own number (<code>AND r0 3</code> =
     <code>1F 01 10 03</code>), like the prefix bytes of real CPUs. One byte longer, just as fast. Operand bytes: <code>00</code>–<code>0F</code> number 0–15,
     <code>10</code>–<code>17</code> register r0–r7, <code>40</code>–<code>7F</code> port (hex column in Ports), <code>18</code> / <code>19</code> / <code>1A</code>
-    followed by an 8 / 16 / 32-bit number; a label is its 2-byte address. Each slot starts at address 0x000:
+    followed by an 8 / 16 / 32-bit number; <code>1C</code> + 2 bytes <code>[n]</code>, <code>20</code>–<code>27</code> <code>[r]</code>,
+    <code>28</code>–<code>2F</code> + 2 bytes <code>[r+n]</code>; a label is its 2-byte address. Each slot starts at address 0x000:
     <code>JLE @BAT 20 home</code> with <code>home</code> at 0x02A = <code>0E 40 18 14 00 2A</code>.</p>
     <h4>Keys</h4>
     <table>
@@ -328,8 +346,9 @@ camera ───► image memory ───► recorder ───► Gallery
     <h4>Instructions</h4>
     <table class="radio-kv">
       <tr><td><code>SNAP dir [mode]</code></td><td>Photograph into image memory (overwrites all of it). ${B.snapTicks} ticks, ${B.snapEnergy} energy. Nothing is sent yet.</td></tr>
-      <tr><td><code>LDB dst addr</code></td><td>Read one byte (0–255). 1 cycle, no energy, no <code>@STATUS</code>.</td></tr>
-      <tr><td><code>STB addr v</code></td><td>Write one byte (only the low 8 bits: 256 → 0, −1 → 255). 1 cycle, no energy, no <code>@STATUS</code>.</td></tr>
+      <tr><td><code>LDB dst [IMG+addr]</code></td><td>Read one byte (0–255) of image memory, which starts at data address <code>IMG</code>. 1 cycle, no energy, no <code>@STATUS</code>.</td></tr>
+      <tr><td><code>STB [IMG+addr] v</code></td><td>Write one byte (only the low 8 bits: 256 → 0, −1 → 255). 1 cycle, no energy, no <code>@STATUS</code>.
+        An address outside the picture faults.</td></tr>
       <tr><td><code>SEND [type]</code></td><td>Copy image memory into the science recorder as a photo of <code>type</code> (default: the last <code>SNAP</code>'s mode).
         Image memory is kept. ${B.sendTicks} tick, ${B.sendEnergy} energy; <code>ERR_FULL</code>, <code>ERR_INVALID</code>, <code>ERR_LOW_POWER</code>.</td></tr>
       <tr><td><code>ERASE</code></td><td>Set every byte to 0 and forget the last <code>SNAP</code>. ${B.eraseTicks} ticks, ${B.eraseEnergy} energy.</td></tr>

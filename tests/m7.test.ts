@@ -37,7 +37,7 @@ describe('buying upgrades', () => {
     const { e, u } = rover();
     expect(e.buyUpgrade(u, 'FLASH_48')).toMatch(/credits/);
     e.credits = 500;
-    expect(e.buyUpgrade(u, 'FLASH_64')).toMatch(/needs Flash 384 B/);
+    expect(e.buyUpgrade(u, 'FLASH_64')).toMatch(/needs Flash 768 B/);
     expect(e.buyUpgrade(u, 'FLASH_48')).toBeNull();
     expect(e.credits).toBe(500 - UPGRADE_BY_ID.FLASH_48.cost);
     expect(e.buyUpgrade(u, 'FLASH_48')).toBe('on its way');
@@ -75,10 +75,21 @@ describe('picking up installs immediately', () => {
     expect(u.prog.regs.length).toBe(6); // the program context grows too (M10)
     expect(e.compileFor(u, 'MOV r5 1').errors).toEqual([]);
 
-    const long = Array.from({ length: 80 }, () => 'ADD r0 100').join('\n'); // 320 B
+    const long = Array.from({ length: 160 }, () => 'ADD r0 100').join('\n'); // 640 B
     expect(e.compileFor(u, long).errors.length).toBe(1);
     grab(e, orderAndLand(e, 'FLASH_48'));
     expect(e.compileFor(u, long).errors).toEqual([]);
+
+    // M14: RAM grows (in place: installing keeps its contents; grab() itself reboots to run its code)
+    const vars = 'VAR big 100\nSTB [big+99] 7';
+    expect(e.compileFor(u, vars).errors.length).toBe(1);
+    grab(e, orderAndLand(e, 'RAM_128'));
+    expect(u.ram.length).toBe(128);
+    expect(e.compileFor(u, vars).errors).toEqual([]);
+    u.ram[5] = 42;
+    UPGRADE_BY_ID.RAM_256.apply(u.chassis, u);
+    expect(u.ram.length).toBe(256);
+    expect(u.ram[5]).toBe(42);
   });
 
   it('other rovers do not get the base chassis modified', () => {
