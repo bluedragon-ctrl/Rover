@@ -770,13 +770,18 @@ and a drive stop (18 B more: programs up to 328 B fit next to it).
 **Program templates as lessons.** Each non-image template starts with a header: what it
 does, `; Learn:` (what it teaches) and `; Try:` (a change to make next); comments cost no
 Flash. Together the templates use every instruction (tested), and the tests run each one.
-**[M14]** The save v18 migration rewrote them onto the ROM (`CALL STEP`…); slice 4 of M14
-reworks them as device lessons.
+**[M14]** The save v18 migration rewrote them onto the ROM (`CALL STEP`…); slice 4 made
+them a course on the device model: the first five go *ROM call → the ports behind it → a
+variable in RAM → data in Flash → two devices at once*, and every header says which device
+and ports a ROM call stands for. They are listed in that order in the Code tab.
 
 | Template | Teaches | B |
 |----------|---------|---|
 | First steps | registers, `ALIAS`, `CALL STEP`, `@STATUS`, a loop, `END` | 22 |
 | Drive yourself **[M14]** | devices: `@DRIVE_N`, `@DRIVE`, `WAIT`: what `CALL STEP` really is | 30 |
+| Count with a variable **[M14]** | `VAR`, load / change / store (`LDB`, `ADD`, `STB`), RAM survives *Run again*, 16-bit `CALL GET16` / `PUT16`, helpers change `r0` / `r1` | 68 |
+| Route **[M14]** | `DATA`, `LDF`, `VAR`, `LDB` / `STB` | 70 |
+| Drive and scan at once **[M14]** | two devices at once (the radar is outside the chassis interlock), polling `@DRIVE`, edge detection, top-level `RET` returns `r0` | 48 |
 | Explorer | the radar (`CALL SCAN`, `@RADAR_HIT`), tile constants, `MOD`, telling errors apart (`ERR_HAZARD`), `LOG` | 65 |
 | Photographer | `CALL SNAP` / `CALL SEND`, `@HEADING` for the headlight, `@REC_FREE` | 44 |
 | Prospector | tools (`CALL ACT`), cargo (`[CARGO+slot]`), `CALL` / `RET` | 104 |
@@ -785,8 +790,7 @@ reworks them as device lessons.
 | Spiral | `CALL` with arguments, `POP` order, `LOG`, `BRK` | 52 |
 | Seismic survey | an upgrade tool (`TOOL_3`), searching for a minimum, `JGE` / `JLE` | 75 |
 | Weather station | `CALL SLEEP` timing, `@TICK`, `DIV`, the alert ports | 37 |
-| Route **[M14]** | `DATA`, `LDF`, `VAR`, `LDB` / `STB` | 70 |
-| Image: … (6) | image memory, bits, `PUSH` (guide `IMAGE_MEMORY.md`) | 31–104 |
+| Image: … (6) | image memory, bits (`AND` / `SHR` / `SHL` / `OR`), the ROM's `PUT16` / `PLOT`, saving a register with `PUSH` (guide `IMAGE_MEMORY.md`) | 30–86 |
 
 * Core: keep the dish on the orbiter; stow the array on a squall warning; charge below a
   threshold (`CONST LOW_BAT`, `FULL_BAT`) and give the program no slices while charging;

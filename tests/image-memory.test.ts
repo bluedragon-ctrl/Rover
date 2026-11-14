@@ -344,6 +344,28 @@ describe('the image templates = the guide examples (docs/IMAGE_MEMORY.md), and t
     for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) expect(px(b, x, y)).toBe(x === y ? 3 : px(orig, x, y));
   });
 
+  /** The guide's "By hand" versions of examples 4 and 5 (blocks starting "; Stamp by hand"…): no ROM helper. */
+  const byHand = (name: string) => md.match(new RegExp('```\\n(; ' + name + ' by hand[\\s\\S]*?)```'))![1];
+  const sameProduct = (name: string, variant: string, at?: [number, number]) => {
+    const a = runExample(name, 1, at);
+    const b = rover(DEFAULT_FIRMWARE, { program: byHand(variant), at });
+    until(b.e, () => b.u.link.products.length >= 1);
+    expect(productPayload(b.e.seed, b.u.link.products[0])).toEqual(productPayload(a.e.seed, a.u.link.products[0]));
+    expect(b.u.link.products[0].level).toBe(Level.EDITED);
+  };
+
+  it('4b/5b: the hand-written routines (put2, pixel) make the same photo as PUT16 / PLOT, with the sizes the guide gives', () => {
+    sameProduct('STAMP', 'Stamp', [5, -300]);
+    sameProduct('PLOT', 'Plot');
+    for (const [name, size] of [['Stamp', 69], ['Plot', 104]] as const) {
+      expect(md).toMatch(new RegExp(`\\(${size} B, the same`));
+      const r = compile(byHand(name), CHASSIS_MK1, consts, { slot: 'program' });
+      expect(r.errors).toEqual([]);
+      expect(r.flashUsed).toBe(size);
+      expect(byHand(name).replace(/;.*$/gm, '')).not.toMatch(/CALL (PUT16|PLOT)\b/); // really by hand
+    }
+  });
+
   it('6 Memory map: counts visits in image memory and never sends', () => {
     const r = rover(DEFAULT_FIRMWARE, { program: ex('MEMORY MAP') });
     r.u.img.fill(200); // old contents: the program clears them first

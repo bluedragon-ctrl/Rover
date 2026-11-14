@@ -1,7 +1,7 @@
 import { PORT_CODES, PORTS } from '../core/ports';
-import { opcodeHex, ROM_BASE, type Op } from '../core/vm/isa';
+import { opcodeHex, PROGRAM_GATE, ROM_BASE, type Op } from '../core/vm/isa';
 import { formatSig, OPCODES, romCompile } from '../core/vm/Compiler';
-import { ROM_ENTRIES, ROM_SOURCE } from '../core/rom';
+import { ROM_ARGS, ROM_ENTRIES, ROM_SOURCE } from '../core/rom';
 import { buildListing, listingText } from './listing';
 import type { TileDef, WorldRegistry } from '../core/WorldRegistry';
 import { BALANCE, CHASSIS_MK1, ENCODING as E, MEMORY_MAP } from '../core/balance';
@@ -26,7 +26,7 @@ const NOTES: Record<string, string> = {
   CALL: 'push args, call a label of yours or a ROM routine (CALL STEP EAST 3: see ROM). Firmware only: CALL PROGRAM calls the program slot (@SLICE ticks; 0 = no limit), @STATUS ERR_INVALID if it is not PROG_READY',
   RET: 'return. In the program, a RET with nothing to return to ends the program: PROG_DONE with @PROG_RESULT = r0',
   WAIT: 'WAIT @port: sleep until the port reads 0 (no energy; checked at the start of every tick). On a device\'s port (@DRIVE, @RADAR, @TOOL, @REPAIR, @CAM, @SEND, @ERASE) @STATUS then says how the device\'s work ended. 1 cycle',
-  LDB: 'LDB dst [addr]: dst = the byte (0–255) at data address addr: RAM from 0, image memory from IMG, cargo from CARGO (Basics → Memory). [r], [n], [r+n]. No memory there: FAULT. 1 cycle, no @STATUS',
+  LDB: 'LDB dst [addr]: dst = the byte (0–255) at data address addr: RAM from 0, image memory from IMG, cargo from CARGO (Basics → Memory map). [r], [n], [r+n]. No memory there: FAULT. 1 cycle, no @STATUS',
   STB: 'STB [addr] v: byte at data address addr = v (only the low 8 bits: 256 → 0, −1 → 255). Cargo is read-only; no memory there: FAULT. 1 cycle, no @STATUS. Into image memory: makes the next send of the photo "edited"',
   LDF: 'LDF dst [addr]: dst = the byte at addr of this slot\'s own Flash, e.g. a DATA table: LDF r0 [route+r1]. Past the end of the slot: FAULT. 1 cycle, no @STATUS',
   LOG: 'queue a log frame for the downlink (Comms tab). tag: number or CONST 0–14 (15 = system). 1 cycle, no @STATUS; dropped if the FIFO is full (@LOG_LOST)',
@@ -76,6 +76,7 @@ const SECTIONS = [
   ['basics', 'Basics'],
   ['instr', 'Instructions'],
   ['ports', 'Ports'],
+  ['devices', 'Devices'],
   ['tools', 'Tools'],
   ['consts', 'Constants'],
   ['radio', 'Radio'],
@@ -114,24 +115,6 @@ function basicsHtml(): string {
     (drive, radar, tools, camera…) are <b>devices</b> you start by writing a port and wait for with <code>WAIT @port</code>. The ROM has
     a ready-made routine for each (<code>CALL STEP EAST 3</code>, <code>CALL SCAN dir</code>: see ROM) that you can read and copy.
     Names are case-insensitive.</p>
-    <h4>Registers</h4>
-    <p>The Mk-I has ${CHASSIS_MK1.registers} registers, <code>r0</code>–<code>r${CHASSIS_MK1.registers - 1}</code>${regUpgrades()}.
-    Each holds a signed 32-bit integer that wraps on overflow. All of them are general purpose: no register has a fixed meaning,
-    and any of them can hold a direction, a count, a tile ID or a coordinate (<code>CALL STEP r2 1</code>, <code>JEQ r1 IRON_ORE found</code>).
-    <code>ALIAS r0 dir</code> gives a register a name (free, compile time only); the shipped firmware's <code>dir</code> is just its own choice.
-    The firmware and the program each have their own set. A reboot (upload or watchdog) zeroes them; a register the chassis
-    does not have is a compile error.</p>
-    <h4>Memory</h4>
-    <p>Data addresses (the memory map): <b>RAM</b> <code>0x000</code>–<code>0x${(CHASSIS_MK1.ramBytes - 1).toString(16).toUpperCase().padStart(3, '0')}</code>
-    (Mk-I ${CHASSIS_MK1.ramBytes} B, shared by firmware and program, zero after a reboot; RAM upgrades add more), <b>image memory</b> from
-    <code>IMG</code> = <code>0x100</code>, <b>cargo</b> from <code>CARGO</code> = <code>0x600</code> (one read-only byte per slot: the item).
-    Anything else: nothing answers, the CPU faults. Only <code>LDB</code>, <code>STB</code> and <code>LDF</code> touch memory, with the
-    address in brackets: <code>[40]</code>, <code>[r1]</code> (a pointer), <code>[r1+4]</code>, <code>[IMG+r0]</code>.</p>
-    <p><code>VAR name [size]</code> reserves RAM (default 1 byte) and makes <code>name</code> its address: <code>VAR count</code>, then
-    <code>LDB r0 [count]</code>, <code>STB [count] r0</code>. Program VARs count up from 0, firmware VARs down from the top; if they would
-    overlap it is a compile error. Absolute addresses still reach everything: both slots can share data that way, or overwrite each other's.</p>
-    <p><code>name: DATA 3, 1, 4</code> puts bytes (−128…255) into Flash; the assembler moves them behind the code, so the CPU never runs into
-    them. <code>LDF r0 [name+r1]</code> reads them.</p>
     <h4>Program size</h4>
     <p>Flash is counted in bytes: opcode ${E.opcode} B; register ${E.register} B; port ${E.port} B;
     number 0–${E.shortImmMax} ${E.shortImm} B, −128…127 ${E.imm8} B, up to ±32767 ${E.imm16} B, larger ${E.imm32} B; label used as a jump/call target ${E.label} B.
@@ -139,15 +122,8 @@ function basicsHtml(): string {
     Address in brackets: <code>[r]</code> ${E.memReg} B, <code>[n]</code> or <code>[r+n]</code> ${E.memAddr} B. <code>DATA</code> costs one byte per value.
     Labels, comments, <code>ALIAS r0 name</code>, <code>CONST NAME 5</code> and <code>VAR name</code> themselves cost nothing.
     Example: <code>JLE @BAT 20 home</code> = ${E.opcode}+${E.port}+${E.imm8}+${E.label} = ${E.opcode + E.port + E.imm8 + E.label} B.</p>
-    <h4>Machine code</h4>
-    <p>The listing beside the editor shows it while you type. Opcode byte = instruction number (hex column in Instructions), plus 0x20 per
-    optional operand given (<code>LOG 2 r0</code> = <code>39 02 10</code>). The one-byte numbers ran out, so newer instructions
-    (the bit instructions) have a 2-byte opcode: the prefix <code>1F</code>, then their own number (<code>AND r0 3</code> =
-    <code>1F 01 10 03</code>), like the prefix bytes of real CPUs. One byte longer, just as fast. Operand bytes: <code>00</code>–<code>0F</code> number 0–15,
-    <code>10</code>–<code>17</code> register r0–r7, <code>40</code>–<code>7F</code> port (hex column in Ports), <code>18</code> / <code>19</code> / <code>1A</code>
-    followed by an 8 / 16 / 32-bit number; <code>1C</code> + 2 bytes <code>[n]</code>, <code>20</code>–<code>27</code> <code>[r]</code>,
-    <code>28</code>–<code>2F</code> + 2 bytes <code>[r+n]</code>; a label is its 2-byte address. Each slot starts at address 0x000:
-    <code>JLE @BAT 20 home</code> with <code>home</code> at 0x02A = <code>0E 40 18 14 00 2A</code>.</p>
+    <p class="small dim">Below: <b>CPU</b> (registers, cycles, stacks, calls, machine code) and <b>Memory map</b> (RAM, image memory, cargo,
+    Flash, ROM). The hardware behind the ports: <b>Devices</b>.</p>
     <h4>Keys</h4>
     <table>
       <tr><td><code>Ctrl+Enter</code></td><td>upload</td></tr>
@@ -158,6 +134,158 @@ function basicsHtml(): string {
       <tr><td><code>Q</code> / <code>E</code></td><td>rotate camera</td></tr>
       <tr><td><code>B</code></td><td>bloom</td></tr>
       <tr><td><code>P</code></td><td>frame-time HUD</td></tr>
+    </table>`;
+}
+
+const hex3 = (n: number) => '0x' + n.toString(16).toUpperCase().padStart(3, '0');
+const hex4 = (n: number) => '0x' + n.toString(16).toUpperCase().padStart(4, '0');
+const romBytes = () => romCompile().flashUsed;
+const maxOf = (key: 'flashBytes' | 'ramBytes') =>
+  Math.max(CHASSIS_MK1[key], ...UPGRADES.flatMap((u) => {
+    const c = { ...CHASSIS_MK1, tools: [...CHASSIS_MK1.tools], cameraModes: [...CHASSIS_MK1.cameraModes] };
+    try { u.apply(c, { ramMemory() {} } as never); } catch { /* an upgrade that needs a real rover: not a memory one */ }
+    return [c[key]];
+  }));
+
+/** M14 (docs/ASSEMBLER_CORE.md §3, §5, §6.1): the processor itself. Numbers from CHASSIS_MK1. */
+export function cpuHtml(): string {
+  const C = CHASSIS_MK1;
+  return `
+    <p class="small dim">The CPU only computes and moves data. Everything physical (wheels, radar, tools, camera, radio) is a
+    <b>device</b> it talks to through ports (Devices). This is how real microcontrollers work: the processor writes a number
+    into a peripheral's register, the peripheral does the work, and the processor checks back later.</p>
+    <h4>Registers</h4>
+    <p>The Mk-I has ${C.registers} registers, <code>r0</code>–<code>r${C.registers - 1}</code>${regUpgrades()}.
+    Each holds a signed 32-bit integer that wraps on overflow. All of them are general purpose: no register has a fixed meaning,
+    and any of them can hold a direction, a count, a tile ID or a coordinate (<code>CALL STEP r2 1</code>, <code>JEQ r1 IRON_ORE found</code>).
+    <code>ALIAS r0 dir</code> gives a register a name (free, compile time only). Only the ROM's <b>helpers</b> give two of them a role:
+    they answer in <code>r0</code> and may change <code>r0</code> and <code>r1</code> (below).
+    The firmware and the program each have their own set. A reboot (upload or watchdog) zeroes them; a register the chassis
+    does not have is a compile error. When four are not enough, keep numbers in RAM (<code>VAR</code>, Memory map).</p>
+    <h4>Cycles and time</h4>
+    <table class="radio-kv">
+      <tr><td>speed</td><td>Every instruction takes 1 cycle; the Mk-I runs ${C.cyclesPerTick} per tick (CPU overclock upgrades: more). Size never changes speed.</td></tr>
+      <tr><td>waiting</td><td><code>WAIT @port</code> sleeps until the port reads 0, checked at the start of every tick. A sleeping CPU uses no energy
+        and no cycles: <code>CALL SLEEP 20</code> is <code>MOV @TIMER 20</code> + <code>WAIT @TIMER</code>.</td></tr>
+      <tr><td>energy</td><td>Computing is free; devices cost energy (Devices).</td></tr>
+    </table>
+    <h4>Stacks</h4>
+    <table class="radio-kv">
+      <tr><td>data stack</td><td>${C.dataStack} numbers per slot. <code>PUSH v</code> / <code>POP dst</code>; <code>CALL name a b</code> pushes <code>a</code>, then <code>b</code>,
+        so the routine pops <code>b</code> first (last in, first out). Every routine pops all its arguments. Full or empty: FAULT.</td></tr>
+      <tr><td>call stack</td><td>${C.callStack} return addresses per slot: how deep <code>CALL</code>s can nest (a ROM routine counts). <code>RET</code> goes back.</td></tr>
+    </table>
+    <h4>Calling convention</h4>
+    <table class="radio-kv">
+      <tr><td>drivers</td><td><code>SLEEP STEP SCAN ACT USE SNAP SEND ERASE RUN</code>: pop their arguments straight into the device's ports, start it and WAIT.
+        They change <b>no register</b>; the outcome is in <code>@STATUS</code> (and the device's answer ports).</td></tr>
+      <tr><td>helpers</td><td><code>ABS DIR_TO PUT16 GET16 PLOT</code>: answer in <code>r0</code>; may change <code>r0</code> and <code>r1</code> (scratch, like ARM's
+        <code>r0</code>–<code>r3</code>) and keep every other register. Keep your own loop counters in <code>r2</code>/<code>r3</code> around them.</td></tr>
+      <tr><td>yours</td><td>Your own subroutines may do as they like: say in a comment which registers they change.</td></tr>
+    </table>
+    <h4>@STATUS</h4>
+    <p>Each slot has one <code>@STATUS</code>. Only three things set it: a write to a device's start port (accepted? <code>OK</code>, <code>ERR_BUSY</code>…),
+    <code>WAIT</code> on a device port (how the work ended), and <code>DIV</code> / <code>MOD</code> by 0 (<code>ERR_INVALID</code>); also <code>CALL PROGRAM</code>.
+    Every other instruction leaves it alone, so check it right after the call.</p>
+    <h4>The program as a subroutine</h4>
+    <p>The firmware runs the program with <code>CALL PROGRAM</code> (the ROM's <code>CALL RUN ticks</code> sets <code>@SLICE</code> first).
+    It starts in the same tick, with its own registers and stacks. It comes back when it <code>END</code>s, <code>RET</code>s at its top level
+    (result <code>r0</code>), faults, hits <code>BRK</code>, or when its <code>@SLICE</code> ticks are used up: then the <b>timer interrupt</b> stops it between two
+    instructions and the next <code>CALL PROGRAM</code> resumes it there. <code>@PREEMPT</code> lets the firmware be interrupted sooner (fault protection).
+    Devices the program started keep running meanwhile.</p>
+    <h4>Machine code</h4>
+    <p>The listing beside the editor shows it while you type. Opcode byte = instruction number (hex column in Instructions), plus 0x20 per
+    optional operand given (<code>LOG 2 r0</code> = <code>39 02 10</code>). The one-byte numbers ran out, so newer instructions
+    (the bit instructions) have a 2-byte opcode: the prefix <code>1F</code>, then their own number (<code>AND r0 3</code> =
+    <code>1F 01 10 03</code>), like the prefix bytes of real CPUs. One byte longer, just as fast. Operand bytes: <code>00</code>–<code>0F</code> number 0–15,
+    <code>10</code>–<code>17</code> register r0–r7, <code>40</code>–<code>7F</code> port (hex column in Ports), <code>18</code> / <code>19</code> / <code>1A</code>
+    followed by an 8 / 16 / 32-bit number; <code>1C</code> + 2 bytes <code>[n]</code>, <code>20</code>–<code>27</code> <code>[r]</code>,
+    <code>28</code>–<code>2F</code> + 2 bytes <code>[r+n]</code>; a label is its 2-byte address. Each slot starts at address 0x000:
+    <code>JLE @BAT 20 home</code> with <code>home</code> at 0x02A = <code>0E 40 18 14 00 2A</code>.</p>`;
+}
+
+/** M14 devices (docs/ASSEMBLER_CORE.md §4): one row per device, from its ports and the ROM. */
+export const DEVICES: { name: string; start: string; params: string[]; answer: string; rom: string; shares: string; cost: string }[] = [
+  { name: 'Timer (one per slot)', start: 'TIMER', params: [], answer: 'reads the ticks left', rom: 'SLEEP', shares: 'none', cost: 'free' },
+  { name: 'Drive', start: 'DRIVE', params: ['DRIVE_N'], answer: '<code>@X</code>, <code>@Y</code>; <code>@DRIVE</code> reads the tiles left', rom: 'STEP', shares: 'chassis', cost: '3–6 ticks and 40–120 energy per tile (terrain)' },
+  { name: 'Radar', start: 'RADAR', params: [], answer: '<code>@RADAR_HIT</code>, <code>@RADAR_DIST</code>', rom: 'SCAN', shares: 'none: sweeps while the chassis works', cost: `${BALANCE.scanTicks} tick, ${BALANCE.scanEnergy} energy` },
+  { name: 'Tools (hardpoints TOOL_0–3)', start: 'TOOL', params: ['TOOL_ARG'], answer: 'cargo, the recorder, <code>@SEISMIC_TYPE</code>, <code>@SEISMIC_DIST</code>', rom: 'ACT', shares: 'chassis', cost: 'per tool (Tools)' },
+  { name: 'Field repair', start: 'REPAIR', params: ['REPAIR_SYS'], answer: '<code>@HULL</code>, <code>@SOLAR_HEALTH</code>, <code>@ANTENNA_HEALTH</code>', rom: 'USE', shares: 'chassis', cost: `${TOOLS.USE_ITEM.ticks} ticks, ${TOOLS.USE_ITEM.energy} energy` },
+  { name: 'Mast camera', start: 'CAM', params: ['CAM_MODE'], answer: 'image memory (<code>IMG</code>)', rom: 'SNAP', shares: 'chassis; image memory', cost: `${BALANCE.snapTicks} ticks, ${BALANCE.snapEnergy} energy` },
+  { name: 'Image send', start: 'SEND', params: [], answer: 'the science recorder (<code>@REC_FREE</code>)', rom: 'SEND', shares: 'image memory', cost: `${BALANCE.sendTicks} tick, ${BALANCE.sendEnergy} energy` },
+  { name: 'Image erase', start: 'ERASE', params: [], answer: 'image memory = 0', rom: 'ERASE', shares: 'image memory', cost: `${BALANCE.eraseTicks} ticks, ${BALANCE.eraseEnergy} energy` },
+];
+
+export function devicesHtml(): string {
+  const port = (n: string) => `<code>@${n}</code>`;
+  const rows = DEVICES.map((d) => {
+    const args = ROM_ARGS[d.rom as keyof typeof ROM_ARGS].join(' ');
+    const params = d.params.length ? ` + ${d.params.map(port).join(', ')}` : '';
+    return `<tr><td><b>${d.name}</b></td><td>start ${port(d.start)}${params} · ROM <code>CALL ${d.rom}${args ? ' ' + args : ''}</code><br>
+      answer: ${d.answer}<br><span class="dim">shares: ${d.shares} · ${d.cost}</span></td></tr>`;
+  }).join('');
+  return `
+    <p class="small dim">A device does physical work by itself while the CPU goes on. Every device follows the same three steps:</p>
+    <table class="radio-kv">
+      <tr><td>1. set up</td><td>Write its <b>parameter</b> ports (latched: they keep their value, e.g. <code>MOV @DRIVE_N 3</code>).</td></tr>
+      <tr><td>2. start</td><td>Write its <b>start</b> port (<code>MOV @DRIVE EAST</code>). <code>@STATUS</code> says at once whether it was accepted:
+        <code>OK</code>, or why not (<code>ERR_BUSY</code>, <code>ERR_LOW_POWER</code>, <code>ERR_INVALID</code>…). Nothing has happened yet.</td></tr>
+      <tr><td>3. finish</td><td>Read the start port for the work left (0 = idle), or <code>WAIT @port</code> to sleep until it is done:
+        <code>@STATUS</code> then says how it ended. Then read its <b>answer</b> ports.</td></tr>
+    </table>
+    <p class="small">Each ROM driver is exactly these steps (Reference → ROM). Without the driver the CPU is free in between:
+    sweep the radar while driving, compute while the camera exposes (template <i>Drive and scan at once</i>).</p>
+    <h4>The devices</h4>
+    <table class="radio-kv">${rows}</table>
+    <h4>Sharing</h4>
+    <table class="radio-kv">
+      <tr><td>chassis</td><td>Drive, tools, repair and camera move or hold the rover: only one at a time. Starting another answers <code>ERR_BUSY</code>.</td></tr>
+      <tr><td>image memory</td><td>While the camera exposes, <code>@SEND</code> and <code>@ERASE</code> answer <code>ERR_BUSY</code>; one transfer at a time.</td></tr>
+      <tr><td>none</td><td>The radar and the timers work alongside anything.</td></tr>
+      <tr><td>stop</td><td><code>MOV @DRIVE_N 0</code> while driving stops at the end of the current tile; the drive then ends with <code>ERR_PREEMPTED</code>.</td></tr>
+      <tr><td>reboot</td><td>A hard reboot stops every device and puts the parameter ports back to their defaults (<code>@DRIVE_N</code> 1, <code>@CAM_MODE</code> 1…). Actuators (array, dish, lights) are not devices: they keep their state.</td></tr>
+    </table>`;
+}
+
+/** M14 memory map (docs/ASSEMBLER_CORE.md §7, §9): the data and code address spaces. */
+export function memoryMapHtml(): string {
+  const C = CHASSIS_MK1;
+  const M = MEMORY_MAP;
+  const img = imageBytes(C);
+  return `
+    <p class="small dim">The CPU sees two address spaces, like a Harvard microcontroller: <b>data</b> (read and written by <code>LDB</code> / <code>STB</code>)
+    and <b>code</b> (where <code>JMP</code>, <code>CALL</code> and <code>LDF</code> point). An address where nothing answers is a FAULT: "no memory at 0x…".</p>
+    <h4>Data addresses (LDB, STB)</h4>
+    <table>
+      <tr class="dim"><td>addresses</td><td>what</td><td>access</td></tr>
+      <tr><td><code>${hex3(M.RAM)}</code>–<code>${hex3(M.RAM + C.ramBytes - 1)}</code></td><td><b>RAM</b> (<code>RAM</code>), Mk-I ${C.ramBytes} B, upgrades up to ${maxOf('ramBytes')} B (to <code>${hex3(M.RAM + maxOf('ramBytes') - 1)}</code>).
+        Shared by firmware and program; zero after a reboot (also a firmware upload), kept by program uploads and <i>Run again</i>.</td><td>read / write</td></tr>
+      <tr><td><code>${hex3(M.IMG)}</code>–<code>${hex3(M.IMG + img - 1)}</code></td><td><b>image memory</b> (<code>IMG</code>), ${img} B on Mk-I, up to 1024 B with camera upgrades.
+        Kept through reboots; a photo overwrites it.</td><td>read / write</td></tr>
+      <tr><td><code>${hex3(M.CARGO)}</code>–<code>${hex3(M.CARGO + C.cargoSlots - 1)}</code></td><td><b>cargo</b> (<code>CARGO</code>): one byte per slot, the item's tile ID, 0 = empty.</td><td>read only</td></tr>
+      <tr><td>anything else</td><td>nothing</td><td>FAULT</td></tr>
+    </table>
+    <h4>Addressing modes</h4>
+    <table class="radio-kv">
+      <tr><td><code>[n]</code></td><td>absolute: a number, a <code>CONST</code> or a <code>VAR</code> name: <code>LDB r0 [count]</code></td></tr>
+      <tr><td><code>[r]</code></td><td>register indirect, a pointer: <code>LDB r1 [r2]</code></td></tr>
+      <tr><td><code>[r+n]</code></td><td>indexed: <code>STB [IMG+r0] r1</code>, <code>LDF r0 [route+r1]</code></td></tr>
+    </table>
+    <h4>RAM layout (VAR)</h4>
+    <pre class="ref-diagram">${hex3(M.RAM)}  program VARs, from the bottom up ↑
+       ...  free ...
+${hex3(M.RAM + C.ramBytes - 1)}  firmware VARs, from the top down ↓</pre>
+    <p class="small"><code>VAR name [size]</code> reserves bytes (default 1) and makes <code>name</code> their address; it costs no Flash and has no initial value.
+    If the two slots' VARs would overlap, the upload is refused with both sizes. Absolute addresses reach all of RAM: both slots can share data (a mailbox)
+    or overwrite each other's by mistake. The Code tab shows the RAM each slot uses.</p>
+    <h4>Code addresses (JMP, CALL, LDF)</h4>
+    <table>
+      <tr class="dim"><td>addresses</td><td>what</td></tr>
+      <tr><td><code>${hex4(0)}</code>–</td><td>the slot's own <b>Flash</b>: its code, then its <code>DATA</code> section. Each slot starts at 0. Mk-I: ${C.flashBytes} B shared by both slots
+        (upgrades up to ${maxOf('flashBytes')} B).</td></tr>
+      <tr><td><code>${hex4(PROGRAM_GATE)}</code></td><td>the <b>program gate</b>: <code>CALL PROGRAM</code> (firmware only)</td></tr>
+      <tr><td><code>${hex4(ROM_BASE)}</code>–<code>${hex4(ROM_BASE + romBytes() - 1)}</code></td><td><b>ROM</b>, ${romBytes()} B: drivers and helpers (Reference → ROM). <code>LDF</code> can read it.
+        Listings and dumps write <code>rom:STEP+3</code>.</td></tr>
     </table>`;
 }
 
@@ -343,11 +471,11 @@ function imageHtml(): string {
   const examples = Object.keys(PROGRAM_TEMPLATES).filter((n) => n.startsWith('Image: '));
   const teaches: Record<string, string> = {
     'Image: Line': 'rows, addresses, <code>CALL ERASE</code>',
-    'Image: Test pattern': 'grey levels, computing a byte from its address',
+    'Image: Test pattern': 'grey levels, computing a byte from its address (<code>AND</code>, <code>SHR</code>)',
     'Image: Negative': '<code>CALL SNAP</code> → change → <code>CALL SEND</code>',
-    'Image: Stamp': 'numbers as bytes (masks and shifts)',
-    'Image: Plot': 'single pixels inside a byte',
-    'Image: Memory map': 'image memory as plain memory (a map of visited tiles)',
+    'Image: Stamp': 'numbers as bytes, the ROM\'s <code>PUT16</code>',
+    'Image: Plot': 'single pixels with the ROM\'s <code>PLOT</code>, saving a register (<code>PUSH</code> / <code>POP</code>)',
+    'Image: Memory map': 'image memory as plain memory (a map of visited tiles), an address from bits',
   };
   const modes = Object.entries(PHOTO_FORMATS)
     .map(([m, f]) => `<tr><td>${m}</td><td>${f.w}×${f.h}</td><td>${8 / f.bpp}</td><td>${(f.w * f.bpp) / 8}</td><td>${photoBytes(Number(m))} B</td><td>${PIXEL_MEANING[f.kind]}</td></tr>`)
@@ -412,13 +540,13 @@ weight:   64      16      4       1</pre>
     <table class="radio-kv">
       <tr><td>keeps</td><td>Image memory keeps its contents through reboots and a flat battery, like a camera's flash memory.
         Only a new photo or <code>CALL ERASE</code> clears it, never <code>CALL SEND</code>.</td></tr>
-      <tr><td>wraps</td><td>Addresses wrap around the memory size: on Mk-I address 256 is byte 0, −1 is byte 255. No error.</td></tr>
+      <tr><td>bounds</td><td>Stay inside the picture: on Mk-I <code>[IMG+256]</code> and <code>[IMG-1]</code> are outside image memory, and the CPU faults (no wrap-around since M14).</td></tr>
       <tr><td>type</td><td><code>CALL SEND type</code> only says how mission control decodes the bytes: <code>CALL SEND 1</code> shows any bytes as a 32×32 grey photo.</td></tr>
       <tr><td>labels</td><td>The Gallery labels what arrived: <b>raw</b> (sent as the camera took it), <b>edited</b> (changed with <code>STB</code>),
         <b>drawn</b> (no camera picture behind it). The label travels in the header byte (Radio).</td></tr>
       <tr><td>credits</td><td>Only the first send after a photo, of the same type, earns photo credits, edited or not.
         The first lit <b>edited</b> photo in each camera mode earns +${BALANCE.editFirstBonus} more (goal <i>Darkroom</i>). Drawn pictures earn nothing. Anomaly flags are checked against the real tile.</td></tr>
-      <tr><td>speed</td><td>Touching every byte costs about 6 cycles each: ~400 ticks for a whole 32×32 picture on Mk-I. Programs run in time slices, so long loops just take longer.</td></tr>
+      <tr><td>speed</td><td>Touching every byte costs about 6 cycles each: ~200 ticks for a whole 32×32 picture on Mk-I (${CHASSIS_MK1.cyclesPerTick} cycles per tick). Programs run in time slices, so long loops just take longer.</td></tr>
     </table>
     <h4>Examples (Code tab → Program → template)</h4>
     <table class="radio-kv">
@@ -429,9 +557,10 @@ weight:   64      16      4       1</pre>
 /** Generated language reference: always in sync with the compiler, port, tool and tile tables. */
 export function renderReference(el: HTMLElement, registry: WorldRegistry): void {
   const panes: Record<string, string> = {
-    basics: basicsHtml(),
+    basics: `<h3>Basics</h3>${basicsHtml()}<h3>CPU</h3>${cpuHtml()}<h3>Memory map</h3>${memoryMapHtml()}`,
     instr: instructionsHtml(),
     ports: portsHtml(),
+    devices: devicesHtml(),
     tools: toolsHtml(),
     consts: constantsHtml(registry),
     radio: radioHtml(),

@@ -155,6 +155,39 @@ describe('program templates (lessons)', () => {
     expect(result(blocked.e, blocked.u)).toBeLessThan(4);
   });
 
+  it('Count with a variable counts runs and tiles in RAM, across Run again', () => {
+    const { e, u } = rover('Count with a variable');
+    expect(result(e, u)).toBe(1);
+    expect([u.x, u.y]).toEqual([0, 0]); // the 2×2 square, back at the start
+    expect(logged(e, 2)).toEqual([8]); // T_TILES
+    expect(Array.from(u.ram.slice(0, 3))).toEqual([1, 0, 8]); // VAR runs, then VAR tiles 2 (high byte first)
+    expect(e.command(u, 'RUN_AGAIN')).toBeNull();
+    expect(result(e, u)).toBe(2); // RAM survives Run again; the registers do not
+    expect(logged(e, 2)).toEqual([8, 16]);
+  });
+
+  it('Drive and scan at once sweeps the radar while driving and counts each sample once', () => {
+    const { e, u } = rover('Drive and scan at once', (e) => {
+      e.world.setTile(3, 4, Layer.ITEM, T.SAMPLE);
+      e.world.setTile(7, 2, Layer.ITEM, T.SAMPLE);
+      for (let x = 9; x <= 10; x++) // the drive ends past the cleared square
+        for (let y = 0; y <= 12; y++) {
+          e.world.setTile(x, y, Layer.TERRAIN, T.FLAT_SAND);
+          for (const l of [Layer.OBSTACLE, Layer.ITEM]) e.world.setTile(x, y, l, 0);
+        }
+    });
+    let sweepsWhileDriving = 0;
+    for (let i = 0; i < 400 && u.progState !== ProgState.PROG_DONE; i++) {
+      run(e, 1);
+      if (u.deviceLeft('drive') > 0 && u.deviceLeft('radar') > 0) sweepsWhileDriving++;
+    }
+    expect(u.progState).toBe(ProgState.PROG_DONE);
+    expect(u.progResult).toBe(2); // RET returns r0
+    expect([u.x, u.y]).toEqual([10, 0]); // the whole drive
+    expect(sweepsWhileDriving).toBeGreaterThan(10); // both devices busy in the same tick
+    expect(logged(e, 2)).toEqual([4, 2]); // T_SAMPLE: how far north each one lay
+  });
+
   it('Weather station logs the hour and the light every 100 ticks', () => {
     const { e } = rover('Weather station');
     run(e, 450);
