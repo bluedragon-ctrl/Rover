@@ -26,7 +26,7 @@ const NOTES: Record<string, string> = {
   CALL: 'push args, call a label of yours or a ROM routine (CALL STEP EAST 3: see ROM). Firmware only: CALL PROGRAM calls the program slot (@SLICE ticks; 0 = no limit), @STATUS ERR_INVALID if it is not PROG_READY',
   RET: 'return. In the program, a RET with nothing to return to ends the program: PROG_DONE with @PROG_RESULT = r0',
   WAIT: 'WAIT @port: sleep until the port reads 0 (no energy; checked at the start of every tick). On a device\'s port (@DRIVE, @RADAR, @TOOL, @REPAIR, @CAM, @SEND, @ERASE) @STATUS then says how the device\'s work ended. 1 cycle',
-  LDB: 'LDB dst [addr]: dst = the byte (0–255) at data address addr: RAM from 0, image memory from IMG, cargo from CARGO (Basics → Memory). [r], [n], [r+n]. No memory there: FAULT. 1 cycle, no @STATUS',
+  LDB: 'LDB dst [addr]: dst = the byte (0–255) at data address addr: RAM from 0, image memory from IMG, cargo from CARGO (Basics → Memory map). [r], [n], [r+n]. No memory there: FAULT. 1 cycle, no @STATUS',
   STB: 'STB [addr] v: byte at data address addr = v (only the low 8 bits: 256 → 0, −1 → 255). Cargo is read-only; no memory there: FAULT. 1 cycle, no @STATUS. Into image memory: makes the next send of the photo "edited"',
   LDF: 'LDF dst [addr]: dst = the byte at addr of this slot\'s own Flash, e.g. a DATA table: LDF r0 [route+r1]. Past the end of the slot: FAULT. 1 cycle, no @STATUS',
   LOG: 'queue a log frame for the downlink (Comms tab). tag: number or CONST 0–14 (15 = system). 1 cycle, no @STATUS; dropped if the FIFO is full (@LOG_LOST)',
@@ -74,11 +74,9 @@ const CONST_GROUPS: [string, object][] = [
 
 const SECTIONS = [
   ['basics', 'Basics'],
-  ['cpu', 'CPU'],
   ['instr', 'Instructions'],
   ['ports', 'Ports'],
   ['devices', 'Devices'],
-  ['memory', 'Memory map'],
   ['tools', 'Tools'],
   ['consts', 'Constants'],
   ['radio', 'Radio'],
@@ -124,8 +122,8 @@ function basicsHtml(): string {
     Address in brackets: <code>[r]</code> ${E.memReg} B, <code>[n]</code> or <code>[r+n]</code> ${E.memAddr} B. <code>DATA</code> costs one byte per value.
     Labels, comments, <code>ALIAS r0 name</code>, <code>CONST NAME 5</code> and <code>VAR name</code> themselves cost nothing.
     Example: <code>JLE @BAT 20 home</code> = ${E.opcode}+${E.port}+${E.imm8}+${E.label} = ${E.opcode + E.port + E.imm8 + E.label} B.</p>
-    <p class="small dim">More: <b>CPU</b> (registers, cycles, stacks, calls, machine code), <b>Devices</b> (the hardware behind the ports),
-    <b>Memory map</b> (RAM, image memory, cargo, Flash, ROM).</p>
+    <p class="small dim">Below: <b>CPU</b> (registers, cycles, stacks, calls, machine code) and <b>Memory map</b> (RAM, image memory, cargo,
+    Flash, ROM). The hardware behind the ports: <b>Devices</b>.</p>
     <h4>Keys</h4>
     <table>
       <tr><td><code>Ctrl+Enter</code></td><td>upload</td></tr>
@@ -473,11 +471,11 @@ function imageHtml(): string {
   const examples = Object.keys(PROGRAM_TEMPLATES).filter((n) => n.startsWith('Image: '));
   const teaches: Record<string, string> = {
     'Image: Line': 'rows, addresses, <code>CALL ERASE</code>',
-    'Image: Test pattern': 'grey levels, computing a byte from its address',
+    'Image: Test pattern': 'grey levels, computing a byte from its address (<code>AND</code>, <code>SHR</code>)',
     'Image: Negative': '<code>CALL SNAP</code> → change → <code>CALL SEND</code>',
-    'Image: Stamp': 'numbers as bytes (masks and shifts)',
-    'Image: Plot': 'single pixels inside a byte',
-    'Image: Memory map': 'image memory as plain memory (a map of visited tiles)',
+    'Image: Stamp': 'numbers as bytes, the ROM\'s <code>PUT16</code>',
+    'Image: Plot': 'single pixels with the ROM\'s <code>PLOT</code>, saving a register (<code>PUSH</code> / <code>POP</code>)',
+    'Image: Memory map': 'image memory as plain memory (a map of visited tiles), an address from bits',
   };
   const modes = Object.entries(PHOTO_FORMATS)
     .map(([m, f]) => `<tr><td>${m}</td><td>${f.w}×${f.h}</td><td>${8 / f.bpp}</td><td>${(f.w * f.bpp) / 8}</td><td>${photoBytes(Number(m))} B</td><td>${PIXEL_MEANING[f.kind]}</td></tr>`)
@@ -559,12 +557,10 @@ weight:   64      16      4       1</pre>
 /** Generated language reference: always in sync with the compiler, port, tool and tile tables. */
 export function renderReference(el: HTMLElement, registry: WorldRegistry): void {
   const panes: Record<string, string> = {
-    basics: basicsHtml(),
-    cpu: cpuHtml(),
+    basics: `<h3>Basics</h3>${basicsHtml()}<h3>CPU</h3>${cpuHtml()}<h3>Memory map</h3>${memoryMapHtml()}`,
     instr: instructionsHtml(),
     ports: portsHtml(),
     devices: devicesHtml(),
-    memory: memoryMapHtml(),
     tools: toolsHtml(),
     consts: constantsHtml(registry),
     radio: radioHtml(),

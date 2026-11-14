@@ -189,11 +189,11 @@ call. Ticks are CPU time only; a photo (`CALL SNAP`) adds 10 ticks, `CALL SEND` 
 | # | Example | Teaches | Flash | CPU time |
 | :--- | :--- | :--- | :--- | :--- |
 | 1 | Line | rows, addresses, `CALL ERASE` | 31 B | 38 cycles ≈ 5 ticks |
-| 2 | Test pattern | grey levels, computing from the address | 37 B | 1800 cycles ≈ 225 ticks |
+| 2 | Test pattern | grey levels, computing from the address, `AND` / `SHR` as fast `MOD` / `DIV` | 39 B | 1800 cycles ≈ 225 ticks |
 | 3 | Negative | `CALL SNAP` → change → `CALL SEND` | 50 B | 1552 cycles ≈ 195 ticks |
-| 4 | Stamp | numbers as bytes (masks and shifts), negative numbers | 69 B | 38 cycles ≈ 5 ticks |
-| 5 | Plot | single pixels inside a byte (bit instructions) | 104 B | 783 cycles ≈ 100 ticks |
-| 6 | Memory map | image memory as a big scratch RAM | 85 B | runs forever |
+| 4 | Stamp | numbers as bytes, negative numbers, the ROM's `PUT16` (and how it works) | 30 B | 31 cycles ≈ 4 ticks |
+| 5 | Plot | single pixels inside a byte, the ROM's `PLOT`, saving a register (`PUSH` / `POP`) | 37 B | 1134 cycles ≈ 142 ticks |
+| 6 | Memory map | image memory as a big scratch RAM, an address from bits (`AND`, `SHL`, `OR`) | 86 B | runs forever |
 
 ### Example 1: Line, your first picture
 
@@ -224,14 +224,15 @@ or bottom (row 31); draw a thick line (rows 15–17); draw a border round the pi
 ; TEST PATTERN: four grey bars, like a camera test card.
 ; One byte = four pixels. 85 = 0x55 = 01 01 01 01 = four dark-grey
 ; pixels, so level × 85 fills a byte with one grey: 0, 85, 170, 255.
+; AND and SHR do MOD and DIV by powers of two, in the bits.
 
 ALIAS r0 addr
 ALIAS r1 grey
 
         MOV addr 0
 fill:   MOV grey addr
-        MOD grey 8            ; which byte of its row (0–7)
-        DIV grey 2            ; 2 bytes = 8 pixels per bar: level 0–3
+        AND grey 7            ; = MOD 8: which byte of its row (0–7)
+        SHR grey 1            ; = DIV 2: 8 pixels per bar, level 0–3
         MUL grey 85
         STB [IMG+addr] grey
         ADD addr 1
@@ -241,9 +242,11 @@ fill:   MOV grey addr
 ```
 
 Four vertical bars, black on the left to white on the right. The value of every byte is
-computed from its address: `addr MOD 8` is the column of bytes, `addr / 8` would be the
-row. **Try:** horizontal bars (use `addr / 64`); a checkerboard (add the row and the
-column of bytes, then `MOD 2`).
+computed from its address: `addr AND 7` is the column of bytes (the same as `addr MOD 8`),
+`addr SHR 3` would be the row (`addr / 8`). For powers of two the bit instructions do
+`MOD` and `DIV`: `AND (2ⁿ − 1)` keeps the remainder, `SHR n` divides; real compilers make
+the same swap because bit operations are cheap. **Try:** horizontal bars (use
+`addr SHR 6`); a checkerboard (add the row and the column of bytes, then `AND 1`).
 
 ### Example 3: Negative, change a real photo
 
@@ -282,6 +285,30 @@ cleverer byte trick); mirror it left to right.
 ; four bytes (@X, then @Y, each 16-bit, high byte first), like the
 ; engineering header real spacecraft send with their images.
 ; In the Gallery, open the photo's hex view: the first bytes are yours.
+; The ROM's PUT16 splits a number into two bytes (Reference → ROM).
+
+        CALL SNAP NORTH 1
+        JNE @STATUS OK fail
+        CALL PUT16 IMG @X     ; bytes 0–1; r0 = IMG + 2, the next free byte
+        CALL PUT16 r0 @Y      ; bytes 2–3
+        CALL SEND 0
+        END 1
+fail:   END 0
+```
+
+At (5, −300) the first bytes are `00 05 FE D4`: 5, and −300 in 16-bit two's complement,
+high byte first, the same way the radio sends numbers (Reference → Radio). The top-left
+corner of the photo shows them as a few odd pixels. `PUT16` takes any data address, so it
+writes into RAM as well as image memory, and returns the next free address in `r0`: the
+second call simply goes on from there. `CALL GET16 addr` reads such a number back, with its
+sign (`FE D4` = −300). **Try:** add `@TICK` (4 bytes: two `PUT16`s for the high and the low
+half); stamp `@SUN_LIGHT` to see why a photo came out dark.
+
+**By hand.** Taking a number apart is a job for masks and shifts. The same stamp without
+the ROM (69 B, the same bytes in the photo):
+
+```
+; Stamp by hand
 
 ALIAS r0 addr
 ALIAS r1 value
@@ -310,39 +337,47 @@ put2:   MOV low value
         RET
 ```
 
-At (5, −300) the first bytes are `00 05 FE D4`: 5, and −300 in 16-bit two's complement,
-high byte first, the same way the radio sends numbers (Reference → Radio). `AND 0xFF`
-keeps the lowest 8 bits; `SHR 8` moves the next 8 down. Because `SHR` fills with zeros, this
-works for negative numbers too (without bit instructions: `MOD 256` for the low byte, then
-subtract it and `DIV 256`). The top-left
-corner of the photo shows them as a few odd pixels. **Try:** add `@TICK` (use 4 bytes:
-call `put2` for the high and the low half); stamp `@SUN_LIGHT` to see why a photo
-came out dark.
-
-**With the ROM.** The ROM has the same routine as `CALL PUT16 addr v` (Reference → ROM). It
-takes a data address, so it writes into RAM as well as image memory, and returns the next
-free address in `r0`. The whole example shrinks to this (30 B, the same bytes in the photo):
-
-```
-; Stamp with the ROM's PUT16
-
-        CALL SNAP NORTH 1
-        JNE @STATUS OK fail
-        CALL PUT16 IMG @X     ; bytes 0-1; r0 = IMG + 2, the next free byte
-        CALL PUT16 r0 @Y      ; bytes 2-3
-        CALL SEND 0
-        END 1
-fail:   END 0
-```
-
-`CALL GET16 addr` reads such a number back, with its sign (`FE D4` = −300).
+`AND 0xFF` keeps the lowest 8 bits; `SHR 8` moves the next 8 down. Because `SHR` fills with
+zeros, this works for negative numbers too (without bit instructions: `MOD 256` for the low
+byte, then subtract it and `DIV 256`). The ROM's `PUT16` is shorter still: `STB` keeps only
+the low 8 bits anyway, so it needs no `AND` at all (Reference → ROM).
 
 ### Example 5: Plot, single pixels
 
 ```
 ; PLOT: draw single pixels. Takes a photo and draws a white
-; diagonal from the top-left corner to the bottom-right one.
-; The pixel routine works for any 2-bpp picture (modes 1 and 2).
+; diagonal from the top-left corner to the bottom-right one with the
+; ROM's PLOT (any 2-bpp picture: modes 1 and 2).
+; PLOT is a helper: it may change r0 and r1, so x is saved on the
+; data stack around the call (or keep it in r2, which PLOT keeps).
+
+ALIAS r0 x
+
+        CALL SNAP NORTH 1
+        JNE @STATUS OK fail
+diag:   PUSH x                ; save x: PLOT may change r0
+        CALL PLOT x x 3       ; pixel (x, x) = white (3)
+        POP x                 ; x is back
+        ADD x 1
+        JLT x 32 diag
+        CALL SEND 0
+        END 1
+fail:   END 0
+```
+
+`PLOT` is a ROM *helper*: like every helper it answers in `r0` and may change `r0` and
+`r1`, and keeps every other register. A loop counter in `r0` would be lost, so the program
+saves it on the data stack around the call (`PUSH` before, `POP` after): the *caller saves*
+what it still needs, as in every real calling convention. Keeping it in `r2` instead works
+too, and is faster. **Try:** draw the other diagonal (y = 31 − x); a crosshair through the
+centre; your initials in a corner of a photo; a filled square.
+
+**By hand.** Inside, `PLOT` follows the recipe of §3: address, shift, mask, clear the old
+colour (`OR` then `SUB`, as there is no NOT), put the new one in. The same diagonal with a
+routine of your own (104 B, the same picture):
+
+```
+; Plot by hand
 
         CALL SNAP NORTH 1
         JNE @STATUS OK fail
@@ -379,34 +414,10 @@ pixel:  PUSH r0
         RET
 ```
 
-`pixel` is a reusable routine: copy it into your own programs. It follows the recipe of
-§3: address, shift, mask, clear the old colour (`OR` then `SUB`, as there is no NOT), put
-the new one in. With only four registers it saves `x` on the data stack; the caller sets
-`y` again for every pixel. **Try:** draw the
-other diagonal (y = 31 − x); a crosshair through the centre; your initials in a corner of
-a photo; a filled square.
-
-**With the ROM.** `CALL PLOT x y grey` is the same recipe in the ROM. Like every ROM
-*helper* it may change `r0` and `r1` (and keeps the other registers), so a loop counter
-must live in `r2` or `r3`. The diagonal becomes this (33 B, the same picture):
-
-```
-; Plot with the ROM's PLOT
-
-ALIAS r2 x            ; not r0 or r1: PLOT may change those
-
-        CALL SNAP NORTH 1
-        JNE @STATUS OK fail
-diag:   CALL PLOT x x 3       ; pixel (x, x) = white
-        ADD x 1
-        JLT x 32 diag
-        CALL SEND 0
-        END 1
-fail:   END 0
-```
-
-Keep your own `pixel` when you need something the ROM's does not do, such as the bigger
-pictures of modes 3–5.
+Your own routine is faster here (783 cycles against 1134): it is made for this caller,
+while the ROM's must keep `r2` and `r3` and take its three arguments from the stack. That
+is the usual price of a general library routine. Write your own when speed matters, or for
+the bigger pictures of modes 3–5, which `PLOT` does not draw.
 
 ### Example 6: Memory map, image memory as RAM
 
@@ -437,11 +448,11 @@ turn:   ADD dir 1
 go:     CALL STEP dir 1
         JNE @STATUS OK turn
         MOV cell @Y
-        MOD cell 16           ; map row 0–15 (also for negative @Y)
-        MUL cell 16
+        AND cell 15           ; map row 0–15 (the low 4 bits: also for negative @Y)
+        SHL cell 4            ; × 16
         MOV seen @X
-        MOD seen 16           ; map column 0–15
-        ADD cell seen         ; byte address 0–255
+        AND seen 15           ; map column 0–15
+        OR cell seen          ; byte address 0–255: row in bits 7–4, column in 3–0
         LDB seen [IMG+cell]   ; earlier visits
         ADD dir seen          ; known tile: turn by that many quarters
         MOD dir 4
@@ -453,7 +464,9 @@ go:     CALL STEP dir 1
 The plain Explorer (turn right at obstacles) easily ends up driving the same circle
 forever. In test rooms with scattered rocks it got stuck after 19–50 tiles; this version
 kept going and covered 780–850 tiles in the same time. Memory turns a reflex into a
-strategy. **Try:** send the map home with `SEND 1` and decode it in the Gallery's hex
+strategy. The cell address is built from bits: `AND 15` keeps the low 4 bits of a coordinate
+(also for negative ones: −1 is `…1111`, so it lands on 15), `SHL 4` moves the row into bits
+7–4, and `OR` drops the column into the free bits 3–0, the way hardware builds addresses. **Try:** send the map home with `SEND 1` and decode it in the Gallery's hex
 view: byte `row × 16 + column` is the visit count of that tile. As a picture it looks
 scrambled (one map row of 16 bytes fills two photo rows, and a count of 1 is a single
 dark-grey pixel), so making it readable is a nice puzzle. Or remove the `ERASE`: image

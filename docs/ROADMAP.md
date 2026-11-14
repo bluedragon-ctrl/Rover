@@ -92,14 +92,22 @@ safe mode goes into M14 (option ROMs, tables, `RAND` later); upload 6 energy per
         `@REPAIR_SYS` / `@REPAIR`, `SLEEP` = `@TIMER`); Fetch points to `DIR_TO`, Spiral to the
         ROM's argument popping. *Drive yourself*'s Try now stops a drive with `@DRIVE_N 0`.
   - [x] `IMAGE_MEMORY.md`: diagram fixed (`CALL SNAP` / `CALL SEND`), §2 shows the `SNAP`
-        driver and how to start the camera yourself, *With the ROM* versions of Stamp (`PUT16`,
-        30 B) and Plot (`PLOT`, 33 B, counter in `r2`); a test checks they make the same photo.
-  - [x] Reference: new tabs *CPU* (registers, cycles, `WAIT`, stacks, calling convention,
-        `@STATUS`, the program as a subroutine, machine code), *Devices* (the three steps,
-        one row per device: start / parameter / answer ports, ROM driver, sharing, cost) and
-        *Memory map* (data and code address spaces, addressing modes, `VAR` layout; ranges
-        from `MEMORY_MAP`, the chassis, upgrades and the ROM size). Basics got shorter. Image
-        tab: the stale "addresses wrap" row and the ~400-tick estimate fixed.
+        driver and how to start the camera yourself.
+  - [x] Owner review (2026-11-14): *Image: Stamp* uses `CALL PUT16` (69 → 30 B) and
+        *Image: Plot* `CALL PLOT` with `PUSH` / `POP` around it (caller saves; 104 → 37 B,
+        1134 cycles against 783 by hand: a general routine's price). Their hand-written
+        `put2` / `pixel` stay in the guide as *By hand* sections (tested: the same photo). So
+        the templates still use every instruction, *Test pattern* uses `AND 7` / `SHR 1`
+        for `MOD 8` / `DIV 2` and *Memory map* builds its cell address with `AND` / `SHL` /
+        `OR` (same behaviour). Size table updated.
+  - [x] Reference: new tab *Devices* (the three steps, one row per device: start /
+        parameter / answer ports, ROM driver, sharing, cost); Basics gained the parts *CPU*
+        (registers, cycles, `WAIT`, stacks, calling convention, `@STATUS`, the program as a
+        subroutine, machine code) and *Memory map* (data and code address spaces, addressing
+        modes, `VAR` layout; ranges from `MEMORY_MAP`, the chassis, upgrades and the ROM size).
+        Owner review: these two are parts of Basics, not tabs (9 tabs instead of 11); the
+        "Harvard" wording stays. Image tab: the stale "addresses wrap" row and the ~400-tick
+        estimate fixed.
   - [x] Tests: `programs.test.ts` (the two new lessons), `image-memory.test.ts` (ROM
         versions), `tests/reference.test.ts` (every device listed with real ports and a ROM
         driver; numbers from the chassis). No save format change.
@@ -796,4 +804,4 @@ window with a fixed dish?
 | 2026-11-14 | `claude/intelligent-faraday-lx8xgo` (3) | M14 design approved (decisions §12 of `ASSEMBLER_CORE.md`); slice 2 memory model: RAM / `VAR` / `DATA` / `LDF`, bracket addresses, data address space with image memory at `IMG` and cargo at `CARGO`, Mk-I 512 B Flash + 64 B RAM, RAM upgrades, upload 6/B, image templates and guide on `[IMG+…]`, template *Route*, save v17 with code migration. |
 | 2026-11-14 | `ccr-298af329-qtcfs9` | M14 slice 3: devices behind ports (15 ports 49–63, `WAIT` 12, `ERR_BUSY`, chassis interlock, `@DRIVE_N 0` stop), ROM library at 0xF000 (drivers, Reference → ROM listing, argument check), `CALL PROGRAM` + `@SLICE` timer interrupt, top-level `RET`; hardware instructions, `RUN`, `@TX_DATA` retired, `LDF` = 13; Mk-I 8 cycles / 16-deep data stack; save v18 with code rewrite; template *Drive yourself*; `tests/devices.test.ts`. |
 | 2026-11-14 | `ccr-298af329-qtcfs9` (2) | Owner decisions on slice 3: ROM helpers may change `r0`/`r1` → helpers `ABS`, `DIR_TO`, `PUT16`, `GET16`, `PLOT` built (ROM 330 B; Stamp / Plot templates renamed their routines `put2` / `pixel`); retired port numbers 30, 33, 34 to be reused once before the extended operand; tick-start preemption and radar timing accepted. |
-| 2026-11-14 | `claude/m14-slice4-lessons` | M14 slice 4: lesson templates *Count with a variable* and *Drive and scan at once*, the course order in the Code tab, device wording in every template header; `IMAGE_MEMORY.md` on the ROM (`SNAP` driver, *With the ROM* Stamp / Plot, tested); Reference tabs *CPU*, *Devices*, *Memory map*, Image tab fixes; `tests/reference.test.ts`. |
+| 2026-11-14 | `claude/m14-slice4-lessons` | M14 slice 4: lesson templates *Count with a variable* and *Drive and scan at once*, the course order in the Code tab, device wording in every template header; `IMAGE_MEMORY.md` on the ROM (`SNAP` driver, *With the ROM* Stamp / Plot, tested); Reference tabs *CPU*, *Devices*, *Memory map*, Image tab fixes; `tests/reference.test.ts`. Owner review: *CPU* / *Memory map* as parts of Basics; *Image: Stamp* / *Plot* on `PUT16` / `PLOT`, hand-written versions kept in the guide. |

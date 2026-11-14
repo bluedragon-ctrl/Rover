@@ -790,7 +790,7 @@ and ports a ROM call stands for. They are listed in that order in the Code tab.
 | Spiral | `CALL` with arguments, `POP` order, `LOG`, `BRK` | 52 |
 | Seismic survey | an upgrade tool (`TOOL_3`), searching for a minimum, `JGE` / `JLE` | 75 |
 | Weather station | `CALL SLEEP` timing, `@TICK`, `DIV`, the alert ports | 37 |
-| Image: … (6) | image memory, bits, `PUSH` (guide `IMAGE_MEMORY.md`) | 31–104 |
+| Image: … (6) | image memory, bits (`AND` / `SHR` / `SHL` / `OR`), the ROM's `PUT16` / `PLOT`, saving a register with `PUSH` (guide `IMAGE_MEMORY.md`) | 30–86 |
 
 * Core: keep the dish on the orbiter; stow the array on a squall warning; charge below a
   threshold (`CONST LOW_BAT`, `FULL_BAT`) and give the program no slices while charging;

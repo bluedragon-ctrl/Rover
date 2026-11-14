@@ -864,14 +864,15 @@ line:   STB [IMG+addr] 0xFF   ; 0xFF = 11 11 11 11 = four white pixels
 export const IMAGE_TEST_PATTERN = `; TEST PATTERN: four grey bars, like a camera test card.
 ; One byte = four pixels. 85 = 0x55 = 01 01 01 01 = four dark-grey
 ; pixels, so level × 85 fills a byte with one grey: 0, 85, 170, 255.
+; AND and SHR do MOD and DIV by powers of two, in the bits.
 
 ALIAS r0 addr
 ALIAS r1 grey
 
         MOV addr 0
 fill:   MOV grey addr
-        MOD grey 8            ; which byte of its row (0–7)
-        DIV grey 2            ; 2 bytes = 8 pixels per bar: level 0–3
+        AND grey 7            ; = MOD 8: which byte of its row (0–7)
+        SHR grey 1            ; = DIV 2: 8 pixels per bar, level 0–3
         MUL grey 85
         STB [IMG+addr] grey
         ADD addr 1
@@ -904,71 +905,35 @@ export const IMAGE_STAMP = `; STAMP: take a photo and write where it was taken i
 ; four bytes (@X, then @Y, each 16-bit, high byte first), like the
 ; engineering header real spacecraft send with their images.
 ; In the Gallery, open the photo's hex view: the first bytes are yours.
-
-ALIAS r0 addr
-ALIAS r1 value
-ALIAS r2 low
+; The ROM's PUT16 splits a number into two bytes (Reference → ROM).
 
         CALL SNAP NORTH 1
         JNE @STATUS OK fail
-        MOV addr 0
-        MOV value @X
-        CALL put2
-        MOV value @Y
-        CALL put2
+        CALL PUT16 IMG @X     ; bytes 0–1; r0 = IMG + 2, the next free byte
+        CALL PUT16 r0 @Y      ; bytes 2–3
         CALL SEND 0
         END 1
 fail:   END 0
-
-; put2: write value as two bytes (high, low) at addr; addr += 2
-put2:   MOV low value
-        AND low 0xFF          ; keep bits 7–0: the low byte
-        SHR value 8           ; bits 15–8 move down to 7–0
-        AND value 0xFF        ; the high byte: −300 → FE D4
-        STB [IMG+addr] value
-        ADD addr 1
-        STB [IMG+addr] low
-        ADD addr 1
-        RET
 `;
 
 export const IMAGE_PLOT = `; PLOT: draw single pixels. Takes a photo and draws a white
-; diagonal from the top-left corner to the bottom-right one.
-; The pixel routine works for any 2-bpp picture (modes 1 and 2).
+; diagonal from the top-left corner to the bottom-right one with the
+; ROM's PLOT (any 2-bpp picture: modes 1 and 2).
+; PLOT is a helper: it may change r0 and r1, so x is saved on the
+; data stack around the call (or keep it in r2, which PLOT keeps).
+
+ALIAS r0 x
 
         CALL SNAP NORTH 1
         JNE @STATUS OK fail
-        MOV r0 0
-diag:   MOV r1 r0             ; y = x
-        MOV r2 3              ; colour 3 = white
-        CALL pixel
-        ADD r0 1
-        JLT r0 32 diag
+diag:   PUSH x                ; save x: PLOT may change r0
+        CALL PLOT x x 3       ; pixel (x, x) = white (3)
+        POP x                 ; x is back
+        ADD x 1
+        JLT x 32 diag
         CALL SEND 0
         END 1
 fail:   END 0
-
-; pixel: pixel (r0 = x, r1 = y) = colour r2 (0–3).
-; Keeps r0; changes r1, r2 and r3.
-pixel:  PUSH r0
-        SHL r1 3              ; y × 8: start of the row
-        MOV r3 r0
-        SHR r3 2              ; x / 4
-        ADD r1 r3             ; r1 = address of the byte
-        AND r0 3              ; pixel in the byte (0 = leftmost)
-        MOV r3 3
-        SUB r3 r0
-        SHL r3 1              ; r3 = shift: 6, 4, 2 or 0
-        SHL r2 r3             ; new colour moved into place
-        MOV r0 3
-        SHL r0 r3             ; r0 = mask: the pixel's two bits
-        LDB r3 [IMG+r1]       ; the byte
-        OR r3 r0              ; set the pixel's bits...
-        SUB r3 r0             ; ...and take them away: now 00
-        OR r3 r2              ; put the new colour in
-        STB [IMG+r1] r3
-        POP r0
-        RET
 `;
 
 export const IMAGE_MEMORY_MAP = `; MEMORY MAP: Explorer that remembers where it has been. Image
@@ -997,11 +962,11 @@ turn:   ADD dir 1
 go:     CALL STEP dir 1
         JNE @STATUS OK turn
         MOV cell @Y
-        MOD cell 16           ; map row 0–15 (also for negative @Y)
-        MUL cell 16
+        AND cell 15           ; map row 0–15 (the low 4 bits: also for negative @Y)
+        SHL cell 4            ; × 16
         MOV seen @X
-        MOD seen 16           ; map column 0–15
-        ADD cell seen         ; byte address 0–255
+        AND seen 15           ; map column 0–15
+        OR cell seen          ; byte address 0–255: row in bits 7–4, column in 3–0
         LDB seen [IMG+cell]   ; earlier visits
         ADD dir seen          ; known tile: turn by that many quarters
         MOD dir 4
