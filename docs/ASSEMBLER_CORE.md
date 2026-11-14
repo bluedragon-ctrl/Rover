@@ -354,6 +354,10 @@ more:   JNE @DRIVE 0 look         ; tiles left?
         RET                       ; return r0 to the firmware: @PROG_RESULT = samples seen
 ```
 
+*Built in slice 4* as the template *Drive and scan at once*: it keeps the count in `r0` and
+counts a sample only when it comes into sight (the sweep before saw something else), since
+a sample stays in sight for several sweeps and this sketch would count it once per sweep.
+
 **Default firmware**, the slice: `RUN SLICE` becomes `CALL RUN SLICE` (or
 `MOV @SLICE SLICE` + `CALL PROGRAM`); `SLEEP 20` becomes `CALL SLEEP 20`. Estimated size
 about 170 B of 512: the shipped programs keep plenty of room.

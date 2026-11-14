@@ -1,6 +1,6 @@
 # Image memory: player guide **[M12]**
 
-Status: **in the game** (M12). Rules in [`SPEC.md`](SPEC.md) §3.8.7, plan in
+Status: **in the game** (M12; on the M14 ROM and devices since M14 slice 4). Rules in [`SPEC.md`](SPEC.md) §3.8.7, plan in
 [`ROADMAP.md`](ROADMAP.md) M12. In the game, **Reference → Image** sums this guide up, and the
 six examples are Code tab program templates (*Image: Line* … *Image: Memory map*), word for
 word: a test keeps them identical to the code below. The tests also run all six examples
@@ -15,7 +15,7 @@ The camera no longer sends a photo by itself. Taking a picture, changing it and 
 are three separate steps, and your program decides what happens in between:
 
 ```
-            CALL SNAP SEND 1
+           CALL SNAP                CALL SEND
   camera ─────────► image memory ─────────► science recorder ──► downlink ──► Gallery
                      (256 bytes)             (waits to be sent)
                         ▲     │
@@ -38,8 +38,22 @@ and only those products are sent to Earth.
 
 ## 2. Instructions
 
-**[M14]** The camera, the send and the erase are devices (`@CAM` with `@CAM_MODE`, `@SEND`,
-`@ERASE`); the ROM routines below start them and `WAIT` until they are done (Reference → ROM).
+**[M14]** The camera, the send and the erase are **devices**: the CPU starts them by writing a
+port and sleeps with `WAIT` until they are done. The ROM routines below do exactly that
+(Reference → ROM shows their code), so `CALL SNAP NORTH 1` is:
+
+```
+SNAP:   POP @CAM_MODE         ; mode (pushed last: popped first)
+        POP @CAM              ; direction: starts the exposure, @STATUS = accepted?
+        JNE @STATUS OK snap_x ; refused: busy, low power, bad mode...
+        WAIT @CAM             ; 10 ticks; then @STATUS = how it went
+snap_x: RET
+```
+
+Write the ports yourself to do something while the camera exposes: `MOV @CAM_MODE 1`,
+`MOV @CAM NORTH`, compute, then `WAIT @CAM`. Image memory belongs to the camera while it
+exposes: `@SEND` and `@ERASE` answer `ERR_BUSY` until it is done, and the camera shares the
+chassis with the drive and the tools (one at a time). The drivers change no registers.
 
 | Instruction | Cycles | What it does |
 | :--- | :--- | :--- |
@@ -305,6 +319,24 @@ corner of the photo shows them as a few odd pixels. **Try:** add `@TICK` (use 4 
 call `put2` for the high and the low half); stamp `@SUN_LIGHT` to see why a photo
 came out dark.
 
+**With the ROM.** The ROM has the same routine as `CALL PUT16 addr v` (Reference → ROM). It
+takes a data address, so it writes into RAM as well as image memory, and returns the next
+free address in `r0`. The whole example shrinks to this (30 B, the same bytes in the photo):
+
+```
+; Stamp with the ROM's PUT16
+
+        CALL SNAP NORTH 1
+        JNE @STATUS OK fail
+        CALL PUT16 IMG @X     ; bytes 0-1; r0 = IMG + 2, the next free byte
+        CALL PUT16 r0 @Y      ; bytes 2-3
+        CALL SEND 0
+        END 1
+fail:   END 0
+```
+
+`CALL GET16 addr` reads such a number back, with its sign (`FE D4` = −300).
+
 ### Example 5: Plot, single pixels
 
 ```
@@ -347,12 +379,34 @@ pixel:  PUSH r0
         RET
 ```
 
-`pixel` is a reusable routine: copy it into your own programs (the ROM has the same as `CALL PLOT x y grey`, and `CALL PUT16 addr v` for Stamp: Reference → ROM). It follows the recipe of
+`pixel` is a reusable routine: copy it into your own programs. It follows the recipe of
 §3: address, shift, mask, clear the old colour (`OR` then `SUB`, as there is no NOT), put
 the new one in. With only four registers it saves `x` on the data stack; the caller sets
 `y` again for every pixel. **Try:** draw the
 other diagonal (y = 31 − x); a crosshair through the centre; your initials in a corner of
 a photo; a filled square.
+
+**With the ROM.** `CALL PLOT x y grey` is the same recipe in the ROM. Like every ROM
+*helper* it may change `r0` and `r1` (and keeps the other registers), so a loop counter
+must live in `r2` or `r3`. The diagonal becomes this (33 B, the same picture):
+
+```
+; Plot with the ROM's PLOT
+
+ALIAS r2 x            ; not r0 or r1: PLOT may change those
+
+        CALL SNAP NORTH 1
+        JNE @STATUS OK fail
+diag:   CALL PLOT x x 3       ; pixel (x, x) = white
+        ADD x 1
+        JLT x 32 diag
+        CALL SEND 0
+        END 1
+fail:   END 0
+```
+
+Keep your own `pixel` when you need something the ROM's does not do, such as the bigger
+pictures of modes 3–5.
 
 ### Example 6: Memory map, image memory as RAM
 

@@ -24,7 +24,7 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | **M10** | **Firmware + program slot (SPEC §3.9)** | 🚧 slice 1 (core, save v10) done; slice 2 (machine code + byte addresses, save v11, Code tab / Console redesign, listing pane) in review |
 | M11 | User interface review (after M10) | 🚧 Comms tab, Code tab dump box, Reference → Radio, Mission events: default since 2026-11-13 (save v13); `BRK` reports itself |
 | M12 | Image memory: `SNAP` → `LDB` / `STB` → `SEND` (SPEC §3.8.7, guide [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md)) | ✅ done (bit instructions; image memory in the core, save v14; templates, Reference → Image, Gallery labels + hex view, `SNAP` warning; goal *Darkroom* + first-edit bonus per camera mode, save v15) |
-| **M14** | **Assembler core**: hardware through device ports + `WAIT`, ROM library, RAM / `VAR` / addressing modes / `DATA`, program called like a subroutine (design [`ASSEMBLER_CORE.md`](ASSEMBLER_CORE.md)) | 🚧 design approved; slice 2 (memory model, save v17) done; slice 3 (devices, `WAIT`, ROM, `CALL PROGRAM`, save v18) in review; slice 4 (lessons) next |
+| **M14** | **Assembler core**: hardware through device ports + `WAIT`, ROM library, RAM / `VAR` / addressing modes / `DATA`, program called like a subroutine (design [`ASSEMBLER_CORE.md`](ASSEMBLER_CORE.md)) | 🚧 design approved; slices 2 (memory model, save v17) and 3 (devices, `WAIT`, ROM, `CALL PROGRAM`, save v18) done; slice 4 (lessons, Reference *CPU* / *Devices* / *Memory map*) in review; boot ROM with safe mode next |
 | M13 | Realism pass 1: watchdog `@WDT`, thermal model + array dust, fault protection `@PREEMPT` (SPEC §3.3.4, §3.9.2, §3.9.5) | 🚧 core, default firmware, *Fault protection* template, Reference, save v16 done; in review (balance numbers to playtest) |
 
 ## M14 — Assembler core (in progress)
@@ -57,7 +57,7 @@ safe mode goes into M14 (option ROMs, tables, `RAND` later); upload 6 energy per
       the data section, Code tab RAM totals, Reference *Memory*, admin RAM view; save v17
       (RAM, `fwRamTop`, v16 code rewritten, rebooted with boot reason 6). Tests:
       `tests/memory.test.ts`.
-- [x] Slice 3 (in review): devices, `WAIT`, ROM, `CALL PROGRAM`, removal of the old
+- [x] Slice 3: devices, `WAIT`, ROM, `CALL PROGRAM`, removal of the old
       instructions, migration (SPEC §5.9, §3.9.2).
   - [x] Opcodes: hardware instructions and `RUN` retired; `WAIT` = `12`, `LDF` = `13`
         (decision 1: freed numbers reused once; `1F 05`–`1F 07` free). `@TX_DATA` retired.
@@ -80,9 +80,29 @@ safe mode goes into M14 (option ROMs, tables, `RAND` later); upload 6 energy per
   - [x] Tests: `tests/devices.test.ts` (ROM, `WAIT`, devices, interlocks, drive + radar at
         once, timers, save round trip mid-drive, v17 migration); the rest of the suite moved
         to the new language.
-- [ ] Slice 4: templates as lessons (*Count with a variable*, *Drive and scan at once*, …;
-      the shipped templates still read like the old instructions in places), image guide,
-      Reference sections *CPU*, *Devices*, *Memory map*, tests.
+- [x] Slice 4 (in review): templates as lessons, image guide, Reference sections, tests.
+  - [x] New lesson templates *Count with a variable* (`VAR`, load / change / store, RAM
+        survives *Run again*, 16-bit `GET16` / `PUT16`, helpers change `r0` / `r1`; 68 B) and
+        *Drive and scan at once* (radar sweeps while the drive runs, polling `@DRIVE`, edge
+        detection so each sample counts once, top-level `RET` returns `r0`; 48 B). The Code tab
+        lists the course in order: *First steps → Drive yourself → Count with a variable →
+        Route → Drive and scan at once*, then the rest.
+  - [x] The other headers say which device and ports each ROM call stands for (`SCAN` =
+        `@RADAR` + `WAIT`, `SNAP` = `@CAM_MODE` / `@CAM`, `ACT` = `@TOOL_ARG` / `@TOOL`, `USE` =
+        `@REPAIR_SYS` / `@REPAIR`, `SLEEP` = `@TIMER`); Fetch points to `DIR_TO`, Spiral to the
+        ROM's argument popping. *Drive yourself*'s Try now stops a drive with `@DRIVE_N 0`.
+  - [x] `IMAGE_MEMORY.md`: diagram fixed (`CALL SNAP` / `CALL SEND`), §2 shows the `SNAP`
+        driver and how to start the camera yourself, *With the ROM* versions of Stamp (`PUT16`,
+        30 B) and Plot (`PLOT`, 33 B, counter in `r2`); a test checks they make the same photo.
+  - [x] Reference: new tabs *CPU* (registers, cycles, `WAIT`, stacks, calling convention,
+        `@STATUS`, the program as a subroutine, machine code), *Devices* (the three steps,
+        one row per device: start / parameter / answer ports, ROM driver, sharing, cost) and
+        *Memory map* (data and code address spaces, addressing modes, `VAR` layout; ranges
+        from `MEMORY_MAP`, the chassis, upgrades and the ROM size). Basics got shorter. Image
+        tab: the stale "addresses wrap" row and the ~400-tick estimate fixed.
+  - [x] Tests: `programs.test.ts` (the two new lessons), `image-memory.test.ts` (ROM
+        versions), `tests/reference.test.ts` (every device listed with real ports and a ROM
+        driver; numbers from the chassis). No save format change.
 - [x] ROM helper routines (after decision 1 below): `ABS v`, `DIR_TO dx dy` (−1 = arrived),
       `PUT16 addr v` (returns addr + 2), `GET16 addr` (signed), `PLOT x y grey`; ROM 330 B.
       *Image: Stamp* / *Image: Plot* renamed their own routines `put2` / `pixel` (the names
@@ -776,3 +796,4 @@ window with a fixed dish?
 | 2026-11-14 | `claude/intelligent-faraday-lx8xgo` (3) | M14 design approved (decisions §12 of `ASSEMBLER_CORE.md`); slice 2 memory model: RAM / `VAR` / `DATA` / `LDF`, bracket addresses, data address space with image memory at `IMG` and cargo at `CARGO`, Mk-I 512 B Flash + 64 B RAM, RAM upgrades, upload 6/B, image templates and guide on `[IMG+…]`, template *Route*, save v17 with code migration. |
 | 2026-11-14 | `ccr-298af329-qtcfs9` | M14 slice 3: devices behind ports (15 ports 49–63, `WAIT` 12, `ERR_BUSY`, chassis interlock, `@DRIVE_N 0` stop), ROM library at 0xF000 (drivers, Reference → ROM listing, argument check), `CALL PROGRAM` + `@SLICE` timer interrupt, top-level `RET`; hardware instructions, `RUN`, `@TX_DATA` retired, `LDF` = 13; Mk-I 8 cycles / 16-deep data stack; save v18 with code rewrite; template *Drive yourself*; `tests/devices.test.ts`. |
 | 2026-11-14 | `ccr-298af329-qtcfs9` (2) | Owner decisions on slice 3: ROM helpers may change `r0`/`r1` → helpers `ABS`, `DIR_TO`, `PUT16`, `GET16`, `PLOT` built (ROM 330 B; Stamp / Plot templates renamed their routines `put2` / `pixel`); retired port numbers 30, 33, 34 to be reused once before the extended operand; tick-start preemption and radar timing accepted. |
+| 2026-11-14 | `claude/m14-slice4-lessons` | M14 slice 4: lesson templates *Count with a variable* and *Drive and scan at once*, the course order in the Code tab, device wording in every template header; `IMAGE_MEMORY.md` on the ROM (`SNAP` driver, *With the ROM* Stamp / Plot, tested); Reference tabs *CPU*, *Devices*, *Memory map*, Image tab fixes; `tests/reference.test.ts`. |

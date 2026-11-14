@@ -359,8 +359,9 @@ export const PROGRAM_DRIVE_YOURSELF = `; DRIVE YOURSELF: the same 3×3 square as
 ; sleeps until the drive is idle (the CPU just waits, for free), then
 ; @STATUS says how the drive ended. Reference → ROM shows the ROM's
 ; STEP: the same instructions.
-; Try: sweep the radar while the wheels turn: MOV @RADAR dir, then
-; WAIT @RADAR and read @RADAR_HIT, before the WAIT @DRIVE.
+; Try: MOV @DRIVE_N 0 right after the start: the drive stops at the
+; end of its first tile and WAIT reads ERR_PREEMPTED. Then see
+; "Drive and scan at once" for what the free CPU can do meanwhile.
 
 ALIAS r0 dir
 
@@ -375,15 +376,103 @@ side:   MOV @DRIVE dir            ; which way: writing it starts the drive
 stuck:  END 0
 `;
 
+/** Program 1c (M14): a variable in RAM, load / change / store, 16-bit numbers with the ROM helpers. */
+export const PROGRAM_COUNT = `; COUNT WITH A VARIABLE: drive a 2×2 square one tile at a time and
+; count the tiles in RAM. END with how often the program has run:
+; press "Run again" (Comms) and both counts keep growing.
+;
+; Learn: VAR (a variable in RAM), load / change / store (LDB, ADD,
+; STB), a 16-bit number (CALL GET16 / PUT16), which registers the
+; ROM's helpers may change.
+;
+; The registers are the CPU's only working space: four numbers. RAM
+; is bigger and is not cleared by Run again or a program upload, only
+; by a reboot. VAR name reserves a byte of RAM and makes name its
+; address; VAR name 2 reserves two. The CPU cannot add to memory: it
+; loads the byte into a register (LDB), changes it there and stores it
+; back (STB). A byte holds 0–255; two bytes hold up to 32767, and the
+; ROM's GET16 / PUT16 read and write them (high byte first). Helpers
+; answer in r0 and may change r0 and r1, so this program keeps its
+; own numbers in r2 and r3 (drivers like STEP change no register).
+; Try: count in a register instead of [runs]: it starts from 0 every
+; run. LOG the tile count at every corner.
+
+CONST T_TILES 2             ; log tag: tiles driven in all runs
+CONST LEG 2                 ; tiles per side
+
+VAR runs                    ; 1 byte: how often the program ran
+VAR tiles 2                 ; 2 bytes: tiles driven, all runs together
+
+ALIAS r2 dir        ; r0 and r1 belong to the helpers
+ALIAS r3 n          ; tiles on this side; then a byte from RAM
+
+        LDB n [runs]              ; runs = runs + 1:
+        ADD n 1                   ;   load, change,
+        STB [runs] n              ;   store
+side:   MOV n 0
+tile:   CALL STEP dir 1           ; one tile at a time, to count them
+        JNE @STATUS OK stuck
+        CALL GET16 tiles          ; r0 = the 16-bit number at tiles
+        ADD r0 1
+        CALL PUT16 tiles r0       ; ...stored back (changes r0 and r1)
+        ADD n 1
+        JLT n LEG tile
+        ADD dir 1                 ; corner: turn right
+        JLT dir 4 side
+stuck:  CALL GET16 tiles
+        LOG T_TILES r0
+        LDB n [runs]
+        END n                     ; result: runs so far
+`;
+
+/** Program 1d (M14): two devices at once; only possible without the ROM's waiting drivers. */
+export const PROGRAM_DRIVE_AND_SCAN = `; DRIVE AND SCAN AT ONCE: drive 10 tiles east and count the samples
+; lying north of the way, sweeping the radar while the wheels turn.
+; Returns the number of samples seen.
+;
+; Learn: two devices working at the same time, polling a port
+; (@DRIVE = tiles left), a top-level RET as the end of a program.
+;
+; CALL STEP waits until the drive is done: nothing else happens on the
+; way. Started by hand (MOV @DRIVE), the drive goes on by itself and
+; the CPU is free. Drive, tools, repair and camera share the chassis
+; and work one at a time (ERR_BUSY), but the radar may sweep while
+; driving. Reading @DRIVE gives the tiles left, 0 when it is idle.
+; A sample stays in sight for several sweeps, so the program counts
+; only the moment it appears: the sweep before saw something else
+; (edge detection). The program has no END: RET at its top level
+; returns r0 to the firmware (@PROG_RESULT), like END r0.
+; Try: also look SOUTH; stop at the first sample (MOV @DRIVE_N 0).
+
+CONST T_SAMPLE 2            ; log tag: how far north a new sample lies
+
+ALIAS r0 seen       ; samples seen: r0 is what RET returns
+ALIAS r1 before     ; what the sweep before found
+
+        MOV @DRIVE_N 10
+        MOV @DRIVE EAST           ; start a 10-tile drive, do not wait
+        JNE @STATUS OK done       ; refused (array open, wall ahead...)
+look:   CALL SCAN NORTH           ; one sweep: 1 tick, the wheels go on
+        JNE @RADAR_HIT SAMPLE more
+        JEQ before SAMPLE more    ; still the same sample
+        ADD seen 1                ; a new one
+        LOG T_SAMPLE @RADAR_DIST
+more:   MOV before @RADAR_HIT
+        JNE @DRIVE 0 look         ; tiles left: sweep again
+        WAIT @DRIVE               ; collect how the drive ended
+done:   RET                       ; result: r0 = samples seen
+`;
+
 /** Program 2: wander forever. */
 export const PROGRAM_EXPLORER = `; EXPLORER: wander, turn right at obstacles, report acid vents.
 ;
 ; Learn: the radar (CALL SCAN), tile constants, MOD to wrap a counter,
 ; telling @STATUS errors apart, LOG frames for mission control.
 ;
-; CALL SCAN dir sweeps the radar; the first thing in that direction
-; waits in @RADAR_HIT (NONE if nothing within range) and its distance
-; in @RADAR_DIST; it works day and night. Items (samples, kits) are
+; CALL SCAN dir is the ROM's radar driver: it writes dir to @RADAR
+; and WAITs one tick for the sweep. The first thing in that direction
+; then waits in @RADAR_HIT (NONE if nothing within range) and its
+; distance in @RADAR_DIST; the radar works day and night. Items (samples, kits) are
 ; driven over, not around.
 ; Driving onto an ACID_VENT costs 10 hull and ends the drive with
 ; ERR_HAZARD; this program then logs the vent's position (Comms:
@@ -423,9 +512,10 @@ export const PROGRAM_PHOTOGRAPHER = `; PHOTOGRAPHER: photograph all four directi
 ; Learn: CALL SNAP and CALL SEND, aiming the headlight with @HEADING,
 ; waiting for space in the science recorder (@REC_FREE).
 ;
-; CALL SNAP dir mode takes a photo of the first thing within 2 tiles in
-; that direction (or the landscape) into image memory; SEND copies it into
-; the science recorder, and the downlink sends it home while the dish
+; CALL SNAP dir mode sets the camera's @CAM_MODE, starts it with @CAM
+; and WAITs 10 ticks: a photo of the first thing within 2 tiles in that
+; direction (or the landscape) lands in image memory. CALL SEND (the
+; @SEND device) copies it into the science recorder, and the downlink sends it home while the dish
 ; is on the orbiter (the firmware keeps it there). Only a lit photo
 ; earns credits: daylight, or the headlight shining at the subject.
 ; The firmware turns the headlight on at night; it shines along
@@ -458,6 +548,9 @@ export const PROGRAM_PROSPECTOR = `; PROSPECTOR: wander; mine ore veins and pick
 ;
 ; Learn: tools (CALL ACT TOOL_n arg), cargo ([CARGO+slot]), a
 ; subroutine of your own (CALL / RET).
+;
+; CALL ACT tool arg is the ROM's driver for the tools device: it writes
+; arg to @TOOL_ARG, then the hardpoint to @TOOL, and WAITs.
 ;
 ; Mk-I hardpoints: TOOL_0 drill (mines an adjacent ore vein into
 ; cargo), TOOL_1 grabber (picks up an adjacent item), TOOL_2
@@ -508,6 +601,8 @@ export const PROGRAM_FIELD_REPAIR = `; FIELD REPAIR: repair worn systems with wh
 ;
 ; Learn: CALL USE slot system, nested loops, choosing a port with jumps.
 ;
+; CALL USE is the ROM's driver for the repair device: @REPAIR_SYS =
+; the system, then the cargo slot into @REPAIR starts it.
 ; Systems: SYS_HULL (0), SYS_SOLAR (1), SYS_ANTENNA (2), with health
 ; in @HULL, @SOLAR_HEALTH, @ANTENNA_HEALTH (0–100). A repair takes 10
 ; ticks and uses the item up. REPAIR_KIT: +30 hull, +40 solar, +40
@@ -556,6 +651,8 @@ export const PROGRAM_FETCH = `; FETCH: drive to the nearest supply crate and pic
 ; rover heads for the tile just south of the crate, then grabs NORTH.
 ; It drives straight at it: with a rock in the way it ENDs with 2.
 ; Try: when blocked, step sideways once and go on (see Explorer).
+; Or let the ROM pick: CALL DIR_TO dx dy returns the direction in r0
+; (−1 = arrived); helpers may change r0 and r1, so move dx, dy first.
 
 ALIAS r0 dx         ; how far east the target is (negative: west)
 ALIAS r1 dy         ; how far north
@@ -592,7 +689,8 @@ export const PROGRAM_SPIRAL = `; SPIRAL: search around the start in a growing sq
 ;
 ; CALL leg dir len pushes dir, then len, onto the data stack and jumps
 ; to leg; leg POPs them back in reverse order (last in, first out).
-; The stack holds 16 numbers: every CALL argument must be POPped.
+; The stack holds 16 numbers: every CALL argument must be POPped. The
+; ROM's routines take their arguments the same way (Reference → ROM).
 ; Each corner arrives in the Comms tab as "T_X = ..." and "T_Y = ...".
 ; At the end BRK halts the program and the rover sends its registers
 ; home (Comms: a DUMP "sent by BRK"); press Continue to END.
@@ -634,7 +732,8 @@ export const PROGRAM_SEISMIC = `; SEISMIC SURVEY: listen for ore in four directi
 ; through ports (@SEISMIC_TYPE, @SEISMIC_DIST), result codes.
 ;
 ; CALL ACT TOOL_3 dir (4 ticks) hears the nearest ore vein up to 12 tiles
-; away in dir, even through walls: @SEISMIC_DIST = distance, 0 = none.
+; away in dir, even through walls. Like the radar, the device leaves
+; its answer in ports: @SEISMIC_DIST = distance, 0 = none.
 ; Without the upgrade the hardpoint is empty: ERR_NO_TOOL.
 ; END 1 = mined, 0 = no scanner, 2 = no ore in range, 3 = blocked on
 ; the way (the scanner hears through walls, the rover cannot drive).
@@ -672,6 +771,8 @@ export const PROGRAM_WEATHER = `; WEATHER STATION: stay put and report the weath
 ;
 ; Learn: CALL SLEEP for timing, @TICK, DIV, the alert ports.
 ;
+; CALL SLEEP n is MOV @TIMER n + WAIT @TIMER: each slot has its own
+; timer device, and a waiting CPU costs no energy.
 ; @SUN_LIGHT is 0–100. @ALERT is ALERT_NONE or the event on its way
 ; (ALERT_SQUALL, ALERT_ECLIPSE); @ALERT_ETA is the ticks until it
 ; starts. The firmware already stows the solar array for a squall:
@@ -913,6 +1014,9 @@ go:     CALL STEP dir 1
 export const PROGRAM_TEMPLATES: Record<string, string> = {
   'First steps': PROGRAM_FIRST_STEPS,
   'Drive yourself': PROGRAM_DRIVE_YOURSELF,
+  'Count with a variable': PROGRAM_COUNT,
+  Route: PROGRAM_ROUTE,
+  'Drive and scan at once': PROGRAM_DRIVE_AND_SCAN,
   Explorer: PROGRAM_EXPLORER,
   Photographer: PROGRAM_PHOTOGRAPHER,
   Prospector: PROGRAM_PROSPECTOR,
@@ -921,7 +1025,6 @@ export const PROGRAM_TEMPLATES: Record<string, string> = {
   Spiral: PROGRAM_SPIRAL,
   'Seismic survey': PROGRAM_SEISMIC,
   'Weather station': PROGRAM_WEATHER,
-  Route: PROGRAM_ROUTE,
   'Image: Line': IMAGE_LINE,
   'Image: Test pattern': IMAGE_TEST_PATTERN,
   'Image: Negative': IMAGE_NEGATIVE,

@@ -344,6 +344,25 @@ describe('the image templates = the guide examples (docs/IMAGE_MEMORY.md), and t
     for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) expect(px(b, x, y)).toBe(x === y ? 3 : px(orig, x, y));
   });
 
+  /** The guide's "With the ROM" variants of examples 4 and 5 (blocks starting "; Stamp with the ROM…"). */
+  const romBlock = (name: string) => md.match(new RegExp('```\\n(; ' + name + ' with the ROM[\\s\\S]*?)```'))![1];
+  const sameProduct = (name: string, variant: string, at?: [number, number]) => {
+    const a = runExample(name, 1, at);
+    const b = rover(DEFAULT_FIRMWARE, { program: romBlock(variant), at });
+    until(b.e, () => b.u.link.products.length >= 1);
+    expect(productPayload(b.e.seed, b.u.link.products[0])).toEqual(productPayload(a.e.seed, a.u.link.products[0]));
+    expect(b.u.link.products[0].level).toBe(Level.EDITED);
+  };
+
+  it('4b/5b: the ROM versions (PUT16, PLOT) make the same photo with the sizes the guide gives', () => {
+    sameProduct('STAMP', 'Stamp', [5, -300]);
+    sameProduct('PLOT', 'Plot');
+    expect(md).toMatch(/shrinks to this \(30 B,/);
+    expect(compile(romBlock('Stamp'), CHASSIS_MK1, consts, { slot: 'program' }).flashUsed).toBe(30);
+    expect(md).toMatch(/becomes this \(33 B,/);
+    expect(compile(romBlock('Plot'), CHASSIS_MK1, consts, { slot: 'program' }).flashUsed).toBe(33);
+  });
+
   it('6 Memory map: counts visits in image memory and never sends', () => {
     const r = rover(DEFAULT_FIRMWARE, { program: ex('MEMORY MAP') });
     r.u.img.fill(200); // old contents: the program clears them first
