@@ -1,7 +1,9 @@
 # M14 — Assembler core (design draft)
 
-Status: **draft for the owner's review** (2026-11-13). Nothing here is built yet. Once
-approved, the rules move into [`SPEC.md`](SPEC.md) and the plan into
+Status: **design approved by the owner** (2026-11-14, §12). **Slice 2 (memory, §7) is
+built** (SPEC §5.8): RAM, `VAR`, brackets, `DATA` / `LDF`, the data address space, Mk-I
+512 B Flash / 64 B RAM, upload 6 energy per byte, save v17. Not built yet: devices, `WAIT`,
+ROM, `CALL PROGRAM`, 8 cycles per tick, the bigger data stack (slice 3). Built parts move into [`SPEC.md`](SPEC.md); the plan is in
 [`ROADMAP.md`](ROADMAP.md) M14; this file then becomes the player guide, like
 [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md).
 
@@ -397,18 +399,19 @@ says so.
    on `[IMG+…]`, Reference sections *CPU*, *Devices*, *ROM*, *Memory map*; tests.
 5. Optional, after review: safe mode (§6.3.1), option ROMs, ROM tables.
 
-## 12. Open questions for the owner
+## 12. Decisions (owner, 2026-11-14)
 
-1. **Opcode numbers**: reuse the freed one-byte numbers once (§9), or keep them retired
-   and give `WAIT` / `LDF` two-byte opcodes?
-2. **RAM**: shared, with `VAR`s from both ends (§7.1), or a separate bank per slot (safer,
-   but no mailbox)?
-3. **`CALL PROGRAM`** starts the program in the same tick (a real call), or at the next
-   tick (as `RUN` does)?
-4. **`@SLICE 0`** = no time limit: allow it, or require a slice?
-5. Top-level **`RET` returns `r0`** as the result (§5.1): OK, or only `END v`?
-6. **`LOG`** stays an instruction (a trace port), or becomes a ROM routine writing bytes to
-   a transmit port (players could then read how frames are encoded, at ~10 cycles a log)?
-7. **Image memory bounds**: fault on a wrong address (proposed), or keep wrapping?
-8. **ROM extras** for M14 (§6.3): safe mode, option ROMs, tables, `RAND`: which, if any?
-9. **Upload cost per byte** 12 → 6?
+1. **Opcode numbers:** reuse the freed one-byte numbers once (§9).
+2. **RAM:** shared by both slots, `VAR`s from both ends (§7.1). Overwriting the other slot's
+   memory, or running past the end, is allowed: a real-life bug to learn from.
+3. **`CALL PROGRAM`** starts the program in the same tick, like a real call (§5.1).
+4. **`@SLICE 0`** = no time limit: allowed.
+5. A top-level **`RET` returns `r0`** as the result, besides `END v` (§5.1).
+6. **`LOG` stays an instruction** (the trace port).
+7. **Image memory bounds** (owner: "suggest"): an address outside mapped memory **faults**,
+   as everywhere in the data address space (§7.1). Consistent with 2.
+8. **ROM extras** (owner: "suggest"): M14 builds the **boot ROM with safe mode**
+   (§6.3.1): it ends boot loops, which matter more now that the watchdog exists. Option
+   ROMs, tables and `RAND` stay ideas for later (the generic `ACT` driver already covers
+   the seismic scanner).
+9. **Upload cost per byte** 12 → 6.

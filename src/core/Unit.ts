@@ -124,6 +124,26 @@ export class Unit {
     return this.img;
   }
 
+  /**
+   * M14 RAM (docs/ASSEMBLER_CORE.md §7): shared by firmware and program, zero after a hard
+   * reboot. Grows with RAM upgrades; read it through ramMemory().
+   */
+  ram = new Uint8Array(0);
+  /** RAM top the firmware was assembled for (its VARs count down from here); 0 = the chassis RAM. */
+  fwRamTop = 0;
+  /** RAM taken by each slot's VARs, [low, high), from their last successful compile. */
+  firmwareRam = { low: 0, high: 0 };
+  programRam = { low: 0, high: 0 };
+
+  ramMemory(): Uint8Array {
+    if (this.ram.length < this.chassis.ramBytes) {
+      const grown = new Uint8Array(this.chassis.ramBytes);
+      grown.set(this.ram);
+      this.ram = grown;
+    }
+    return this.ram;
+  }
+
   /** ERASE: image memory zeroed, the capture dropped (SPEC §3.8.7). */
   clearImageMemory(): void {
     this.img.fill(0);
@@ -138,6 +158,7 @@ export class Unit {
     this.prog = new RoverVM(chassis);
     this.cargo = new Array(chassis.cargoSlots).fill(0);
     this.img = new Uint8Array(imageBytes(chassis));
+    this.ram = new Uint8Array(chassis.ramBytes);
   }
 
   /** The context that executes now: the program inside a RUN slice, else the firmware. */

@@ -26,9 +26,12 @@ const addMode = (c: ChassisDef, mode: number) => {
 };
 
 export const UPGRADES: UpgradeDef[] = [
-  // Ids kept from the line-based Flash (saves store them): FLASH_48 = 384 B, FLASH_64 = 512 B (M10).
-  { id: 'FLASH_48', title: 'Flash 384 B', description: 'Flash (firmware + program) 256 → 384 bytes.', cost: 40, apply: (c) => (c.flashBytes = 384) },
-  { id: 'FLASH_64', title: 'Flash 512 B', description: 'Flash (firmware + program) 384 → 512 bytes.', cost: 90, requires: ['FLASH_48'], apply: (c) => (c.flashBytes = 512) },
+  // Ids kept from the line-based Flash (saves store them): FLASH_48 = 768 B, FLASH_64 = 1024 B (M14; 384 / 512 B before).
+  { id: 'FLASH_48', title: 'Flash 768 B', description: 'Flash (firmware + program) 512 → 768 bytes.', cost: 40, apply: (c) => (c.flashBytes = 768) },
+  { id: 'FLASH_64', title: 'Flash 1 KB', description: 'Flash (firmware + program) 768 → 1024 bytes.', cost: 90, requires: ['FLASH_48'], apply: (c) => (c.flashBytes = 1024) },
+  // M14: RAM grows in place (the firmware's VARs keep the addresses it was assembled with).
+  { id: 'RAM_128', title: 'RAM 128 B', description: 'RAM (shared by firmware and program) 64 → 128 bytes.', cost: 40, apply: (c, u) => { c.ramBytes = 128; u.ramMemory(); } },
+  { id: 'RAM_256', title: 'RAM 256 B', description: 'RAM 128 → 256 bytes.', cost: 80, requires: ['RAM_128'], apply: (c, u) => { c.ramBytes = 256; u.ramMemory(); } },
   {
     id: 'REGS_6',
     title: 'Register file r0–r5',

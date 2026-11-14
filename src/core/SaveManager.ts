@@ -9,8 +9,9 @@ import type { RoverVM } from './vm/RoverVM';
 import type { Capture, Unit, UnitAction, UnitMotion } from './Unit';
 import { fromHex, toHex } from './imaging';
 import { ambientTemp, Environment } from './Environment';
+import { migrateImageMemory } from './migrateSource';
 
-export const SAVE_VERSION = 16;
+export const SAVE_VERSION = 17;
 
 interface UnitSave {
   id: number;
@@ -51,6 +52,11 @@ interface UnitSave {
   preempt: [mask: number, alarm: number, hit: number];
   thermal: [temp: number, heater: number];
   dust: number;
+  /** v17 (M14): RAM as hex without trailing zeros; RAM top the firmware was assembled for (0 = the chassis RAM). */
+  ram: string;
+  fwRamTop: number;
+  /** Set by a migration that rewrote this rover's code: its saved CPU state no longer matches, reboot on load. */
+  rebootOnLoad?: boolean;
 }
 
 interface VmSave {
@@ -240,6 +246,8 @@ function saveUnit(u: Unit): UnitSave {
     preempt: [u.preemptMask, u.batAlarm, u.preempted],
     thermal: [u.temp, u.heater],
     dust: u.solarDust,
+    ram: toHex(u.ram.subarray(0, lastNonZero(u.ram) + 1)),
+    fwRamTop: u.fwRamTop,
   };
 }
 
@@ -388,6 +396,21 @@ export function migrate(raw: unknown): SaveSnapshot {
     }
     v = 16;
   }
+  if (v === 16) {
+    // v16 -> v17: M14 memory. RAM starts empty. Image memory moved to IMG in the data
+    // address space and LDB / STB take a bracketed address: rewrite the code; a rover whose
+    // code changed is rebooted on load (its saved instruction addresses no longer match).
+    for (const u of out.units) {
+      u.ram ??= '';
+      u.fwRamTop ??= 0;
+      const fw = migrateImageMemory(u.sourceCode);
+      const prog = migrateImageMemory(u.program.source);
+      if (fw !== u.sourceCode || prog !== u.program.source) u.rebootOnLoad = true;
+      u.sourceCode = fw;
+      u.program.source = prog;
+    }
+    v = 17;
+  }
   if (v !== SAVE_VERSION) throw new SaveError(`Unsupported save version ${s.version}.`);
   out.version = v;
   return out;
@@ -482,10 +505,15 @@ export function deserialize(raw: unknown): SimulationEngine {
       heater: us.thermal[1],
       solarDust: us.dust,
     });
+    const ram = u.ramMemory(); // sized by the RAM upgrades
+    ram.fill(0);
+    ram.set(fromHex(us.ram).slice(0, ram.length));
+    u.fwRamTop = us.fwRamTop;
+    u.sourceCode = us.sourceCode; // before compiling: the installed firmware keeps its RAM layout
     const res = e.compileFor(u, us.sourceCode);
     if (!res.program) throw new SaveError(`Saved firmware of ${us.name} no longer compiles: ${res.errors[0]?.message}`);
-    u.sourceCode = us.sourceCode;
     u.firmwareBytes = res.flashUsed;
+    u.firmwareRam = { low: res.ramLow, high: res.ramHigh };
     u.vm.load(res.program);
     loadVm(u.vm, us.vm);
     const ps = us.program;
@@ -493,11 +521,13 @@ export function deserialize(raw: unknown): SimulationEngine {
     if (!pres.program) throw new SaveError(`Saved program of ${us.name} no longer compiles: ${pres.errors[0]?.message}`);
     u.programSource = ps.source;
     u.programBytes = pres.flashUsed;
+    u.programRam = { low: pres.ramLow, high: pres.ramHigh };
     u.prog.load(pres.program);
     loadVm(u.prog, ps.vm);
     u.progState = ps.state;
     u.progResult = ps.result;
     u.slice = ps.slice;
+    if (us.rebootOnLoad) e.rebootAfterUpdate(u);
   }
   e.refreshDerived();
   return e;

@@ -40,12 +40,16 @@ and only those products are sent to Earth.
 | Instruction | Cycles | What it does |
 | :--- | :--- | :--- |
 | `SNAP dir [mode]` | blocks 10 ticks, 200 energy | Photograph the subject in `dir` into image memory (overwrites all of it). Writes `@STATUS`. |
-| `LDB dst addr` | 1 cycle | `dst` = byte at `addr` (always 0–255). |
-| `STB addr src` | 1 cycle | Byte at `addr` = `src` (only the low 8 bits are kept: 256 → 0, −1 → 255). |
+| `LDB dst [addr]` | 1 cycle | `dst` = byte at data address `addr` (always 0–255). Image memory starts at `IMG`: byte `n` of the picture is `[IMG+n]`. |
+| `STB [addr] src` | 1 cycle | Byte at `addr` = `src` (only the low 8 bits are kept: 256 → 0, −1 → 255). |
 | `SEND [type]` | blocks 1 tick, 10 energy | Copy image memory into the recorder as a product of `type` (default: the mode of the last `SNAP`). Image memory is kept. Writes `@STATUS`: `ERR_FULL` (no room in the recorder), `ERR_INVALID` (bad type, or the type is bigger than image memory), `ERR_LOW_POWER`. |
 | `ERASE` | blocks 2 ticks, 10 energy | Set every byte of image memory to 0 and forget the last `SNAP` (a `SEND` after it is a drawn picture). Writes `@STATUS`: `ERR_LOW_POWER`. |
 
-`LDB` and `STB` are compute instructions like `MOV`: no energy, no `@STATUS`.
+`LDB` and `STB` are compute instructions like `MOV`: no energy, no `@STATUS`. **[M14]** They
+reach the rover's whole data memory, not just pictures: RAM at `0x000`, image memory at
+`IMG` = `0x100`, cargo at `CARGO` = `0x600` (the memory map:
+[`ASSEMBLER_CORE.md`](ASSEMBLER_CORE.md) §7). The address goes in brackets: `[IMG+addr]`
+is image memory byte `addr`, with `addr` a register.
 
 The **bit instructions** `AND`, `OR`, `SHL`, `SHR` (1 cycle each, compute) are made for
 taking bytes apart (§3): `AND dst mask` keeps only the bits set in `mask`, `OR dst bits`
@@ -59,7 +63,7 @@ Flash byte more than `ADD`.
 
 The picture is stored row by row, top row first. Each pixel has 4 grey levels, so it needs
 2 bits, and **one byte holds 4 pixels**. A row of 32 pixels is 8 bytes; the whole picture is
-32 × 8 = **256 bytes**, addresses 0–255.
+32 × 8 = **256 bytes**, bytes 0–255 (data addresses `IMG+0` … `IMG+255`).
 
 ```
             x: 0–3    4–7    8–11  ...  28–31
@@ -132,8 +136,10 @@ In mode 5 one byte is one pixel: **address = y × 32 + x**, the easiest mode to 
   (overwrites it) and `ERASE`. A program that needs a blank picture starts with `ERASE`
   (example 1).
 * **`SNAP` overwrites all of it.** Do not mix photos with data you want to keep.
-* **Addresses wrap** around the memory size: on Mk-I, address 256 is byte 0 and −1 is
-  byte 255. No error, so check your arithmetic.
+* **Stay inside the picture.** On Mk-I, `[IMG+256]` is past the end of image memory and
+  `[IMG-1]` before it: nothing answers there, so the CPU **faults** ("No memory at 0x…"),
+  like a real out-of-bounds access. A faulted program goes back to the firmware; check your
+  arithmetic (before M14 addresses wrapped around silently).
 * **`SEND` copies**: image memory is unchanged afterwards and can be sent again (only the
   first `SEND` after a `SNAP` earns credits).
 * **`SEND type` only says how mission control decodes the bytes.** `SEND 1` on a drawing
@@ -152,9 +158,9 @@ In mode 5 one byte is one pixel: **address = y × 32 + x**, the easiest mode to 
   three times longer than sending it (128 ticks at full signal). The firmware runs your
   program in time slices, so long loops just take several slices. *CPU overclock*
   upgrades make processing faster.
-* **Flash.** Every example fits next to the default firmware (108 B free on Mk-I).
-  Example 5 is the largest (95 B): delete a comfort block of the firmware if you want to
-  add more to it.
+* **Flash.** Every example fits next to the default firmware with lots of room to spare
+  (Mk-I has 512 B of Flash since M14). An address in brackets costs 1 B for `[r]` and
+  3 B for `[IMG+r]` (the 16-bit offset is stored with the instruction).
 
 ## 5. Examples
 
@@ -163,12 +169,12 @@ Measured on Mk-I (4 cycles per tick). Ticks are CPU time only; `SNAP` adds 10 ti
 
 | # | Example | Teaches | Flash | CPU time |
 | :--- | :--- | :--- | :--- | :--- |
-| 1 | Line | rows, addresses, `ERASE` | 27 B | 28 cycles ≈ 7 ticks |
-| 2 | Test pattern | grey levels, computing from the address | 34 B | 1795 cycles ≈ 450 ticks |
-| 3 | Negative | `SNAP` → change → `SEND` | 41 B | 1541 cycles ≈ 390 ticks |
-| 4 | Stamp | numbers as bytes (masks and shifts), negative numbers | 60 B | 27 cycles ≈ 7 ticks |
-| 5 | Plot | single pixels inside a byte (bit instructions) | 95 B | 773 cycles ≈ 190 ticks |
-| 6 | Memory map | image memory as plain RAM | 72 B | runs forever |
+| 1 | Line | rows, addresses, `ERASE` | 29 B | 28 cycles ≈ 7 ticks |
+| 2 | Test pattern | grey levels, computing from the address | 36 B | 1795 cycles ≈ 450 ticks |
+| 3 | Negative | `SNAP` → change → `SEND` | 45 B | 1541 cycles ≈ 390 ticks |
+| 4 | Stamp | numbers as bytes (masks and shifts), negative numbers | 64 B | 27 cycles ≈ 7 ticks |
+| 5 | Plot | single pixels inside a byte (bit instructions) | 99 B | 773 cycles ≈ 190 ticks |
+| 6 | Memory map | image memory as a big scratch RAM | 76 B | runs forever |
 
 ### Example 1: Line, your first picture
 
@@ -180,7 +186,7 @@ ALIAS r0 addr
 
         ERASE                 ; every byte 0 = 00 00 00 00 = four black pixels
         MOV addr 128          ; row 16 starts at byte 16 × 8 = 128
-line:   STB addr 0xFF         ; 0xFF = 11 11 11 11 = four white pixels
+line:   STB [IMG+addr] 0xFF   ; 0xFF = 11 11 11 11 = four white pixels
         ADD addr 1
         JLT addr 136 line     ; one row = 8 bytes = 32 pixels
         SEND 1                ; decode as a 32×32 grey photo
@@ -208,7 +214,7 @@ fill:   MOV grey addr
         MOD grey 8            ; which byte of its row (0–7)
         DIV grey 2            ; 2 bytes = 8 pixels per bar: level 0–3
         MUL grey 85
-        STB addr grey
+        STB [IMG+addr] grey
         ADD addr 1
         JLT addr 256 fill
         SEND 1
@@ -232,10 +238,10 @@ ALIAS r1 byte
         SNAP NORTH            ; into image memory: nothing is sent yet
         JNE @STATUS OK fail   ; ERR_LOW_POWER, ERR_INVALID...
         MOV addr 0
-inv:    LDB byte addr         ; read
+inv:    LDB byte [IMG+addr]   ; read
         MUL byte -1
         ADD byte 255          ; byte = 255 − byte
-        STB addr byte         ; write back
+        STB [IMG+addr] byte   ; write back
         ADD addr 1
         JLT addr 256 inv
         SEND                  ; same format as the SNAP (mode 1)
@@ -278,9 +284,9 @@ put16:  MOV low value
         AND low 0xFF          ; keep bits 7–0: the low byte
         SHR value 8           ; bits 15–8 move down to 7–0
         AND value 0xFF        ; the high byte: −300 → FE D4
-        STB addr value
+        STB [IMG+addr] value
         ADD addr 1
-        STB addr low
+        STB [IMG+addr] low
         ADD addr 1
         RET
 ```
@@ -327,11 +333,11 @@ plot:   PUSH r0
         SHL r2 r3             ; new colour moved into place
         MOV r0 3
         SHL r0 r3             ; r0 = mask: the pixel's two bits
-        LDB r3 r1             ; the byte
+        LDB r3 [IMG+r1]       ; the byte
         OR r3 r0              ; set the pixel's bits...
         SUB r3 r0             ; ...and take them away: now 00
         OR r3 r2              ; put the new colour in
-        STB r1 r3
+        STB [IMG+r1] r3
         POP r0
         RET
 ```
@@ -347,7 +353,8 @@ a photo; a filled square.
 
 ```
 ; MEMORY MAP: Explorer that remembers where it has been. Image
-; memory is used as plain RAM: one byte per tile counts the visits,
+; memory is used as a big scratch RAM (the rover's real RAM has only
+; 64 B): one byte per tile counts the visits,
 ; a 16×16 map that repeats every 16 tiles. Back on a known tile, the
 ; rover turns by the number of earlier visits, so it leaves a loop
 ; differently every time instead of circling forever.
@@ -374,11 +381,11 @@ go:     STEP dir 1
         MOV seen @X
         MOD seen 16           ; map column 0–15
         ADD cell seen         ; byte address 0–255
-        LDB seen cell         ; earlier visits
+        LDB seen [IMG+cell]   ; earlier visits
         ADD dir seen          ; known tile: turn by that many quarters
         MOD dir 4
         ADD seen 1
-        STB cell seen         ; one more visit (wraps at 256)
+        STB [IMG+cell] seen   ; one more visit (wraps at 256)
         JMP loop
 ```
 

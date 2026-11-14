@@ -53,7 +53,7 @@ const px = (b: ArrayLike<number>, x: number, y: number): number => (b[y * 8 + (x
 describe('Darkroom: first-edit bonus per camera mode (M12 slice 3)', () => {
   // Edit one byte (STB 0 255), or none, after each SNAP: mode 1, 1 again, raw 1, then (once the
   // recorder has drained) mode 2.
-  const src = 'SNAP NORTH\nSTB 0 255\nSEND\nSNAP NORTH\nSTB 0 255\nSEND\nSNAP NORTH\nSEND\nSLEEP 600\nSNAP NORTH 2\nSTB 0 255\nSEND\nSLEEP 100000';
+  const src = 'SNAP NORTH\nSTB [IMG] 255\nSEND\nSNAP NORTH\nSTB [IMG] 255\nSEND\nSNAP NORTH\nSEND\nSLEEP 600\nSNAP NORTH 2\nSTB [IMG] 255\nSEND\nSLEEP 100000';
 
   it('pays +editFirstBonus once per photo type for lit edited photos and completes Darkroom', () => {
     const { e } = rover(src, { link: true });
@@ -71,7 +71,7 @@ describe('Darkroom: first-edit bonus per camera mode (M12 slice 3)', () => {
   });
 
   it('dark and drawn pictures earn no edit bonus', () => {
-    const { e } = rover('ERASE\nSTB 0 255\nSEND 1\nSLEEP 100000', { link: true });
+    const { e } = rover('ERASE\nSTB [IMG] 255\nSEND 1\nSLEEP 100000', { link: true });
     until(e, () => e.gallery.length === 1 && e.gallery[0].received === productFrameBytes(1), 3000);
     expect(e.gallery[0]).toMatchObject({ level: Level.DRAWN, credits: 0 });
     expect(e.editedTypes).toEqual([]);
@@ -97,16 +97,17 @@ describe('Darkroom: first-edit bonus per camera mode (M12 slice 3)', () => {
 
 describe('image memory instructions (SPEC §3.8.7)', () => {
   it('encode as LDB 1D, STB 1E, SEND 1F 05, ERASE 1F 06 and decode back', () => {
-    const r = compile('LDB r0 r1\nSTB 5 r0\nSEND\nSEND 2\nERASE', CHASSIS_MK1, consts);
+    const r = compile('LDB r0 [IMG+r1]\nSTB [IMG+5] r0\nSEND\nSEND 2\nERASE', CHASSIS_MK1, consts);
     expect(r.errors).toEqual([]);
-    expect(hex(r.program!.code)).toBe('1D 10 11 1E 05 10 1F 05 3F 05 02 1F 06');
+    // [IMG+r1] = 29 (indexed r1) + 16-bit offset 0x0100; [IMG+5] = 1C (absolute) + 0x0105
+    expect(hex(r.program!.code)).toBe('1D 10 29 01 00 1E 1C 01 05 10 1F 05 3F 05 02 1F 06');
     expect(decodeProgram(r.program!.code).map((i) => i.op)).toEqual(['LDB', 'STB', 'SEND', 'SEND', 'ERASE']);
     expect(compile('ERASE 1', CHASSIS_MK1, consts).errors).toHaveLength(1);
-    expect(compile('LDB 5 r0', CHASSIS_MK1, consts).errors).toHaveLength(1); // destination must be writable
+    expect(compile('LDB 5 [IMG+r0]', CHASSIS_MK1, consts).errors).toHaveLength(1); // destination must be writable
   });
 
-  it('Mk-I has 256 zeroed bytes; LDB / STB wrap the address, keep 8 bits and are compute (no @STATUS)', () => {
-    const { e, u } = rover('DIV r0 0\nSTB 256 300\nSTB -1 -1\nLDB r1 0\nLDB r2 255\nLDB r3 7\nMOV r0 @STATUS\nSLEEP 1000');
+  it('Mk-I has 256 zeroed bytes at IMG; LDB / STB keep 8 bits and are compute (no @STATUS)', () => {
+    const { e, u } = rover('DIV r0 0\nSTB [IMG] 300\nSTB [IMG+255] -1\nLDB r1 [IMG]\nLDB r2 [IMG+255]\nLDB r3 [IMG+7]\nMOV r0 @STATUS\nSLEEP 1000');
     expect(u.img).toHaveLength(256);
     expect([...u.img].every((b) => b === 0)).toBe(true);
     run(e, 2);
@@ -117,8 +118,17 @@ describe('image memory instructions (SPEC §3.8.7)', () => {
     expect(u.imgEdited).toBe(true);
   });
 
+  it('an address past the end of image memory faults (no more wrap-around, M14)', () => {
+    for (const bad of ['STB [IMG+256] 1', 'LDB r0 [IMG-1]']) {
+      const { e, u } = rover(`${bad}\nSLEEP 1000`);
+      run(e, 1);
+      expect(u.vm.state).toBe(CpuState.FAULT);
+      expect(u.vm.faultReason).toMatch(/memory at 0x(200|0FF)/i);
+    }
+  });
+
   it('SEND of a drawing: DRAWN level in the header, its own bytes, no credits, cannot be flagged', () => {
-    const { e, u } = rover('MOV r0 128\nl: STB r0 0xFF\nADD r0 1\nJLT r0 136 l\nSEND 1\nMOV r1 @STATUS\nSLEEP 100000', { link: true });
+    const { e, u } = rover('MOV r0 128\nl: STB [IMG+r0] 0xFF\nADD r0 1\nJLT r0 136 l\nSEND 1\nMOV r1 @STATUS\nSLEEP 100000', { link: true });
     const c0 = e.credits;
     until(e, () => u.link.products.length === 1);
     const p = u.link.products[0];
@@ -156,7 +166,7 @@ describe('image memory instructions (SPEC §3.8.7)', () => {
   });
 
   it('an STB after the SNAP makes it EDITED: its own bytes, still lit and credited, original reproducible', () => {
-    const { e, u } = rover('SNAP NORTH\nLDB r0 0\nMUL r0 -1\nADD r0 255\nSTB 0 r0\nSEND\nSLEEP 100000');
+    const { e, u } = rover('SNAP NORTH\nLDB r0 [IMG]\nMUL r0 -1\nADD r0 255\nSTB [IMG] r0\nSEND\nSLEEP 100000');
     until(e, () => u.link.products.length === 1);
     const p = u.link.products[0];
     expect(p).toMatchObject({ level: Level.EDITED, lit: true, subject: T.CLIFF_WALL });
@@ -191,7 +201,7 @@ describe('image memory instructions (SPEC §3.8.7)', () => {
   });
 
   it('ERASE zeroes image memory and drops the capture on request: 2 ticks, eraseEnergy; SEND keeps the memory', () => {
-    const { e, u } = rover('SNAP NORTH\nSEND\nLDB r1 7\nERASE\nMOV r0 @STATUS\nSEND\nSLEEP 100000');
+    const { e, u } = rover('SNAP NORTH\nSEND\nLDB r1 [IMG+7]\nERASE\nMOV r0 @STATUS\nSEND\nSLEEP 100000');
     const idle = rover('SLEEP 100000');
     let snapped: number[] = [];
     until(e, () => {
@@ -217,7 +227,7 @@ describe('image memory instructions (SPEC §3.8.7)', () => {
   });
 
   it('is non-volatile: survives a reboot and power-off; grows with camera upgrades', () => {
-    const { e, u } = rover('STB 3 77\nSLEEP 100000');
+    const { e, u } = rover('STB [IMG+3] 77\nSLEEP 100000');
     run(e, 2);
     e.upload(u, 'SLEEP 100000', { factory: true });
     run(e, 2);
@@ -229,7 +239,7 @@ describe('image memory instructions (SPEC §3.8.7)', () => {
     expect(u.img[3]).toBe(77);
     expect(u.capture).not.toBeNull();
 
-    const g = rover('STB 3 77\nSLEEP 100000');
+    const g = rover('STB [IMG+3] 77\nSLEEP 100000');
     run(g.e, 2);
     for (const id of ['REC_2K', 'CAM_HIRES']) g.e.installUpgrade(g.u, id);
     expect(g.u.imageMemory()).toHaveLength(1024);
@@ -237,7 +247,7 @@ describe('image memory instructions (SPEC §3.8.7)', () => {
   });
 
   it('save mid-processing, load, continue == uninterrupted run', () => {
-    const src = 'loop: SNAP NORTH\nMOV r0 0\ninv: LDB r1 r0\nMUL r1 -1\nADD r1 255\nSTB r0 r1\nADD r0 1\nJLT r0 256 inv\nSEND\nSNAP EAST 2\nSEND\nSEND 1\nSLEEP 30\nJMP loop';
+    const src = 'loop: SNAP NORTH\nMOV r0 0\ninv: LDB r1 [IMG+r0]\nMUL r1 -1\nADD r1 255\nSTB [IMG+r0] r1\nADD r0 1\nJLT r0 256 inv\nSEND\nSNAP EAST 2\nSEND\nSEND 1\nSLEEP 30\nJMP loop';
     const make = () => rover(src, { link: true, seed: 11 }).e;
     const a = make();
     run(a, 900);
@@ -358,7 +368,7 @@ describe('M12 slice 2 helpers', () => {
   });
 
   it('hex view: header decoded with its level, payload rows by image memory address', () => {
-    const { e, u } = rover('STB 17 0xAB\nSEND 1\nSLEEP 100000');
+    const { e, u } = rover('STB [IMG+17] 0xAB\nSEND 1\nSLEEP 100000');
     until(e, () => u.link.products.length === 1);
     const frame = productFrame(e.seed, u.link.products[0]);
     const lines = hexDump(frame, frame.length).split('\n');

@@ -55,9 +55,9 @@ describe('compiler slots (SPEC §3.9.1)', () => {
 
   it('firmware and program share the flash; the error names both sizes', () => {
     const src = Array.from({ length: 10 }, () => 'ADD r0 100').join('\n'); // 40 B
-    expect(c(src, 'program', 216).errors).toEqual([]);
-    expect(c(src, 'program', 217).errors).toEqual([{ line: 10, message: 'Program is 40 bytes + firmware 217 bytes; Rover Mk-I has 256 bytes of Flash' }]);
-    expect(c(src, 'firmware', 217).errors[0].message).toBe('Firmware is 40 bytes + program 217 bytes; Rover Mk-I has 256 bytes of Flash');
+    expect(c(src, 'program', 472).errors).toEqual([]);
+    expect(c(src, 'program', 473).errors).toEqual([{ line: 10, message: 'Program is 40 bytes + firmware 473 bytes; Rover Mk-I has 512 bytes of Flash' }]);
+    expect(c(src, 'firmware', 473).errors[0].message).toBe('Firmware is 40 bytes + program 473 bytes; Rover Mk-I has 512 bytes of Flash');
   });
 
   it('the default firmware leaves room for every shipped program; comfort blocks state their real cost', () => {
@@ -222,11 +222,11 @@ describe('uploads and commands (SPEC §3.9.3)', () => {
   });
 
   it('rejects a firmware that no longer fits next to the program', () => {
-    const big = Array.from({ length: 40 }, () => 'ADD r0 100').join('\n'); // 160 B
+    const big = Array.from({ length: 80 }, () => 'ADD r0 100').join('\n'); // 320 B
     const { e, u } = rover('loop: RUN 5\nJMP loop', big);
     const res = e.upload(u, big, factory);
     expect(res.program).toBeNull();
-    expect(res.errors[0].message).toMatch(/Firmware is \d+ bytes \+ program 160 bytes/);
+    expect(res.errors[0].message).toMatch(/Firmware is \d+ bytes \+ program 320 bytes/);
   });
 
   it('dumps the selected slot: program dumps are kinds 3/4 with @PROG_STATE', () => {

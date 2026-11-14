@@ -1,9 +1,9 @@
-import { ENCODING, type ChassisDef } from '../balance';
+import { ENCODING, MEMORY_MAP, type ChassisDef } from '../balance';
 import { MAX_LOG_TAG, SYSTEM_TAG } from '../downlink';
 import { getPort } from '../ports';
 import { Alert, Dir, LightColor, Preempt, ProgState, Status, SystemId } from '../types';
 
-import { encodeInstr, immBytes, instrBytes, MAX_OPTIONAL, OPCODES, opcodeSize, SIGNATURES, type Instr, type Op, type Operand } from './isa';
+import { encodeInstr, immBytes, instrBytes, MAX_OPTIONAL, memBytes, OPCODES, opcodeSize, SIGNATURES, type Instr, type Op, type Operand } from './isa';
 
 export { HARDWARE_OPS, immBytes, instrBytes, OPCODES, operandBytes, type Instr, type Op, type Operand } from './isa';
 
@@ -17,6 +17,8 @@ export interface Program {
   code: number[];
   /** Byte address → index into `instrs` (instruction starts only). */
   indexAt: Map<number, number>;
+  /** M14: where the instructions end; `DATA` bytes follow up to `code.length` (the data section). */
+  codeBytes: number;
 }
 
 export interface CompileError {
@@ -38,6 +40,12 @@ export interface CompileResult {
   logTags: Record<number, { names: string[]; lines: number[] }>;
   /** `ALIAS` names per register number, as written (dump decoding in Comms; display only). */
   regNames: Record<number, string[]>;
+  /** Byte address of each line that holds an instruction or `DATA` (an estimate on lines with errors). */
+  lineAddr: Record<number, number>;
+  /** M14: RAM this slot's `VAR`s take, and where: [low, high) (program from 0 up, firmware from the top down). */
+  ramUsed: number;
+  ramLow: number;
+  ramHigh: number;
 }
 
 /** Code slot (M10, SPEC §3.9): the firmware runs the program inside `RUN` time slices. */
@@ -48,6 +56,10 @@ export interface CompileOptions {
   slot?: Slot;
   /** Flash bytes taken by the other slot (firmware + program share the chassis flash). */
   otherBytes?: number;
+  /** M14: RAM the other slot's VARs take, [low, high), for the overlap check (shared RAM). */
+  otherRam?: { low: number; high: number } | null;
+  /** M14: top of RAM for the firmware's VARs (default: the chassis RAM; a saved firmware keeps its own). */
+  ramTop?: number;
 }
 
 export function builtinConstants(): Record<string, number> {
@@ -60,6 +72,7 @@ export function builtinConstants(): Record<string, number> {
   for (const [k, v] of Object.entries(ProgState)) if (typeof v === 'number') c[k] = v;
   for (const [k, v] of Object.entries(Preempt)) if (typeof v === 'number') c[k] = v;
   for (let i = 0; i < 4; i++) c[`TOOL_${i}`] = i;
+  for (const [k, v] of Object.entries(MEMORY_MAP)) c[k] = v;
   return c;
 }
 
@@ -88,7 +101,8 @@ function tokenize(source: string): RawLine[] {
   const out: RawLine[] = [];
   source.split(/\r?\n/).forEach((text, idx) => {
     const semi = text.indexOf(';');
-    let body = (semi >= 0 ? text.slice(0, semi) : text).trim();
+    // `[IMG + r1]` is one operand: no spaces inside brackets.
+    let body = (semi >= 0 ? text.slice(0, semi) : text).trim().replace(/\[[^\]]*\]/g, (m) => m.replace(/\s+/g, ''));
     let label: string | undefined;
     const m = /^([A-Za-z_][A-Za-z0-9_]*):/.exec(body);
     if (m) {
@@ -129,20 +143,59 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
   const regNames: CompileResult['regNames'] = {};
   const labels: Record<string, number> = {};
   const lines = tokenize(source);
+  const varLines: { line: number; used: number }[] = [];
 
   const nameTaken = (n: string) => n in constants || n in aliases || n in labels || REG.test(n) || (OPCODES as string[]).includes(n);
 
-  // Pass 1: directives and labels.
+  // Pass 1: directives and labels. A label names the next instruction, or the next DATA
+  // block (which the assembler moves to the data section after the code, M14).
   let ip = 0;
   const code: RawLine[] = [];
+  const data: RawLine[] = [];
+  const dataLabels: Record<string, number> = {};
+  let pending: { name: string; line: number }[] = [];
+  const ramBytes = chassis.ramBytes;
+  const ramTop = slot === 'firmware' ? (opts.ramTop ?? ramBytes) : ramBytes;
+  let ramUsed = 0;
+  const ramAddr = (size: number) => (slot === 'program' ? ramUsed : ramTop - ramUsed - size);
   for (const l of lines) {
     if (l.label) {
       const name = l.label.toUpperCase();
-      if (nameTaken(name)) err(l.line, `Label '${l.label}' clashes with an existing name`);
-      else labels[name] = ip;
+      if (nameTaken(name) || name in dataLabels) err(l.line, `Label '${l.label}' clashes with an existing name`);
+      else {
+        labels[name] = ip;
+        pending.push({ name, line: l.line });
+      }
     }
     if (!l.tokens.length) continue;
     const op = l.tokens[0].toUpperCase();
+    if (op === 'DATA') {
+      for (const p of pending) {
+        delete labels[p.name];
+        dataLabels[p.name] = data.length;
+      }
+      pending = [];
+      if (l.tokens.length < 2) err(l.line, 'DATA expects: DATA <byte> [byte...]');
+      else data.push(l);
+      continue;
+    }
+    if (op === 'VAR') {
+      if (l.tokens.length < 2 || l.tokens.length > 3) {
+        err(l.line, 'VAR expects: VAR <name> [size]');
+        continue;
+      }
+      const name = l.tokens[1].toUpperCase();
+      const size = l.tokens.length === 3 ? (parseNumber(l.tokens[2]) ?? constants[l.tokens[2].toUpperCase()]) : 1;
+      if (!IDENT.test(name)) err(l.line, `VAR: invalid name '${l.tokens[1]}'`);
+      else if (nameTaken(name) || name in dataLabels) err(l.line, `VAR: name '${l.tokens[1]}' is already used`);
+      else if (size === undefined || size < 1) err(l.line, `VAR: size '${l.tokens[2]}' must be a number of bytes (1 or more)`);
+      else {
+        constants[name] = ramAddr(size);
+        ramUsed += size;
+        varLines.push({ line: l.line, used: ramUsed });
+      }
+      continue;
+    }
     if (op === 'ALIAS') {
       if (l.tokens.length !== 3) {
         err(l.line, 'ALIAS expects: ALIAS <reg> <name>');
@@ -174,6 +227,7 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
       else constants[name] = v;
       continue;
     }
+    pending = [];
     code.push(l);
     ip++;
   }
@@ -184,6 +238,11 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
     const up = tok.toUpperCase();
     if (kind === 'l') return ENCODING.label;
     if (kind === 'k') return immBytes(parseNumber(tok) ?? constants[up] ?? 0);
+    if (kind === 'a') {
+      const terms = tok.replace(/^\[|\]$/g, '').split(/[+-]/).filter(Boolean);
+      const regs = terms.filter((t) => REG.test(t) || t.toUpperCase() in aliases).length;
+      return memBytes({ base: regs ? 0 : -1, off: 0, wide: terms.length > regs });
+    }
     if (up.startsWith('@')) return ENCODING.port;
     if (up in aliases || REG.test(tok)) return ENCODING.register;
     const n = parseNumber(tok) ?? constants[up];
@@ -197,7 +256,8 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
     return l.tokens.slice(1).reduce<number>((n, tok, i) => n + tokenBytes(tok, (sigOf?.[Math.min(i, sigOf.length - 1)] ?? 'v')[0]), sigOf ? opcodeSize(op) : ENCODING.opcode);
   };
 
-  // Labels become byte addresses (SPEC §5.7.1): every slot is addressed from 0x000.
+  // Labels become byte addresses (SPEC §5.7.1): every slot is addressed from 0x000; the
+  // data section starts where the instructions end.
   const addrOf: number[] = [];
   let addr = 0;
   for (const l of code) {
@@ -205,7 +265,14 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
     addr += lineSize(l);
   }
   addrOf.push(addr);
+  const codeBytes = addr;
+  const dataAddr: number[] = [];
+  for (const l of data) {
+    dataAddr.push(addr);
+    addr += l.tokens.length - 1;
+  }
   for (const name of Object.keys(labels)) labels[name] = addrOf[labels[name]];
+  for (const [name, i] of Object.entries(dataLabels)) labels[name] = dataAddr[i];
 
   // Pass 2: instructions.
   const instrs: Instr[] = [];
@@ -213,8 +280,58 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
   const lineBytes: Record<number, number> = {};
   const logTags: CompileResult['logTags'] = {};
 
+  /** `[n]`, `[r]`, `[r+n]`, `[n+r]`, `[a+b-c]`: at most one register; numbers, CONSTs, VARs and labels add up. */
+  const parseMem = (tok: string, line: number): Operand | null => {
+    if (!/^\[.+\]$/.test(tok)) {
+      err(line, `'${tok}' must be a memory address in brackets: [n], [r] or [r+n]`);
+      return null;
+    }
+    let base = -1;
+    let off = 0;
+    let terms = 0;
+    for (const m of tok.slice(1, -1).matchAll(/([+-]?)([^+-]+)/g)) {
+      const neg = m[1] === '-';
+      const t = m[2];
+      const up = t.toUpperCase();
+      const r = REG.exec(t) ? +REG.exec(t)![1] : aliases[up];
+      if (r !== undefined) {
+        if (neg || base >= 0) {
+          err(line, `'${tok}': one register only, added (base + offset)`);
+          return null;
+        }
+        if (r >= chassis.registers) {
+          err(line, `Register r${r} does not exist (this chassis has r0–r${chassis.registers - 1})`);
+          return null;
+        }
+        base = r;
+        continue;
+      }
+      const n = parseNumber(t) ?? constants[up] ?? labels[up];
+      if (n === undefined) {
+        err(line, `Unknown name '${t}' in '${tok}'`);
+        return null;
+      }
+      off += neg ? -n : n;
+      terms++;
+    }
+    if (base < 0 && (off < 0 || off > 0xffff)) {
+      err(line, `Address ${off} is outside 0–0xFFFF`);
+      return null;
+    }
+    if (base >= 0 && (off < -32768 || off > 32767)) {
+      err(line, `Offset ${off} is outside −32768..32767`);
+      return null;
+    }
+    return base >= 0 && terms > 0 ? { k: 'mem', base, off, wide: true } : { k: 'mem', base, off };
+  };
+
   const parseOperand = (tok: string, kind: string, line: number): Operand | null => {
     const up = tok.toUpperCase();
+    if (kind === 'a') return parseMem(tok, line);
+    if (tok.startsWith('[')) {
+      err(line, `Memory operands ('${tok}') only work in LDB, STB and LDF: load it into a register first`);
+      return null;
+    }
     if (kind === 'l') {
       if (up in labels) return { k: 'label', target: labels[up], name: up };
       err(line, `Unknown label '${tok}'`);
@@ -266,9 +383,11 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
     return null;
   };
 
+  const lineAddr: Record<number, number> = {};
   for (const [ci, l] of code.entries()) {
     const opTok = l.tokens[0].toUpperCase();
     lineBytes[l.line] = lineSize(l);
+    lineAddr[l.line] = addrOf[ci];
     if (!(opTok in SIGNATURES)) {
       err(l.line, `Unknown instruction '${l.tokens[0]}'`);
       continue;
@@ -331,10 +450,23 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
     instrs.push({ op, args, line: l.line, addr: at, size: instrBytes({ op, args }) });
   }
 
+  // DATA: bytes for the data section (−128..255, numbers or CONSTs).
+  const dataBytes: number[] = [];
+  data.forEach((l, i) => {
+    lineBytes[l.line] = l.tokens.length - 1;
+    lineAddr[l.line] = dataAddr[i];
+    for (const t of l.tokens.slice(1)) {
+      const v = parseNumber(t) ?? constants[t.toUpperCase()];
+      if (v === undefined) err(l.line, `DATA: '${t}' is not a number or CONST`);
+      else if (v < -128 || v > 255) err(l.line, `DATA: ${v} does not fit in a byte (−128..255)`);
+      dataBytes.push((v ?? 0) & 255);
+    }
+  });
+
   let flashUsed = 0;
   let overLine = 0;
   const budget = chassis.flashBytes - otherBytes;
-  for (const l of code) {
+  for (const l of [...code, ...data]) {
     flashUsed += lineBytes[l.line];
     if (!overLine && flashUsed > budget) overLine = l.line;
   }
@@ -349,6 +481,23 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
     );
   }
 
+  // Shared RAM: this slot's VARs must not overlap the other slot's (or leave the RAM).
+  const ramLow = slot === 'program' ? 0 : ramTop - ramUsed;
+  const ramHigh = slot === 'program' ? ramUsed : ramTop;
+  const other = opts.otherRam;
+  const overlaps = (lo: number, hi: number) => !!other && other.high > other.low && lo < other.high && other.low < hi;
+  for (const v of varLines) {
+    const lo = slot === 'program' ? 0 : ramTop - v.used;
+    const hi = slot === 'program' ? v.used : ramTop;
+    if (lo < 0 || hi > ramBytes || overlaps(lo, hi)) {
+      const what = slot === 'program' ? 'Program' : 'Firmware';
+      const otherName = slot === 'program' ? 'firmware' : 'program';
+      const otherUsed = other ? other.high - other.low : 0;
+      err(v.line, otherUsed > 0 ? `${what} VARs take ${v.used} B of RAM + ${otherName} ${otherUsed} B; ${chassis.name} has ${ramBytes} B of RAM` : `${what} VARs take ${v.used} B; ${chassis.name} has ${ramBytes} B of RAM`);
+      break;
+    }
+  }
+
   let program: Program | null = null;
   if (!errors.length) {
     const bytes: number[] = [];
@@ -358,7 +507,8 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
       indexAt.set(ins.addr, i);
       bytes.push(...encodeInstr(ins));
     });
-    program = { instrs, labels, lineToIp, code: bytes, indexAt };
+    bytes.push(...dataBytes);
+    program = { instrs, labels, lineToIp, code: bytes, indexAt, codeBytes };
   }
 
   return {
@@ -368,16 +518,21 @@ export function compile(source: string, chassis: ChassisDef, extraConstants: Rec
     lineBytes,
     logTags,
     regNames,
+    lineAddr,
+    ramUsed,
+    ramLow,
+    ramHigh,
   };
 }
 
 export function formatSig(op: Op): string {
-  const names: Record<string, string> = { v: 'value', d: 'dest', m: 'reg', l: 'label', k: 'tag' };
+  const names: Record<string, string> = { v: 'value', d: 'dest', m: 'reg', l: 'label', k: 'tag', a: '[address]' };
   return (
     `${op} ` +
     SIGNATURES[op]
       .map((s) => {
         const base = names[s[0]];
+        if (s[0] === 'a') return base;
         return s.endsWith('?') ? `[${base}]` : s.endsWith('*') ? `[${base}...]` : `<${base}>`;
       })
       .join(' ')

@@ -24,10 +24,10 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | **M10** | **Firmware + program slot (SPEC §3.9)** | 🚧 slice 1 (core, save v10) done; slice 2 (machine code + byte addresses, save v11, Code tab / Console redesign, listing pane) in review |
 | M11 | User interface review (after M10) | 🚧 Comms tab, Code tab dump box, Reference → Radio, Mission events: default since 2026-11-13 (save v13); `BRK` reports itself |
 | M12 | Image memory: `SNAP` → `LDB` / `STB` → `SEND` (SPEC §3.8.7, guide [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md)) | ✅ done (bit instructions; image memory in the core, save v14; templates, Reference → Image, Gallery labels + hex view, `SNAP` warning; goal *Darkroom* + first-edit bonus per camera mode, save v15) |
-| **M14** | **Assembler core**: hardware through device ports + `WAIT`, ROM library, RAM / `VAR` / addressing modes / `DATA`, program called like a subroutine (draft [`ASSEMBLER_CORE.md`](ASSEMBLER_CORE.md)) | 📝 design draft, awaiting owner review |
+| **M14** | **Assembler core**: hardware through device ports + `WAIT`, ROM library, RAM / `VAR` / addressing modes / `DATA`, program called like a subroutine (design [`ASSEMBLER_CORE.md`](ASSEMBLER_CORE.md)) | 🚧 design approved; slice 2 (memory model, save v17) done; slice 3 (devices, ROM) next |
 | M13 | Realism pass 1: watchdog `@WDT`, thermal model + array dust, fault protection `@PREEMPT` (SPEC §3.3.4, §3.9.2, §3.9.5) | 🚧 core, default firmware, *Fault protection* template, Reference, save v16 done; in review (balance numbers to playtest) |
 
-## M14 — Assembler core (design draft)
+## M14 — Assembler core (in progress)
 
 Owner, 2026-11-13: the game is a fun introduction to how assembler works, so the hardware
 instructions (`STEP`, `SCAN`, …) should become communication with ports, with the old
@@ -37,12 +37,26 @@ subroutine with a timer interrupt, ROM library and its other uses, memory map, `
 addressing modes, `DATA` / `LDF`, examples, machine code, save v17 migration, slices, open
 questions).
 
-Agreed so far: ports instead of hardware instructions; a small ROM library (more uses to be
-considered); Mk-I 512 B Flash, 64 B RAM, 8 cycles per tick; the memory proposal; on
-preemption the firmware decides. `RUN`: counterproposal in the draft (§5), awaiting review.
+Agreed: ports instead of hardware instructions; a small ROM library; Mk-I 512 B Flash, 64 B
+RAM, 8 cycles per tick; the memory proposal; on preemption the firmware decides; the
+program is called like a subroutine (`CALL PROGRAM`, `@SLICE`). Decisions 2026-11-14 (design
+§12): reuse freed opcode numbers once; shared RAM (overflows are allowed: a real bug to
+learn from); `CALL PROGRAM` in the same tick; `@SLICE 0` = no limit; top-level `RET` returns
+`r0`; `LOG` stays an instruction; image addresses fault outside memory; the boot ROM with
+safe mode goes into M14 (option ROMs, tables, `RAND` later); upload 6 energy per byte.
 
-- [ ] Slice 1: owner review of the draft; rules into SPEC.
-- [ ] Slice 2: memory model.
+- [x] Slice 1: owner review of the draft (decisions above).
+- [x] Slice 2: memory model (SPEC §5.8): data address space (RAM `0x000`, `IMG` `0x100`,
+      `CARGO` `0x600`, faults elsewhere), bracket addresses `[n]` / `[r]` / `[r+n]` (new
+      operand bytes), `LDB` / `STB` on the whole space, `LDF` (`1F 07`, a two-byte opcode
+      until slice 3 frees one-byte numbers), `VAR` (program up, firmware down, overlap
+      check, `fwRamTop` keeps a firmware's layout after a RAM upgrade), `DATA` in a data
+      section after the code (the CPU wraps at the end of the code), Mk-I 512 B Flash /
+      64 B RAM, upgrades Flash 768 / 1024 and RAM 128 / 256, upload 6 energy per byte; image
+      templates and `IMAGE_MEMORY.md` on `[IMG+…]`; lesson template *Route*; listing shows
+      the data section, Code tab RAM totals, Reference *Memory*, admin RAM view; save v17
+      (RAM, `fwRamTop`, v16 code rewritten, rebooted with boot reason 6). Tests:
+      `tests/memory.test.ts`.
 - [ ] Slice 3: devices, `WAIT`, ROM, `CALL PROGRAM`, removal of the old instructions, migration.
 - [ ] Slice 4: templates as lessons, image guide, Reference, tests.
 
@@ -719,3 +733,4 @@ window with a fixed dish?
 | 2026-11-13 | `claude/gallant-bell-hb1kyd` (7) | Program templates reworked as lessons (owner: they are teaching material): headers with *Learn* / *Try*, five new templates (Photographer, Field repair, Spiral, Seismic survey, Weather station), Explorer logs acid vents, Prospector `CALL lab` + `PEEK`, Fetch result 2 when blocked; tests: every instruction used, every template run. |
 | 2026-11-13 | `claude/intelligent-faraday-lx8xgo` | Realism review of the virtual hardware; M13 realism pass 1: watchdog `@WDT` (boot reason 5, default firmware kicks it, 158 B), thermal model (`@TEMP`, survival heaters `@HEATER`), array dust (`@SOLAR_DUST`, shed on stow, dust squall), fault protection (`@PREEMPT`, `@BAT_ALARM`, `@PREEMPTED`, `ERR_PREEMPTED`, *Fault protection* firmware template), save v16; remaining realism items in Backlog. |
 | 2026-11-13 | `claude/intelligent-faraday-lx8xgo` (2) | Review of the language and the player's development workflow against real assembler and flight-software practice; M14 *Assembler core* design draft (`docs/ASSEMBLER_CORE.md`): device ports + `WAIT`, ROM library, RAM / `VAR` / addressing modes / `DATA` / `LDF`, the program as a subroutine with a slice timer, migration plan, open questions. |
+| 2026-11-14 | `claude/intelligent-faraday-lx8xgo` (3) | M14 design approved (decisions §12 of `ASSEMBLER_CORE.md`); slice 2 memory model: RAM / `VAR` / `DATA` / `LDF`, bracket addresses, data address space with image memory at `IMG` and cargo at `CARGO`, Mk-I 512 B Flash + 64 B RAM, RAM upgrades, upload 6/B, image templates and guide on `[IMG+…]`, template *Route*, save v17 with code migration. |

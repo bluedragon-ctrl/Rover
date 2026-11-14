@@ -14,7 +14,8 @@ export interface ListingRow {
   /** Source text without the comment. */
   code: string;
   comment: string;
-  kind: 'instr' | 'label' | 'directive';
+  /** 'data': a DATA line (M14); its bytes sit in the data section after the code. */
+  kind: 'instr' | 'data' | 'label' | 'directive';
   error?: string;
 }
 
@@ -44,9 +45,11 @@ export function buildListing(source: string, res: CompileResult, slot: Slot): Li
     const size = res.lineBytes[line] ?? 0;
     const error = errs.get(line);
     if (size) {
-      const at = prog ? prog.lineToIp[line] : addr;
-      rows.push({ line, addr: at, bytes: prog ? prog.code.slice(at, at + size) : null, size, code, comment, kind: 'instr', error });
-      addr = at + size;
+      // DATA lines (M14) carry their address in the data section after the code.
+      const isData = /^(?:[A-Za-z_][A-Za-z0-9_]*:\s*)?DATA\b/i.test(body);
+      const at = res.lineAddr?.[line] ?? addr;
+      rows.push({ line, addr: at, bytes: prog ? prog.code.slice(at, at + size) : null, size, code, comment, kind: isData ? 'data' : 'instr', error });
+      if (!isData) addr = at + size;
     } else if (/^[A-Za-z_][A-Za-z0-9_]*:/.test(body)) rows.push({ line, addr, bytes: null, size: 0, code, comment, kind: 'label', error });
     else if (body) rows.push({ line, addr: null, bytes: null, size: 0, code, comment, kind: 'directive', error });
     else if (error) rows.push({ line, addr: null, bytes: null, size: 0, code, comment, kind: 'directive', error });
@@ -60,7 +63,7 @@ export function listingText(l: Listing): string {
   const w = LISTING_BYTES_PER_ROW * 3 - 1;
   for (const r of l.rows) {
     const a = r.addr === null ? ''.padEnd(10) : formatAddr(r.addr, l.slot).padEnd(10);
-    const chunks = r.kind !== 'instr' ? [''] : chunk(r.bytes ?? new Array(r.size).fill(-1));
+    const chunks = r.kind !== 'instr' && r.kind !== 'data' ? [''] : chunk(r.bytes ?? new Array(r.size).fill(-1));
     chunks.forEach((c, i) => {
       const hex = c.padEnd(w);
       if (i === 0) out.push(`${a} ${hex}  ${r.code.trim()}`.trimEnd());

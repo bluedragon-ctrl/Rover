@@ -1,4 +1,4 @@
-import { BALANCE, CHASSIS_MK1, type ChassisDef } from './balance';
+import { BALANCE, CHASSIS_MK1, MEMORY_MAP, type ChassisDef } from './balance';
 import { ChunkedWorld } from './ChunkedWorld';
 import { EventBus } from './EventBus';
 import { MapGenerator } from './MapGenerator';
@@ -211,10 +211,17 @@ export class SimulationEngine {
     return this.units.find((u) => u.x === x && u.y === y);
   }
 
-  /** Compile for a slot; the other slot's bytes count against the shared flash (SPEC §3.9.1). */
-  compileFor(unit: Unit, source: string, slot: Slot = 'firmware'): CompileResult {
+  /**
+   * Compile for a slot; the other slot's bytes count against the shared flash (SPEC §3.9.1)
+   * and its VARs against the shared RAM (M14). The installed firmware compiles for the RAM
+   * top it was flashed with, so its VARs keep their addresses after a RAM upgrade.
+   */
+  compileFor(unit: Unit, source: string, slot: Slot = 'firmware', opts: { fresh?: boolean } = {}): CompileResult {
     const otherBytes = slot === 'firmware' ? unit.programBytes : unit.firmwareBytes;
-    return compile(source, unit.chassis, this.registry.constants(), { slot, otherBytes });
+    const otherRam = slot === 'firmware' ? unit.programRam : unit.firmwareRam;
+    const installed = slot === 'firmware' && !opts.fresh && unit.fwRamTop && source === unit.sourceCode;
+    const ramTop = installed ? unit.fwRamTop : unit.chassis.ramBytes;
+    return compile(source, unit.chassis, this.registry.constants(), { slot, otherBytes, otherRam, ramTop });
   }
 
   signalOf(u: Unit): number {
@@ -362,9 +369,17 @@ export class SimulationEngine {
     u.preemptMask = 0;
     u.batAlarm = 0;
     u.preempted = 0;
+    u.ramMemory().fill(0); // M14: RAM is zero after a hard reboot
     u.vm.reboot();
     this.restartProgram(u);
     this.booted(u, reason);
+  }
+
+  /** Save migration (M14): the rover's code was rewritten for a new language version; restart it. */
+  rebootAfterUpdate(u: Unit): void {
+    if (!u.powered) return;
+    this.hardReboot(u, BootReason.UPDATE);
+    this.log(u, 'warn', 'Software update: the game rewrote this rover\'s code for the new language and rebooted it.', 'rover');
   }
 
   /** Power loss or destruction: the slice is gone with the CPU (the reboot resets the program). */
@@ -393,6 +408,7 @@ export class SimulationEngine {
     }
     unit.programSource = source;
     unit.programBytes = res.flashUsed;
+    unit.programRam = { low: res.ramLow, high: res.ramHigh };
     unit.prog.program = res.program;
     this.restartProgram(unit);
     const costMsg = res.cost ? `, cost ${(res.cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(unit)}` : '';
@@ -409,7 +425,7 @@ export class SimulationEngine {
    * `factory` installs firmware for free (new rovers, admin tools).
    */
   upload(unit: Unit, source: string, opts: { factory?: boolean } = {}): UploadResult {
-    const res: UploadResult = { ...this.compileFor(unit, source), cost: 0 };
+    const res: UploadResult = { ...this.compileFor(unit, source, 'firmware', { fresh: true }), cost: 0 }; // assembled for today's RAM
     if (!res.program) return res;
     if (!opts.factory) {
       const cost = this.uploadCost(unit, res.flashUsed);
@@ -425,6 +441,8 @@ export class SimulationEngine {
     }
     unit.sourceCode = source;
     unit.firmwareBytes = res.flashUsed;
+    unit.firmwareRam = { low: res.ramLow, high: res.ramHigh };
+    unit.fwRamTop = unit.chassis.ramBytes;
     unit.vm.program = res.program;
     this.hardReboot(unit, BootReason.UPLOAD);
     unit.cyclesLeft = 0;
@@ -1078,14 +1096,29 @@ export class SimulationEngine {
         if (p) writePortClamped(p, u, v, this.portCtx);
       },
       hardware: (ins, values) => this.hardware(u, ins, values),
+      // M14 data address space (docs/ASSEMBLER_CORE.md §7.1): RAM, image memory, cargo.
       load: (addr) => {
-        const mem = u.imageMemory();
-        return mem[((addr % mem.length) + mem.length) % mem.length];
+        const ram = u.ramMemory();
+        if (addr >= MEMORY_MAP.RAM && addr < MEMORY_MAP.RAM + ram.length) return ram[addr - MEMORY_MAP.RAM];
+        const img = u.imageMemory();
+        if (addr >= MEMORY_MAP.IMG && addr < MEMORY_MAP.IMG + img.length) return img[addr - MEMORY_MAP.IMG];
+        if (addr >= MEMORY_MAP.CARGO && addr < MEMORY_MAP.CARGO + u.cargo.length) return u.cargo[addr - MEMORY_MAP.CARGO] & 255;
+        return undefined;
       },
       store: (addr, value) => {
-        const mem = u.imageMemory();
-        mem[((addr % mem.length) + mem.length) % mem.length] = value & 255;
-        u.imgEdited = true;
+        const ram = u.ramMemory();
+        if (addr >= MEMORY_MAP.RAM && addr < MEMORY_MAP.RAM + ram.length) {
+          ram[addr - MEMORY_MAP.RAM] = value & 255;
+          return null;
+        }
+        const img = u.imageMemory();
+        if (addr >= MEMORY_MAP.IMG && addr < MEMORY_MAP.IMG + img.length) {
+          img[addr - MEMORY_MAP.IMG] = value & 255;
+          u.imgEdited = true;
+          return null;
+        }
+        if (addr >= MEMORY_MAP.CARGO && addr < MEMORY_MAP.CARGO + u.cargo.length) return 'Cargo is read-only';
+        return 'No memory';
       },
       log: (tag, value) => {
         u.link.enqueue(encodeLog(tag, value), u.chassis.logFifoBytes);

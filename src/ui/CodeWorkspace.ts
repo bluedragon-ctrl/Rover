@@ -203,7 +203,13 @@ export class CodeWorkspace {
 
   private totalsHtml(): string {
     const s = this.sizes();
-    return `<span class="fwc">firmware ${s.fw}</span> + <span class="progc">program ${s.prog}</span> = ${s.fw + s.prog} / ${s.cap} B`;
+    const u = this.opts.rover();
+    // M14: RAM taken by VARs, the edited slot counting its draft (shared RAM, like the flash).
+    const draftRam = this.current.result?.ramUsed ?? 0;
+    const fwRam = this.slot === 'firmware' ? draftRam : u.firmwareRam.high - u.firmwareRam.low;
+    const progRam = this.slot === 'program' ? draftRam : u.programRam.high - u.programRam.low;
+    const ram = fwRam || progRam ? ` · RAM ${fwRam} + ${progRam} = ${fwRam + progRam} / ${u.chassis.ramBytes} B` : '';
+    return `<span class="fwc">firmware ${s.fw}</span> + <span class="progc">program ${s.prog}</span> = ${s.fw + s.prog} / ${s.cap} B${ram}`;
   }
 
   /** Flash bar, state, warnings and listing for the selected slot. */
@@ -280,7 +286,7 @@ export class CodeWorkspace {
     for (const r of l.rows) {
       const cls = `lst-row ${r.kind}${r.error ? ' err' : ''}`;
       const addr = r.addr === null ? '' : `<span class="pfx">${this.slot === 'firmware' ? 'fw:' : 'prog:'}</span>${formatAddr(r.addr)}`;
-      const chunks = r.kind === 'instr' ? chunk(r.bytes ?? new Array(r.size).fill(-1)) : [''];
+      const chunks = r.kind === 'instr' || r.kind === 'data' ? chunk(r.bytes ?? new Array(r.size).fill(-1)) : [''];
       const title = r.error ? ` title="${esc(r.error)}"` : '';
       chunks.forEach((c, i) => {
         if (i === 0)

@@ -55,6 +55,8 @@ export class DebuggerPanel {
       </div>
       <div class="dim small" style="margin-top:4px">${u.temp} °C${u.heater ? ' · heaters on' : ''} · dust ${u.solarDust}% · watchdog ${u.wdt ? `${u.wdt}t` : 'off'}${u.preemptMask ? ` · preempt ${u.preemptMask}${u.batAlarm ? ` <${u.batAlarm}%` : ''}` : ''}</div>
       <div class="dim small">solar ${u.solarDeployed ? `+${u.lastSolarGain}/tick` : u.solarDeploy > 0 ? 'moving…' : 'stowed'} · signal ${this.engine.signalOf(u)} · log FIFO ${u.link.used}/${u.chassis.logFifoBytes} B · recorder ${u.link.recUsed}/${u.chassis.recorderBytes} B</div>
+      <h4>RAM <small>${u.ram.length} B, shared</small></h4>
+      <div class="dim small mono">${Array.from(u.ram, (b) => b.toString(16).toUpperCase().padStart(2, '0')).join(' ')}</div>
       <h4>Cargo <small>${u.cargo.filter((c) => !c).length} free · science ready ${u.link.products.length}</small></h4>
       <div class="stack">${u.cargo.map((c, i) => `<span class="slot cargo ${c ? 'full' : ''}" title="slot ${i}">${c ? esc(this.engine.registry.get(c)?.constName ?? String(c)) : '·'}</span>`).join('')}</div>
       <h4>Hardpoints</h4>

@@ -49,7 +49,7 @@ export const BALANCE = {
 
   // Comms
   uploadBase: 500,
-  uploadPerByte: 12, // ~50 per average instruction
+  uploadPerByte: 6, // M14 (was 12): code doubled with Flash, the upload costs about the same
   /** M10: base cost of a program-only upload (no reboot, SPEC §3.9.3). */
   programUploadBase: 200,
   uploadSignalFloor: 10,
@@ -108,12 +108,23 @@ export const ENCODING = {
   imm16: 3, // + 2 data bytes: -32768..32767
   imm32: 5, // + 4 data bytes: anything else (registers are 32-bit)
   label: 2, // absolute 16-bit address of a jump / call target
+  memReg: 1, // M14 [r]: operand byte only
+  memAddr: 3, // M14 [n] or [r+n]: operand byte + 16-bit address / offset
+} as const;
+
+/** M14 data address space (docs/ASSEMBLER_CORE.md §7.1): where RAM, image memory and cargo sit. */
+export const MEMORY_MAP = {
+  RAM: 0x000, // RAM: chassis.ramBytes (Mk-I 64 B, upgrades up to 256)
+  IMG: 0x100, // image memory: imageBytes(chassis) (256 / 512 / 1024 B)
+  CARGO: 0x600, // cargo: one read-only byte per slot (the item's tile ID)
 } as const;
 
 export interface ChassisDef {
   name: string;
   /** Program memory in bytes (see ENCODING). */
   flashBytes: number;
+  /** M14: RAM in bytes, shared by firmware and program (docs/ASSEMBLER_CORE.md §7). */
+  ramBytes: number;
   registers: number;
   dataStack: number;
   callStack: number;
@@ -140,7 +151,8 @@ export interface ChassisDef {
 
 export const CHASSIS_MK1: ChassisDef = {
   name: 'Rover Mk-I',
-  flashBytes: 256, // M10: shared by firmware and program (was 128)
+  flashBytes: 512, // shared by firmware and program (128 before M10, 256 before M14)
+  ramBytes: 64, // M14
   registers: 4,
   dataStack: 8,
   callStack: 8,

@@ -56,7 +56,8 @@ Each rover owns a copy of its chassis stats; upgrades (§3.7) modify that copy.
 
 | Stat | Mk-I | Notes |
 | :--- | :--- | :--- |
-| Flash | 256 bytes (128 before M10) | Machine-code size (§5.7), shared by firmware and program (§3.9). Comments, blank lines, label definitions, `ALIAS`, `CONST` are free. |
+| Flash | 512 bytes (128 before M10, 256 before M14) | Machine-code size (§5.7), shared by firmware and program (§3.9). Comments, blank lines, label definitions, `ALIAS`, `CONST`, `VAR` are free; `DATA` costs its bytes. |
+| RAM **[M14]** | 64 bytes at data address `0x000` | Shared by firmware and program, zero after a hard reboot; `VAR`, `LDB` / `STB` (§5.8). |
 | Registers | 4 (`r0`–`r3`) | Signed 32-bit, wrap on overflow. |
 | Data stack | 8 entries | `PUSH`/`POP`, `CALL` arguments. |
 | Call stack | 8 frames | Return addresses only. |
@@ -68,7 +69,7 @@ Each rover owns a copy of its chassis stats; upgrades (§3.7) modify that copy.
 | Sensor range | 6 tiles | `SCAN` radar, every direction, day and night. The operator's *view* needs light: 6 by day, 1-tile ring at night plus the headlight cone (§3.1.1). **[M4, M8.1]** |
 | Downlink | 2 B/tick at full signal, log FIFO 32 B, science recorder 1024 B | **[M9]** §3.8 |
 | Camera | mast camera, 32×32 2 bpp (modes 1–2) | `SNAP dir [mode]`; modes 3–5 by upgrade. **[M9]** §3.8.5 |
-| Image memory | 256 bytes (the largest installed camera mode) | `SNAP` fills it, `LDB` / `STB` read and write it, `SEND` sends it. **[M12]** §3.8.7 |
+| Image memory | 256 bytes (the largest installed camera mode), at data address `IMG` = `0x100` (M14) | `SNAP` fills it, `LDB` / `STB` read and write it, `SEND` sends it. **[M12]** §3.8.7 |
 | Thermal | survival heaters hold −40 °C | `@TEMP`, `@HEATER`; dust on the array `@SOLAR_DUST`. **[M13]** §3.3.4 |
 | Watchdog, fault protection | `@WDT`; `@PREEMPT`, `@BAT_ALARM` | Firmware-armed reset timer and slice preemption. **[M13]** §3.9.5, §3.9.2 |
 
@@ -126,11 +127,13 @@ The rover and the player "see" differently:
 
 ### 3.3 Hard reboot (on code upload or watchdog)
 
-`IP = 0`, all registers zeroed, both stacks cleared, any in-flight action aborted,
-`@STATUS = OK`. Physical state (position, battery, hull, cargo, actuator ports) is kept.
+`IP = 0`, all registers zeroed, both stacks cleared, RAM zeroed (M14), any in-flight action
+aborted, `@STATUS = OK`. Physical state (position, battery, hull, cargo, actuator ports,
+image memory) is kept.
 
-Upload cost **[M4]**: `ceil((500 + 12 × bytes) × 100 / max(10, @SIGNAL_STR))` energy
-(≈ 1.5 % for an 85-byte program at full signal, 10× that with the dish misaligned).
+Upload cost **[M4]**: `ceil((500 + 6 × bytes) × 100 / max(10, @SIGNAL_STR))` energy
+(`uploadPerByte` 6 since M14, 12 before: Flash doubled; ≈ 1 % for an 85-byte program at full
+signal, 10× that with the dish misaligned).
 If the battery cannot pay, or the rover is powered off, the upload is rejected and the
 old program keeps running. New rovers ship with factory firmware installed for free.
 
@@ -273,14 +276,14 @@ prerequisites and count neither toward goals nor toward "seen" prerequisites.
 
 ## 3.6 Persistence **[M6]**
 
-`SaveManager.serialize/deserialize` (headless). A save (`version: 16`; v1–v15 files are migrated
+`SaveManager.serialize/deserialize` (headless). A save (`version: 17`; v1–v16 files are migrated
 by `migrate()`) holds the seed, supply drops, installed upgrades, each rover's downlink
 (log FIFO, transmitter budget, `@LOG_LOST`, recorder descriptors and progress, sequence
 number, dump replies waiting), mission control's last 200 received frames, the gallery's last 100 products,
 mission control's last 100 sent commands and uploads (v13, the Comms timeline),
 tick, credits, stats, cheats, storyteller state (RNG, schedule, completed goals), full
 unit and VM state (firmware source is recompiled on load; v16: `@WDT`, fault protection,
-temperature, heater, array dust), and **only chunks that are
+temperature, heater, array dust; v17: RAM and the RAM top the firmware was assembled for), and **only chunks that are
 dirty or explored**: fog as run lengths plus a sparse `[layer, index, id]` diff against
 the regenerated chunk. A saved-then-loaded world continues **bit-identically** to an
 uninterrupted one (tested). Typical size: a few KB.
@@ -304,7 +307,8 @@ Built in slice 6 (`src/core/upgrades.ts`, ids in brackets). The chassis carries
 
 | Upgrade | Cost | Effect | Requires |
 | :--- | :--- | :--- | :--- |
-| Flash 384 B / Flash 512 B | 40 / 90 | Flash 384 / 512 bytes (192 / 256 before M10) | – / Flash 384 B |
+| Flash 768 B / Flash 1 KB | 40 / 90 | Flash 768 / 1024 bytes (384 / 512 before M14, 192 / 256 before M10) | – / Flash 768 B |
+| RAM 128 B / RAM 256 B **[M14]** | 40 / 80 | RAM 128 / 256 bytes, grown in place (contents kept; the firmware's `VAR`s keep the addresses it was assembled with) | – / RAM 128 B |
 | Register file r0–r5 / r0–r7 | 40 / 80 | 6 / 8 registers (values kept) | – / r0–r5 |
 | CPU overclock I / II | 50 / 100 | 6 / 8 cycles per tick | – / I |
 | Cargo racks | 35 | 6 cargo slots | – |
@@ -373,7 +377,8 @@ kind 1 = science frame   size = 0; followed by 1 sequence byte, then the product
   error.
 * **Boot frame:** after every hard reboot the rover queues `LOG 15 reason`
   (1 = code upload, 2 = watchdog (the fault reset, §3.2), 3 = cold boot, 4 = admin,
-  5 = watchdog timeout (`@WDT` not kicked, §3.9.5) **[M13]**).
+  5 = watchdog timeout (`@WDT` not kicked, §3.9.5) **[M13]**, 6 = software update (a save
+  migration rewrote the rover's code, §5.8) **[M14]**).
 * **Science frames:** `tag` = product type (§3.8.5), then a sequence byte (0–255,
   wrapping, per rover), then the payload. Overhead is 2 bytes per product.
 
@@ -551,9 +556,11 @@ six worked examples (the templates, word for word, run by the tests):
   writes the photo's bytes (layout §3.8.5) into image memory instead of the recorder and
   remembers the **capture** (the descriptor, the mode and the noise seed). `ERR_FULL` no
   longer applies. Like the memory, the capture survives reboots and power-off.
-* **`LDB dst addr`** / **`STB addr src`** (1 cycle each, compute: no energy, no `@STATUS`;
-  opcodes 1D / 1E): read a byte (0–255) / write `src & 255`. Addresses wrap modulo the
-  memory size. The bit instructions (`AND`, `OR`, `SHL`, `SHR`, §5.4) take pixels apart.
+* **`LDB dst [addr]`** / **`STB [addr] src`** (1 cycle each, compute: no energy, no `@STATUS`;
+  opcodes 1D / 1E): read a byte (0–255) / write `src & 255`. **[M14]** Image memory sits in
+  the data address space at `IMG` (§5.8): byte `n` of the picture is `[IMG+n]`; an address
+  outside it faults (before M14 addresses wrapped modulo the memory size, without brackets).
+  The bit instructions (`AND`, `OR`, `SHL`, `SHR`, §5.4) take pixels apart.
 * **`SEND [type]`** (hardware, blocks `sendTicks` 1 tick, `sendEnergy` 10; extended
   opcode `1F 05`): copies the first `photoBytes(type)` bytes into the recorder as a product
   of `type` (photo types 1–5; default: the mode of the last `SNAP`, else 1). Writes
@@ -602,7 +609,7 @@ running uplinked command sequences, or a small OS starting user programs:
 ### 3.9.1 Slots, flash and contexts
 
 * **Two separate sources**, compiled separately: each has its own labels, `ALIAS` and
-  `CONST` names. Firmware bytes + program bytes must fit the chassis flash (**Mk-I 256 B**
+  `CONST` names. Firmware bytes + program bytes must fit the chassis flash (**Mk-I 512 B** since M14, 256 B
   since M10); each slot is compiled against the space the other leaves, and the overflow
   error names both sizes.
 * **Separate contexts**: each slot has its own IP, registers (the chassis count each), data
@@ -659,16 +666,16 @@ running uplinked command sequences, or a small OS starting user programs:
 
 ### 3.9.3 Uploads and mission-control commands
 
-* **Upload program**: `ceil((200 + 12 × program bytes) × 100 / max(10, @SIGNAL_STR))`
+* **Upload program**: `ceil((200 + 6 × program bytes) × 100 / max(10, @SIGNAL_STR))`
   energy (`programUploadBase`). No reboot, the firmware context is untouched. A running
   slice ends (the program's in-flight action is aborted); the new program starts fresh as
   `PROG_READY`. Uploading an empty program erases it (`PROG_NONE`).
-* **Upload firmware**: as §3.3 (base 500 + 12 × firmware bytes, hard reboot); rejected if
+* **Upload firmware**: as §3.3 (base 500 + 6 × firmware bytes, hard reboot); rejected if
   firmware + program would not fit the flash.
 * **Code tab**: a **Program** (default) / **Firmware** (advanced) switch, each slot with its
   own editor and templates (programs: the lesson set below and the *Image: …* examples;
   firmware: Default firmware and the pre-M10 all-in-one examples), *Upload program* or *Upload
-  firmware & reboot*, a flash bar `firmware 158 + program 46 = 204 / 256 B` (the
+  firmware & reboot*, a flash bar `firmware 158 + program 46 = 204 / 512 B` (the
   edited slot counts its draft, the other slot what is on the rover), and a warning when
   the firmware has no `RUN`. New rovers ship the default firmware and no program (the
   Program slot shows *First steps* as an unsent draft).
@@ -728,8 +735,8 @@ running uplinked command sequences, or a small OS starting user programs:
 
 A **core** plus **comfort blocks**, each between marker comments with its byte cost, so
 experienced players can delete what they do not need and give the bytes to their program.
-The full default firmware is 158 B (comfort 55 B of it), leaving 98 B on Mk-I: the
-shipped programs need 20–95 B (all fit; tested). **[M13]** Its core arms and kicks the
+The full default firmware is 158 B (comfort 55 B of it), leaving 354 B on Mk-I (512 B since
+M14): the shipped programs need 20–99 B (all fit; tested). **[M13]** Its core arms and kicks the
 watchdog (`CONST WDT_TICKS 1000`, a kick at the top of the main loop and in the charge loop,
 10 B). The firmware template *Fault protection* is the default firmware plus `@PREEMPT`
 (15 B more: programs up to 83 B fit next to it).
@@ -838,12 +845,16 @@ software "kicks" it in time.
 **Every value operand accepts a register, port, immediate or constant**, including
 directions, tool slots and cargo slots (`STEP r0`, `PEEK r1 -> r2`).
 
+| Memory address **[M14]** | `[40]`, `[count]`, `[r1]`, `[r1+4]`, `[IMG+r0]`, `[route+i+1]` | Only in `LDB`, `STB`, `LDF` (a *load / store architecture*). One register at most (the base); numbers, `CONST`s, `VAR`s and labels add up to the offset. Spaces inside the brackets are allowed. |
+
 ### 5.3 Directives (0 bytes)
 
 | Directive | Meaning |
 | :--- | :--- |
 | `ALIAS <reg> <name>` | Name a register. |
 | `CONST <name> <value>` | Name an integer constant. |
+| `VAR <name> [size]` | **[M14]** Reserve `size` bytes of RAM (default 1); `name` is its address (§5.8). |
+| `[label:] DATA <byte> …` | **[M14]** Bytes −128…255 (numbers or `CONST`s) in Flash. Costs one byte each; the assembler puts every `DATA` block in the slot's **data section** after the code, and the label names it. |
 
 ### 5.4 Instructions
 
@@ -873,8 +884,9 @@ friction, but the set should stay small enough to learn in one sitting.
 | | `SNAP dir [mode]` | blocks 10 | **[M9]** Photograph the subject in `dir` (§3.8.5); **[M12]** into image memory (§3.8.7). |
 | | `SEND [type]` | blocks 1 | **[M12]** Copy image memory into the science recorder as a photo product; 10 energy (§3.8.7). |
 | | `ERASE` | blocks 2 | **[M12]** Zero image memory and drop the capture; 10 energy (§3.8.7). |
-| Memory | `LDB dst addr` | 1 cycle | **[M12]** Load the byte at `addr` of image memory (0–255); compute (§3.8.7). |
-| | `STB addr src` | 1 cycle | **[M12]** Store `src & 255` at `addr` of image memory; compute (§3.8.7). |
+| Memory | `LDB dst [addr]` | 1 cycle | **[M12, M14]** Load the byte (0–255) at data address `addr` (§5.8); compute. No memory there: `FAULT`. |
+| | `STB [addr] src` | 1 cycle | **[M12, M14]** Store `src & 255` at data address `addr`; compute. Cargo is read-only; no memory there: `FAULT`. |
+| | `LDF dst [addr]` | 1 cycle | **[M14]** Load the byte at `addr` of this slot's own Flash (code, then the data section); compute. Past the slot: `FAULT`. 2-byte opcode `1F 07`. |
 | Debug | `LOG tag [src]` | 1 cycle | **[M9]** Queue a log frame for the downlink; compute, no `@STATUS` (§3.8.3). |
 | Slots | `RUN ticks` | hardware | **[M10]** Firmware only: run the program for a time slice (§3.9.2). |
 | | `END [value]` | 1 cycle | **[M10]** Program only: finish with `PROG_DONE` and `@PROG_RESULT` (§3.9.2). |
@@ -959,6 +971,9 @@ speed (every compute instruction is still 1 cycle). Numbers live in `ENCODING`
 | Immediate −32768…32767 | 3 | + 2 data bytes. |
 | Larger immediate | 5 | + 4 data bytes (registers are 32-bit). |
 | Label reference | 2 | Absolute address of a jump / `CALL` target. |
+| `[r]` **[M14]** | 1 | Operand byte `00100rrr`. |
+| `[n]`, `[r+n]` **[M14]** | 3 | Operand byte `00011100` / `00101rrr` + 16-bit address / signed offset. Decided by the syntax: `[x+r]` is 3 B even when `x` is 0. |
+| `DATA` value **[M14]** | 1 | In the data section after the code. |
 
 Constants cost what their value costs: `NORTH`, `RED`, `TOOL_1` are 1 byte; a tile ID
 above 15 or `CONST SPEED 90` is 2. Examples: `RET` = 1, `MOV r0 r1` = 3,
@@ -987,7 +1002,12 @@ slot, assembled on the ground (free) while typing.
 * **Operand byte**: `0000vvvv` short immediate 0–15 · `00010rrr` register r0–r7 ·
   `01pppppp` port (fixed port numbers 0–63, `PORT_CODES` in `ports.ts`: `@BAT` = 0 → `40`;
   the Reference tab lists them; numbers of removed ports, 33–34, stay unused) · `00011000` / `00011001` / `00011010` followed by an
-  8 / 16 / 32-bit big-endian two's-complement immediate. Other values are invalid.
+  8 / 16 / 32-bit big-endian two's-complement immediate · **[M14]** `00011100` + 2 bytes
+  `[n]` · `00100rrr` `[r]` · `00101rrr` + 2 bytes `[r+n]` (signed offset). Other values are
+  invalid.
+* **Data section [M14]**: the `DATA` bytes follow the last instruction. The CPU wraps to
+  0x000 at the end of the instructions, so it never runs into data; a jump into the data
+  section faults (no instruction starts there).
 * **Label reference**: 2 raw bytes, the big-endian byte address of the target (no operand
   byte; the instruction says where a label goes).
 * Sizes are exactly the table above. Example: `JLE @BAT 20 home` with `home` at 0x2A →
@@ -1007,6 +1027,32 @@ slot, assembled on the ground (free) while typing.
   line, the cursor's line is highlighted, and so is the admin debugger's next line.
   There is no separate *Compile* button (removed 2026-11-13): the listing and the flash
   bar already show the result live.
+
+### 5.8 Memory **[M14]**
+
+Design and reasons: [`ASSEMBLER_CORE.md`](ASSEMBLER_CORE.md) §7 (slice 2 of M14 is built).
+
+| Data addresses | What | Access |
+| :--- | :--- | :--- |
+| `0x000`… | RAM: `chassis.ramBytes` (Mk-I 64 B; upgrades 128 / 256) | read / write |
+| `0x100`… (`IMG`) | image memory, `imageBytes(chassis)` (256 / 512 / 1024 B) | read / write |
+| `0x600`… (`CARGO`) | cargo, one byte per slot (the item's tile ID) | read only |
+| anything else | nothing | `FAULT` "No memory at 0x…" |
+
+* Constants `RAM` = 0, `IMG` = `0x100`, `CARGO` = `0x600` (`MEMORY_MAP` in `balance.ts`).
+* **RAM is shared** by firmware and program (owner, 2026-11-14: overwriting the other
+  slot's memory, or running past the end, is allowed: a real-life bug to learn from). It is
+  zero after every hard reboot; a program upload keeps it; it is saved.
+* **`VAR`**: the program's `VAR`s get addresses from 0 upward, the firmware's from the top
+  of RAM downward. Each slot is compiled against the RAM the other slot's `VAR`s take; an
+  overlap (or a `VAR` larger than RAM) is a compile error naming both sizes. The Code tab
+  shows `RAM firmware + program = used / size` next to the Flash totals. A firmware is
+  assembled for the RAM it was flashed with: after a RAM upgrade its `VAR`s keep their
+  addresses until the next firmware upload (saved as `fwRamTop`).
+* **Save v17**: v16 code is rewritten on load (`LDB d a` → `LDB d [IMG+a]`, `STB a v` →
+  `STB [IMG+a] v`); a rover whose code changed is hard-rebooted with boot reason 6
+  (*software update*), because its saved instruction addresses no longer match.
+* Lesson template *Route* (`DATA`, `LDF`, `VAR`, `LDB`, `STB`).
 
 ## 6. Milestones
 
