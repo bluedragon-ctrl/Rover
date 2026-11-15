@@ -6,6 +6,8 @@ export interface TileDef {
   id: number;
   /** Becomes a Rover-ASM constant. */
   constName: string;
+  /** M15: the PDP-11 core's predefined symbol (DEC style, at most six characters). */
+  shortName: string;
   name: string;
   layer: Layer;
   /** Hex RGB for the vector renderer. */
@@ -65,6 +67,13 @@ export class WorldRegistry {
     return [...this.byId.values()];
   }
 
+  /** M15: predefined symbols for the MACRO-11 assembler (six-character tile names). */
+  shortConstants(): Record<string, number> {
+    const out: Record<string, number> = { NONE: 0 };
+    for (const d of this.byId.values()) out[d.shortName.toUpperCase()] = d.id;
+    return out;
+  }
+
   /** Constants injected into the compiler. */
   constants(): Record<string, number> {
     const out: Record<string, number> = { NONE: 0 };
@@ -88,15 +97,15 @@ export const T = {
 
 export function createDefaultRegistry(): WorldRegistry {
   const r = new WorldRegistry();
-  r.register({ id: T.FLAT_SAND, constName: 'FLAT_SAND', name: 'Flat sand', layer: Layer.TERRAIN, color: 0x7a5a3a, shape: 'floor', moveTicks: 3, moveEnergy: 40, hazardLevel: 0 });
-  r.register({ id: T.ROUGH_GRAVEL, constName: 'ROUGH_GRAVEL', name: 'Rough gravel', layer: Layer.TERRAIN, color: 0x8a7f72, shape: 'rough', moveTicks: 6, moveEnergy: 120, hazardLevel: 1 });
-  r.register({ id: T.ACID_VENT, constName: 'ACID_VENT', name: 'Acid vent', layer: Layer.TERRAIN, color: 0x9dff3a, shape: 'vent', moveTicks: 4, moveEnergy: 60, hazardDamage: 10, hazardLevel: 2 });
-  r.register({ id: T.CLIFF_WALL, constName: 'CLIFF_WALL', name: 'Cliff wall', layer: Layer.OBSTACLE, color: 0xd08a52, shape: 'wall', blocksMove: true });
-  r.register({ id: T.IRON_ORE, constName: 'IRON_ORE', name: 'Iron ore vein', layer: Layer.OBSTACLE, color: 0xff5a4a, shape: 'mound', blocksMove: true, tool: 'DRILL', science: 1, repairs: { 0: 10, 2: 15 } });
-  r.register({ id: T.SILICON_ORE, constName: 'SILICON_ORE', name: 'Silicon ore vein', layer: Layer.OBSTACLE, color: 0x5ad0ff, shape: 'crystal', blocksMove: true, tool: 'DRILL', science: 1, repairs: { 1: 20 } });
-  r.register({ id: T.REPAIR_KIT, constName: 'REPAIR_KIT', name: 'Repair kit', layer: Layer.ITEM, color: 0xffffff, shape: 'crate', tool: 'GRABBER', repairs: { 0: 30, 1: 40, 2: 40 } });
-  r.register({ id: T.SAMPLE, constName: 'SAMPLE', name: 'Geological sample', layer: Layer.ITEM, color: 0xffd23a, shape: 'sample', tool: 'GRABBER', science: 3 });
-  r.register({ id: T.SUPPLY_CRATE, constName: 'SUPPLY_CRATE', name: 'Supply crate (upgrade)', layer: Layer.ITEM, color: 0xffd23a, shape: 'supply', tool: 'GRABBER' });
-  r.register({ id: T.ROVER, constName: 'ROVER', name: 'Rover', layer: Layer.ACTOR, color: 0x3affc8, shape: 'rover', blocksMove: true });
+  r.register({ id: T.FLAT_SAND, constName: 'FLAT_SAND', shortName: 'SAND', name: 'Flat sand', layer: Layer.TERRAIN, color: 0x7a5a3a, shape: 'floor', moveTicks: 3, moveEnergy: 40, hazardLevel: 0 });
+  r.register({ id: T.ROUGH_GRAVEL, constName: 'ROUGH_GRAVEL', shortName: 'GRAVEL', name: 'Rough gravel', layer: Layer.TERRAIN, color: 0x8a7f72, shape: 'rough', moveTicks: 6, moveEnergy: 120, hazardLevel: 1 });
+  r.register({ id: T.ACID_VENT, constName: 'ACID_VENT', shortName: 'VENT', name: 'Acid vent', layer: Layer.TERRAIN, color: 0x9dff3a, shape: 'vent', moveTicks: 4, moveEnergy: 60, hazardDamage: 10, hazardLevel: 2 });
+  r.register({ id: T.CLIFF_WALL, constName: 'CLIFF_WALL', shortName: 'CLIFF', name: 'Cliff wall', layer: Layer.OBSTACLE, color: 0xd08a52, shape: 'wall', blocksMove: true });
+  r.register({ id: T.IRON_ORE, constName: 'IRON_ORE', shortName: 'IRON', name: 'Iron ore vein', layer: Layer.OBSTACLE, color: 0xff5a4a, shape: 'mound', blocksMove: true, tool: 'DRILL', science: 1, repairs: { 0: 10, 2: 15 } });
+  r.register({ id: T.SILICON_ORE, constName: 'SILICON_ORE', shortName: 'SILIC', name: 'Silicon ore vein', layer: Layer.OBSTACLE, color: 0x5ad0ff, shape: 'crystal', blocksMove: true, tool: 'DRILL', science: 1, repairs: { 1: 20 } });
+  r.register({ id: T.REPAIR_KIT, constName: 'REPAIR_KIT', shortName: 'KIT', name: 'Repair kit', layer: Layer.ITEM, color: 0xffffff, shape: 'crate', tool: 'GRABBER', repairs: { 0: 30, 1: 40, 2: 40 } });
+  r.register({ id: T.SAMPLE, constName: 'SAMPLE', shortName: 'SAMPLE', name: 'Geological sample', layer: Layer.ITEM, color: 0xffd23a, shape: 'sample', tool: 'GRABBER', science: 3 });
+  r.register({ id: T.SUPPLY_CRATE, constName: 'SUPPLY_CRATE', shortName: 'CRATE', name: 'Supply crate (upgrade)', layer: Layer.ITEM, color: 0xffd23a, shape: 'supply', tool: 'GRABBER' });
+  r.register({ id: T.ROVER, constName: 'ROVER', shortName: 'ROVER', name: 'Rover', layer: Layer.ACTOR, color: 0x3affc8, shape: 'rover', blocksMove: true });
   return r;
 }

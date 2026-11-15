@@ -51,6 +51,10 @@ npm run build      # typecheck + production bundle in dist/
   it may import from the game (a test enforces it); Rover-specific things (memory map,
   I/O page, gate, ROM) live outside it. API: `src/pdp11/README.md`. `simulator.html`
   (`src/simulator/`) is its standalone page; its examples are tested.
+- M15 slice 3: Rover's side of the PDP-11 core lives in `src/core/machine/` (I/O page
+  `iopage.ts`: new registers go there and become predefined symbols, six characters at
+  most; bus, gate and interrupts `RoverMachine.ts`; boot ROM `rom.ts`). The engine uses it
+  only with `new SimulationEngine({ cpu: 'pdp11' })` until slice 6.
 - Shapes are drawn only in `src/render/VectorFactory.ts` (keeps M8 visual work local).
 - New or changed visuals go into `preview.html` (`src/preview/`) first; the owner reviews
   screenshots before they replace what the game renders.

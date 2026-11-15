@@ -1,7 +1,9 @@
 # M15 — PDP-11 core: I/O page, devices and interrupts (design draft)
 
 Status: **draft; CPU side approved** (2026-11-15). Names shrink to six characters, DEC
-style (§9, question 1). Framed standard output approved (§3.5a). Not built yet (slice 3). Companion of
+style (§9, question 1). Framed standard output approved (§3.5a). **Built in slice 3**
+(`src/core/machine/iopage.ts`, behind the engine switch; notes in §11), except the
+recorder registers (slice 4). Companion of
 [`PDP11_CPU.md`](PDP11_CPU.md) (instruction set, memory, call gate, traps, ROM).
 
 This document turns today's 61 ports (`src/core/ports.ts`, SPEC §5.6, M14 devices in
@@ -294,6 +296,7 @@ The gate and the M10 / M13 machinery ([`PDP11_CPU.md`](PDP11_CPU.md) §7).
 | `177016` | `PRMPTD` | RO | the bits that ended the last run |
 | `177020` | `BATALM` | FW | 0–100 % |
 | `177022` | `WDT` | FW | watchdog, M13 rules (write n > 0 to arm / kick; read: ticks left) |
+| `177024` | `REBOOT` | FW | write a boot reason: hard reboot after the instruction (slice 3; the ROM's fault handlers) |
 
 ### 3.8 CPU and clock (real PDP-11 addresses)
 
@@ -436,7 +439,9 @@ Light lamp 3 when a drive ends (green) or fails (red), without polling:
 ```
         MOV  #DRVINT, @#120     ; drive vector: the handler's address...
         MOV  #200, @#122        ; ...and its PSW: priority 4
-        BIS  #IE, @#DRVCS       ; interrupt when DONE becomes 1
+        ...                     ; DRVCNT, DRVDIR
+        MOV  #IE!GO, @#DRVCS    ; start, interrupt when DONE becomes 1. IE alone while
+                                ; the drive is idle (DONE = 1) would interrupt at once
         ...
 DRVINT: MOV  #GREEN, @#IND3
         TST  @#DRVCS            ; ERR?
@@ -604,3 +609,22 @@ Renamed (today → PDP-11 core):
 
 In slice 3 the tile registry gets a `shortName` (what becomes the language constant), so a
 new tile can't break the rule; a test checks that every predefined symbol fits.
+
+## 11. Slice 3 as built (owner may veto)
+
+* **When requests are raised:** world events (a device finished, the line clock, room in the
+  TX FIFO again) at the start of a tick; events the CPU causes (a refused start, `IE` set
+  while `DONE` = 1) at once, before the next instruction, as on DEC hardware. A `GO` that is
+  accepted withdraws the device's pending request.
+* **Byte writes** to the high byte (odd address) of a register are ignored; the low byte
+  writes the register (`MOVB R0, @#TXBUF`, `BISB #GO, @#DRVCS`).
+* **`DRVCNT`** reads 0 once a drive was accepted and after it ended; `RESET` stops a drive
+  at the end of its tile and returns every register to its reboot state.
+* **`TX`:** a reboot puts an out-of-band marker into the stream (no bytes, no air time), so
+  ground ends a message cut off by it as *incomplete*. A message that lost bytes in a full
+  FIFO waits for the rest until the next message or reboot shows it broken or incomplete
+  (no timeout in v1). Link order: dumps, system frames (boot reasons), `TX`, recorder.
+* **Recorder registers** (`RECCS`, `RECBUF`) and `SNDIMG` come with slice 4, with the ROM;
+  until then the image device's `F.SEND` sends photos as today.
+* **Predefined names are reserved:** a label `X:` or `IRON:` is an error ("is a predefined
+  symbol"), as with DEC's system symbols.

@@ -25,7 +25,7 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | M11 | User interface review (after M10) | 🚧 Comms tab, Code tab dump box, Reference → Radio, Mission events: default since 2026-11-13 (save v13); `BRK` reports itself |
 | M12 | Image memory: `SNAP` → `LDB` / `STB` → `SEND` (SPEC §3.8.7, guide [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md)) | ✅ done (bit instructions; image memory in the core, save v14; templates, Reference → Image, Gallery labels + hex view, `SNAP` warning; goal *Darkroom* + first-edit bonus per camera mode, save v15) |
 | **M14** | **Assembler core**: hardware through device ports + `WAIT`, ROM library, RAM / `VAR` / addressing modes / `DATA`, program called like a subroutine (design [`ASSEMBLER_CORE.md`](ASSEMBLER_CORE.md)) | 🚧 design approved; slices 2 (memory model, save v17) and 3 (devices, `WAIT`, ROM, `CALL PROGRAM`, save v18) done; slice 4 (lessons, Reference *CPU* / *Devices* / *Memory map*) in review; **frozen** (2026-11-15): the boot ROM with safe mode moves into M15's ROM |
-| **M15** | **PDP-11 core**: Rover-ASM replaced by a PDP-11-style 16-bit CPU and a MACRO-11 subset (octal, eight addressing modes, flags, traps, interrupts), devices as DEC-style registers in the I/O page; saves reset (design [`PDP11_CPU.md`](PDP11_CPU.md), [`PDP11_IO.md`](PDP11_IO.md)) | 🚧 design approved (owner answers 2026-11-15); slice 2 in review: standalone library `src/pdp11/` (CPU, assembler, disassembler, reference machine) + simulator page `simulator.html`; the game is unchanged |
+| **M15** | **PDP-11 core**: Rover-ASM replaced by a PDP-11-style 16-bit CPU and a MACRO-11 subset (octal, eight addressing modes, flags, traps, interrupts), devices as DEC-style registers in the I/O page; saves reset (design [`PDP11_CPU.md`](PDP11_CPU.md), [`PDP11_IO.md`](PDP11_IO.md)) | 🚧 design approved (owner answers 2026-11-15); slice 2 done (standalone library `src/pdp11/` + simulator page `simulator.html`); slice 3 in review: Rover's bus, I/O page, gate, interrupts, `TX` output, save v19, behind the engine switch `cpu: 'pdp11'`; the game is unchanged |
 | M13 | Realism pass 1: watchdog `@WDT`, thermal model + array dust, fault protection `@PREEMPT` (SPEC §3.3.4, §3.9.2, §3.9.5) | 🚧 core, default firmware, *Fault protection* template, Reference, save v16 done; in review (balance numbers to playtest) |
 
 ## M15 — PDP-11 core (in progress)
@@ -61,7 +61,7 @@ codes, a type per message: text, error codes, science data…), sketched in
 [`PDP11_IO.md`](PDP11_IO.md) §3.5a.
 
 - [x] Slice 1: owner review of both drafts (open questions at the end of each).
-- [x] Slice 2 (in review): CPU, assembler, disassembler as the standalone library `src/pdp11/`
+- [x] Slice 2: CPU, assembler, disassembler as the standalone library `src/pdp11/`
       (no imports from the game, enforced by a test), with tests.
       Built: `cpu.ts` (PDP-11/40 set + EIS option, eight modes, flags, traps, interrupts,
       `WAIT`, trace bit, stack limit, PSW at `177776`, cycle models), `assembler.ts`
@@ -74,10 +74,31 @@ codes, a type per message: text, error codes, science data…), sketched in
       randomness / clock). Simulator page `simulator.html` (`src/simulator/`): editor
       with errors and breakpoints, registers / NZVC / PSW, memory with PC / SP, console
       with keyboard input, listing; seven example programs, each run by a test.
-- [ ] Slice 3 (next): ✅ framed standard output approved (`PDP11_IO.md` §3.5a, `TX`
-      device and recorder messages in §3.5 replace the log registers); ✅ six-character
-      name table (`PDP11_IO.md` §10, applied to both design documents). Then Rover's side: I/O page over the existing device logic, interrupts, the
-      gate (swapping two saved CPU states); engine behind a switch.
+- [x] Slice 3 (in review): Rover's side of the library (`src/core/machine/`, design notes
+      `PDP11_CPU.md` §14.4, `PDP11_IO.md` §11), behind `new SimulationEngine({ cpu: 'pdp11' })`.
+  - [x] Six-character names: tiles got `shortName` (`IRON`, `SILIC`, …); every predefined
+        symbol checked by a test (`symbols.ts`).
+  - [x] I/O page over the unchanged device logic (`iopage.ts`): telemetry, actuators, the six
+        device blocks (CSR `GO` / `FN` / `IE` / `DONE` / `ERR`, `xxER`, parameters), cargo
+        bytes, `TICKL` / `TICKH`, program control, `LKS`, `STKLIM`, `DISP`; new `REBOOT`.
+  - [x] Bus: 2 KB core, image memory at `100000`, ROM at `160000`, write protection by
+        context; boot ROM (vectors, core probe, default handlers, `EXIT` stub); images
+        reloaded on every hard reboot; boot takes 3 ticks.
+  - [x] Gate (`PRGCS` GO swaps the two saved CPU states), exits on `HALT` / top-level
+        `RTS PC` / `SLICE` / `PREMPT` / faults (`PRGER`, `PRGPC`) / `BPT`; `TRAP n` system
+        call; interrupts at tick starts (line clock, devices, `TX`), handlers in the
+        program's time on the firmware's SP.
+  - [x] Library option `protectModes` (PDP-11/45 user-mode rules) so a program can't
+        leave program mode.
+  - [x] Framed output: the `TX` device (64 B FIFO, `TXLOST`, reboot marker), ground parser
+        (`messages.ts`: ok / broken / incomplete), `engine.messages`.
+  - [x] Save v19 (machine state, TX FIFO, messages, parsers); tests in
+        `tests/pdp-core.test.ts` (30): devices, gate, faults, protection, system calls,
+        output, determinism, round trips mid-run and mid-handler.
+  - Moved to slice 4: recorder registers (`RECCS` / `RECBUF`) with `SNDIMG`.
+- [x] Owner decision (2026-11-15): **photos at double resolution** on the PDP-11 core
+      (`PDP11_CPU.md` §6.3): `PHOTO_FORMATS_2X` and the review page `preview.html?photos2x=1`
+      built; link 4 B/tick and recorder 2 KB proposed; in the game with slice 6.
 - [ ] Slice 4: ROM, default firmware, lessons; cycle budget measured.
 - [ ] Slice 5: UI (editor, listing, debugger, Comms dumps, Reference).
 - [ ] Slice 6: switch over, delete Rover-ASM, reset saves, rewrite SPEC §5 and CLAUDE.md.
@@ -866,3 +887,5 @@ window with a fixed dish?
 | 2026-11-15 | `ccr-3e1733dc-lef7dz` (2) | M15 owner answers: DEC-style short names approved, cycle budget and core sizes start from the draft and get tuned later; owner idea of framed standard output (one stream, start / end codes, message types) recorded for slice 3 (`PDP11_IO.md` §3.5a). Documentation only. |
 | 2026-11-15 | `ccr-3e1733dc-lef7dz` (3) | Framed standard output: owner decisions (the program frames, a reboot leaves a message incomplete); proposal for the rest after the CCSDS practice (packets with a type, real-time vs store-and-forward channels): `TX` device replacing the log registers, messages into the recorder (`SNDIMG` for photos), `SOH type len body ETX`, types, 64 B FIFO, costs (`PDP11_IO.md` §3.5a). Documentation only. |
 | 2026-11-15 | `ccr-3e1733dc-lef7dz` (4) | Owner approved the output proposal (channels, format, types, 64 B FIFO, costs); `PDP11_IO.md` §3.5 rewritten as the `TX` device + recorder registers, §3.5a moved beside it; six-character name table (`PDP11_IO.md` §10: `E.` / `F.` / `T.` / `A.` / `P.` / `PR.` families, telemetry, tiles) applied to both design documents. Documentation only. |
+| 2026-11-15 | `claude/relaxed-keller-ff4622` | M15 slice 3: Rover's side of the PDP-11 core behind `cpu: 'pdp11'` (`src/core/machine/`): I/O page over the existing devices, six-character names (tile `shortName`), bus with protection, boot ROM, gate and program exits, `TRAP` system call, interrupts at tick starts with handlers on the firmware's SP, `REBOOT`, library option `protectModes`, `TX` device + ground message parser, save v19; 32 new tests. Game unchanged. |
+| 2026-11-15 | `claude/relaxed-keller-ff4622` (2) | Owner decision: photos at double resolution on the PDP-11 core (64×64 base, 128×128 hi-res, image window 4 KB); `PHOTO_FORMATS_2X` in the generator, review page `preview.html?photos2x=1` (today vs doubled), link / recorder scaling proposed (`PDP11_CPU.md` §6.3). Game unchanged. |

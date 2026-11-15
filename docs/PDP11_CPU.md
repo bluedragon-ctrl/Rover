@@ -1,8 +1,9 @@
 # M15 — PDP-11 core: the CPU (design draft)
 
 Status: **design approved with the decisions of §0** (2026-11-15); open questions 2 and 7
-remain (slice 4 measures them). Slice 2, the library, is built (§14). Documentation only: nothing here is
-built yet. Companion document: [`PDP11_IO.md`](PDP11_IO.md), which covers the device
+remain (slice 4 measures them). Slice 2, the library, is built (§14); slice 3, Rover's bus,
+devices, gate and interrupts, is built behind the engine switch `cpu: 'pdp11'` (§14.4).
+Companion document: [`PDP11_IO.md`](PDP11_IO.md), which covers the device
 registers, the I/O page and interrupts from devices.
 
 This document replaces Rover-ASM (SPEC §5, [`ASSEMBLER_CORE.md`](ASSEMBLER_CORE.md)) with
@@ -266,8 +267,8 @@ One address space, octal addresses:
 | `000200`–`PRGBAS−1` | **firmware**: code, data, its stack (grows down from `PRGBAS`) | firmware |
 | `PRGBAS`–core top | **program**: code, data, its stack (grows down from the top) | program and firmware |
 | core top – `077777` | **not installed** (memory boards fill it, §6.1) | bus error (trap 4) |
-| `100000`–`101777` | **image memory** (256 / 512 / 1024 B by camera) | read / write |
-| `102000`–`157777` | nothing | bus error |
+| `100000`–`107777` | **image memory** (1 / 2 / 4 KB by camera: photos at double resolution, §6.3) | read / write |
+| `110000`–`157777` | nothing | bus error |
 | `160000`–`167777` | **ROM** (§10) | read and execute only |
 | `170000`–`177777` | **device registers** ([`PDP11_IO.md`](PDP11_IO.md) §3) | per register |
 
@@ -317,6 +318,26 @@ customer bought as needed.
 * **Cargo** becomes read-only byte registers in the I/O page ([`PDP11_IO.md`](PDP11_IO.md)
   §3.6), read with `MOVB CARGO(R1), R0`.
 
+### 6.3 Photos at double resolution (owner, 2026-11-15)
+
+With the PDP-11 core the camera doubles its resolution in every mode (`PHOTO_FORMATS_2X` in
+`photos.ts`), so photos take four times the bytes; sizes stay powers of two, so a row is a
+shift away (64 px × 2 bpp = 16 bytes):
+
+| Mode | Today | PDP-11 core | Bytes |
+| :--- | :--- | :--- | :--- |
+| 1 grey, 2 dithered | 32×32 · 2 bpp | 64×64 · 2 bpp | 1 KB |
+| 3 palette | 32×32 · 4 bpp | 64×64 · 4 bpp | 2 KB |
+| 4 hi-res | 64×64 · 2 bpp | 128×128 · 2 bpp | 4 KB |
+| 5 RGB332 | 32×32 · 8 bpp | 64×64 · 8 bpp | 4 KB |
+
+The image window grows to 4 KB. To keep sending a photo about as long as today, the
+downlink and recorder scale too (proposed; owner may veto): Mk-I link 4 B/tick (amplifier
+upgrade 6), recorder 2 KB (upgrades 4 / 8 KB). A base photo then takes about 260 ticks at
+full signal. Review page: `preview.html?photos2x=1`. Built in the game with the switch-over
+(slice 6), together with little-endian photos; the Rover-ASM game keeps today's formats.
+Software compression (run-length coding before `SNDIMG`) becomes a worthwhile later lesson.
+
 ## 7. Firmware, program and the call gate
 
 ### 7.1 Two contexts
@@ -356,6 +377,12 @@ RUN:    MOV  R0, @#SLICE
   traps to the kernel; here that trap is "the program has finished". A program's first
   return address points at a ROM stub that holds a `HALT`, so `RTS PC` from the top level
   ends the program the same way (the dump shows that address: nothing is hidden).
+* **Handlers in the program's time** (slice 3, owner may veto): the gate swaps the whole
+  register set, but an interrupt or `TRAP` during the program swaps only the stack pointer,
+  like the PDP-11/45's kernel and user SPs. The firmware's handler runs on the program's
+  `R0`–`R5` (it saves what it uses, the normal rule for handlers) and on the firmware's
+  stack; its `RTI` back into program mode restores the program's SP. That is what lets a
+  `TRAP` system call read its arguments in `R0` / `R1` and answer in `R0`.
 * As today: interrupts and gate exits happen **between instructions**; a program asleep
   in `WAIT` is suspended there; **its devices keep running**. Uploads, *Run again*,
   acknowledging and restarting keep their M10 rules, now through `PRGST`.
@@ -649,6 +676,47 @@ program: "finished").
   description, to stay clear of DEC's old trademark (held by HP today). Emulators such as
   SIMH use the name freely, so this is caution, not a blocker.
 
+### 14.4 Rover's side, as built in slice 3
+
+`src/core/machine/`: `iopage.ts` (the register table of [`PDP11_IO.md`](PDP11_IO.md) §3 over
+the unchanged device logic), `symbols.ts` (predefined six-character names, a test checks
+each), `rom.ts` (boot, default handlers, `EXIT`), `RoverMachine.ts` (bus, protection, gate,
+interrupts at tick starts, saves). The engine runs it when created with `cpu: 'pdp11'`; the
+game and its UI still use Rover-ASM until slice 6. Tests: `tests/pdp-core.test.ts`
+(devices, gate, faults, protection, system calls, output, determinism, save round trips
+mid-run and mid-handler).
+
+Decisions taken while building it (owner may veto):
+
+1. **Handlers swap only the SP** (§7.2): see above.
+2. **The library got `protectModes`**, the PDP-11/45 user-mode rules (a real behaviour,
+   off by default): in program mode a write to the `PSW` address traps to 4, `RTI` / `RTT`
+   can't lower the mode bits or change the priority, `RESET` does nothing. Without it a
+   program could leave program mode with a crafted `RTI`.
+3. **Boot:** the disk controller (the host) copies both images into core and sets `STKLIM`
+   to the end of the firmware image; then the ROM runs: firmware stack at `PRGBAS`, vectors
+   `000`–`150` filled with an `RTI` handler, the core probe, the real handlers, line clock
+   on, `RTI` to `000200` with `R0` = top of core. **Booting takes 3 ticks** at 48
+   cycles: the firmware's first instruction runs in the 4th tick after a reboot (a test keeps
+   it at 5 or less). The firmware starts at its first word: `.END` with
+   another label is an assembler error for the firmware slot.
+4. **`REBOOT` (`177024`, firmware only):** writing a boot reason reboots after the
+   instruction. The ROM's bus-error and illegal-instruction handlers use it (new boot reason
+   7, *CPU fault*); the log names the fault and its address.
+5. **No `TRAP` handler:** vector `034` still pointing at the ROM's `TRPDEF` makes a program
+   `TRAP` a fault (`PRGER` = `PF.TRP`); the handler itself never runs.
+6. **Names for the new codes:** `PF.ODD` `PF.NXM` `PF.PRO` `PF.STK` `PF.ILL` `PF.IOT`
+   `PF.EMT` `PF.TRP` (`PRGER`), `W.DONE` `W.TIME` `W.PRE` `W.FLT` `W.BPT` (`PRGCS` bits 3–1,
+   pre-shifted), `PRGBAS`, `IMGBAS`, `READY`, `SOH`, `ETX`.
+7. **Budget:** 6 cycles per Rover-ASM cycle of the chassis, so Mk-I gets 48 and the
+   overclock upgrades keep ×1.5 / ×2 (`PDP11.cyclesPerRoverCycle` in `balance.ts`).
+8. **The program's stack** starts at the top of core with the ROM's `EXIT` as its return
+   address; its stack limit is the end of its image. A restart writes the return address
+   again; *Run again* keeps the rest of its memory.
+9. **Firmware `HALT` and `BPT`** stop the whole CPU (`HALTED`, admin *Continue*); a double
+   fault is a CPU `FAULT` with today's watchdog reboot. Comms dumps of the new CPU come with
+   slice 5 (the commands answer "not yet" until then).
+
 ## 15. Plan (slices)
 
 1. **Design** (this document and [`PDP11_IO.md`](PDP11_IO.md)): ✅ reviewed; decisions in §0.
@@ -658,7 +726,8 @@ program: "finished").
    ✅ built; nothing in the game changes.
 3. **Bus and devices** (Rover's side of §14): the I/O page over the existing device
    logic, interrupts, the gate, the `TRAP` system call; names renamed to six characters;
-   the engine runs it behind a switch. Determinism and save round-trip tests.
+   the engine runs it behind a switch. Determinism and save round-trip tests. ✅ built
+   (§14.4); the recorder registers (`RECBUF`) and `SNDIMG` moved to slice 4.
 4. **ROM, default firmware, lessons**: every template rewritten; measure the cycle budget.
 5. **UI**: editor language, listing, debugger (octal, `NZVC`, `PSW`), Comms dumps,
    Reference (Instructions, Modes, Flags, I/O page, ROM). The simulator's panels are the
@@ -679,5 +748,4 @@ program interrupt handlers, `TRAP n`, names, photo byte order. Then (owner, same
 3. **Six-character names for the I/O page:** **DEC style approved**, a family prefix and
    a dot where it helps (`E.BLK`, `SOLHLT`); the rename table comes with slice 3.
 
-No open questions block slice 3. Slice 3 also takes up the owner's idea of **framed
-standard output** ([`PDP11_IO.md`](PDP11_IO.md) §3.5a).
+No open questions block slice 4. The slice 3 decisions (§14.4) are open to veto.

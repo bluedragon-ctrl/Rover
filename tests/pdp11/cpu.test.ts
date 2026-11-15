@@ -457,3 +457,33 @@ CLK:    INC R4
     expect(c.run(10).trap).toMatchObject({ cause: 'bus-error', detail: 0o2000 });
   });
 });
+
+describe('pdp11 CPU: protectModes (PDP-11/45 user-mode rules)', () => {
+  // Enter user mode with RTI, then try to get out of it.
+  const user = (body: string) => `
+        MOV  #TRAP4, @#4
+        MOV  #0, @#6            ; the handler runs in kernel mode, priority 0
+        MOV  #170000, -(SP)     ; user mode
+        MOV  #USER, -(SP)
+        RTI
+USER:   ${body}
+        MOV  @#177776, R1       ; reading the PSW is allowed
+        HALT
+TRAP4:  MOV  #1, R5
+        HALT`;
+
+  it('a PSW write in user mode traps to 4; RTI cannot lower the mode or change the priority', () => {
+    const w = runAsm(user('CLR @#177776'), { protectModes: true });
+    expect(w.cpu.r[5]).toBe(1);
+    const r = runAsm(user('MOV #340, -(SP)\n        MOV #1$, -(SP)\n        RTI\n1$:     NOP'), { protectModes: true });
+    expect(r.cpu.r[5]).toBe(0);
+    expect(r.cpu.r[1] >> 14).toBe(3); // still user
+    expect((r.cpu.r[1] >> 5) & 7).toBe(0); // priority unchanged
+  });
+
+  it('without the option the CPU is a plain PDP-11/40 (no modes enforced)', () => {
+    const r = runAsm(user('CLR @#177776'));
+    expect(r.cpu.r[5]).toBe(0);
+    expect(r.cpu.r[1]).toBe(0);
+  });
+});

@@ -33,10 +33,18 @@ import type { RoverVM, VmHost } from './vm/RoverVM';
 import { HORIZON_COLUMNS, HORIZON_V, isAnomaly, photoBytes, type HorizonView } from './photos';
 import { coneOffsets, shapeContains, type SensorShape } from './sensors';
 import { createDefaultRegistry, T, type WorldRegistry } from './WorldRegistry';
+import { assembleImage, RoverMachine, type ImageResult, type MachineHost } from './machine/RoverMachine';
+import { MESSAGES_KEEP, parseStream, freshParser, type ParserState, type ReceivedMessage } from './messages';
+import { PDP11 } from './balance';
 
 export interface EngineOptions {
   seed: number;
   registry?: WorldRegistry;
+  /**
+   * M15: which computer the rovers have. 'rover-asm' (default) is today's game; 'pdp11' is
+   * the PDP-11 core (docs/PDP11_CPU.md), behind this switch until slice 6.
+   */
+  cpu?: 'rover-asm' | 'pdp11';
 }
 
 export interface SupplyDrop {
@@ -79,6 +87,8 @@ export const SENT_KEEP = 100;
 export type LogCategory = 'world' | 'sent' | 'rover';
 
 export interface UploadResult extends CompileResult {
+  /** M15: the MACRO-11 result (PDP-11 core; `program` stays null there, success = no errors and not rejected). */
+  assembled?: ImageResult;
   /** Energy charged for the upload (0 if rejected or free). */
   cost: number;
   /** Set when the program compiled but the rover could not accept it. */
@@ -145,6 +155,11 @@ export class SimulationEngine {
   /** Mission control: what it sent over the uplink (newest last, last SENT_KEEP). */
   sent: SentRecord[] = [];
   readonly portCtx: PortContext;
+  /** M15: mission control's messages from the TX device (newest last, last MESSAGES_KEEP; saved). */
+  messages: ReceivedMessage[] = [];
+  /** M15: mission control's message parser per rover (saved). */
+  parsers = new Map<number, ParserState>();
+  private machineHost: MachineHost | null = null;
 
   constructor(readonly opts: EngineOptions) {
     this.registry = opts.registry ?? createDefaultRegistry();
@@ -180,8 +195,45 @@ export class SimulationEngine {
     return this.opts.seed;
   }
 
+  /** M15: the rovers have the PDP-11 core. */
+  get pdp11(): boolean {
+    return this.opts.cpu === 'pdp11';
+  }
+
+  /** CPU cycles per tick of a rover's computer. */
+  cyclesPerTick(u: Unit): number {
+    return u.machine ? u.chassis.cyclesPerTick * PDP11.cyclesPerRoverCycle : u.chassis.cyclesPerTick;
+  }
+
+  private attachMachine(u: Unit): void {
+    if (!this.pdp11) return;
+    this.machineHost ??= {
+      ctx: this.portCtx,
+      reboot: (unit, reason, why) => {
+        this.hardReboot(unit, reason);
+        this.log(unit, 'warn', why ? `CPU fault: ${why}. The ROM rebooted the rover.` : `Firmware asked for a reboot (reason ${reason}).`, 'rover');
+        this.events.emit('UNIT_STATE', { unitId: unit.id, state: unit.vm.state });
+      },
+      halt: (unit, fault) => {
+        if (fault) {
+          unit.vm.fault(fault, BALANCE.watchdogTicks);
+          this.log(unit, 'error', `CPU FAULT: ${fault}. Watchdog reboot in ${BALANCE.watchdogTicks} ticks.`, 'rover');
+        } else unit.vm.halt();
+        this.events.emit('UNIT_STATE', { unitId: unit.id, state: unit.vm.state });
+      },
+      programFault: (unit, why) => this.log(unit, 'error', `Program FAULT: ${why}. Control returns to the firmware.`, 'rover'),
+    };
+    u.machine = new RoverMachine(u, this.machineHost);
+  }
+
+  /** M15: assemble a slot for this rover (MACRO-11, predefined symbols). */
+  assembleFor(u: Unit, source: string, slot: Slot = 'firmware'): ImageResult {
+    return assembleImage(source, slot, this.registry, u.machine?.coreBytes);
+  }
+
   spawnUnit(name: string, x = 0, y = 0, chassis: ChassisDef = CHASSIS_MK1): Unit {
     const u = new Unit(this.nextUnitId++, name, chassis);
+    this.attachMachine(u);
     u.x = x;
     u.y = y;
     u.temp = ambientTemp(this.sun.light);
@@ -194,6 +246,7 @@ export class SimulationEngine {
   /** Save/load: recreate a unit with a known id (no reveal, no program). */
   restoreUnit(id: number, name: string, chassis: ChassisDef): Unit {
     const u = new Unit(id, name, chassis);
+    this.attachMachine(u);
     this.units.push(u);
     return u;
   }
@@ -293,6 +346,7 @@ export class SimulationEngine {
     if (!u.powered) err = `rover is ${u.vm.state}: it cannot receive commands`;
     else if (isDump && u.link.sys.length >= BALANCE.dumpQueueMax) err = `${BALANCE.dumpQueueMax} dumps are already waiting for the downlink`;
     else if (cmd === 'RUN_AGAIN' && !this.hasProgram(u)) err = 'no program in flash';
+    else if (isDump && u.machine) err = 'dumps of the PDP-11 core come with M15 slice 5';
     else if (u.energy <= cost) err = `needs ${(cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(u)}`;
     if (err) {
       this.recordSent({ unitId: u.id, tick: this.tick, kind: cmd, slot: target, cost: 0, rejected: err });
@@ -307,7 +361,7 @@ export class SimulationEngine {
     } else if (cmd === 'RUN_AGAIN') this.restartProgram(u);
     else if (!prog) vm.resume();
     else if (u.progState === ProgState.PROG_HALTED) {
-      u.prog.resume();
+      if (!u.machine) u.prog.resume();
       u.progState = ProgState.PROG_READY;
     }
     const costMsg = cost ? ` (${(cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(u)})` : '';
@@ -333,6 +387,7 @@ export class SimulationEngine {
   // ---------------------------------------------------------------- program slot (M10)
 
   hasProgram(u: Unit): boolean {
+    if (u.machine) return u.machine.hasProgram;
     return (u.prog.program?.instrs.length ?? 0) > 0;
   }
 
@@ -342,6 +397,7 @@ export class SimulationEngine {
    */
   private endSlice(u: Unit, state: ProgState): void {
     if (u.slice < 0) return;
+    if (u.machine) return u.machine.requestExit(state);
     u.slice = -1;
     u.progState = state;
     if (u.vm.ip === PROGRAM_GATE) u.vm.ip = u.vm.callStack.pop() ?? 0;
@@ -374,6 +430,12 @@ export class SimulationEngine {
 
   /** Fresh program context (restart from the top); ends a running slice (its devices keep running). */
   private restartProgram(u: Unit): void {
+    if (u.machine) {
+      if (!u.machine.restartProgram()) return; // when the firmware's handler returns
+      u.progResult = 0;
+      u.progState = this.hasProgram(u) ? ProgState.PROG_READY : ProgState.PROG_NONE;
+      return;
+    }
     if (u.slice >= 0) this.endSlice(u, ProgState.PROG_READY);
     u.prog.reboot();
     u.progResult = 0;
@@ -399,6 +461,7 @@ export class SimulationEngine {
     u.preempted = 0;
     u.ramMemory().fill(0); // M14: RAM is zero after a hard reboot
     u.vm.reboot();
+    u.machine?.hardReboot(); // M15: core reloaded from the images, the CPU at the boot ROM
     this.restartProgram(u);
     this.booted(u, reason);
   }
@@ -420,6 +483,7 @@ export class SimulationEngine {
    * An empty source erases the program.
    */
   uploadProgram(unit: Unit, source: string, opts: { factory?: boolean } = {}): UploadResult {
+    if (unit.machine) return this.uploadImage(unit, source, 'program', opts);
     const res: UploadResult = { ...this.compileFor(unit, source, 'program'), cost: 0 };
     if (!res.program) return res;
     if (!opts.factory) {
@@ -453,6 +517,7 @@ export class SimulationEngine {
    * `factory` installs firmware for free (new rovers, admin tools).
    */
   upload(unit: Unit, source: string, opts: { factory?: boolean } = {}): UploadResult {
+    if (unit.machine) return this.uploadImage(unit, source, 'firmware', opts);
     const res: UploadResult = { ...this.compileFor(unit, source, 'firmware', { fresh: true }), cost: 0 }; // assembled for today's RAM
     if (!res.program) return res;
     if (!opts.factory) {
@@ -478,6 +543,64 @@ export class SimulationEngine {
     const prog = unit.programBytes ? ` + program ${unit.programBytes}` : '';
     this.log(unit, 'info', `Firmware flashed (${res.flashUsed}${prog}/${unit.chassis.flashBytes} bytes${costMsg}). Rebooting.`, opts.factory ? 'world' : 'sent');
     if (!opts.factory) this.recordSent({ unitId: unit.id, tick: this.tick, kind: 'FIRMWARE', slot: 'firmware', bytes: res.flashUsed, cost: res.cost });
+    return res;
+  }
+
+  /**
+   * M15: upload a MACRO-11 image. Firmware: flashed, hard reboot. Program: written into core
+   * at once and restarted, no reboot (SPEC §3.9.3). Same costs as Rover-ASM uploads.
+   */
+  private uploadImage(unit: Unit, source: string, slot: Slot, opts: { factory?: boolean }): UploadResult {
+    const m = unit.machine!;
+    const r = this.assembleFor(unit, source, slot);
+    const bytes = r.asm.bytes.length;
+    const res: UploadResult = {
+      program: null,
+      errors: r.errors.map((e) => ({ line: e.line, message: e.message })),
+      flashUsed: bytes,
+      lineBytes: {},
+      logTags: {},
+      regNames: {},
+      lineAddr: {},
+      ramUsed: 0,
+      ramLow: 0,
+      ramHigh: 0,
+      cost: 0,
+      assembled: r,
+    };
+    if (!r.image) return res;
+    const kind = slot === 'firmware' ? 'FIRMWARE' : 'PROGRAM';
+    if (!opts.factory) {
+      const cost = slot === 'firmware' ? this.uploadCost(unit, bytes) : this.programUploadCost(unit, bytes);
+      if (!unit.powered) res.rejected = `Rover is ${unit.vm.state}: it cannot receive ${slot === 'firmware' ? 'firmware' : 'a program'}.`;
+      else if (unit.energy <= cost)
+        res.rejected = `Upload needs ${(cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(unit)}; rover has ${(unit.energy / 1000).toFixed(1)}%.`;
+      if (res.rejected) {
+        this.recordSent({ unitId: unit.id, tick: this.tick, kind, slot, bytes, cost: 0, rejected: res.rejected });
+        return res;
+      }
+      unit.energy -= cost;
+      res.cost = cost;
+    }
+    const cat: LogCategory = opts.factory ? 'world' : 'sent';
+    const costMsg = res.cost ? `, cost ${(res.cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(unit)}` : '';
+    if (slot === 'firmware') {
+      unit.sourceCode = source;
+      unit.firmwareBytes = bytes;
+      m.firmware = r.image;
+      this.hardReboot(unit, BootReason.UPLOAD);
+      unit.cyclesLeft = 0;
+      this.log(unit, 'info', `Firmware flashed (${bytes} bytes${costMsg}). Rebooting.`, cat);
+    } else {
+      unit.programSource = source;
+      unit.programBytes = bytes;
+      m.program = bytes ? r.image : null;
+      m.loadProgramImage();
+      this.restartProgram(unit);
+      if (this.hasProgram(unit)) this.log(unit, 'info', `Program uploaded (${bytes} bytes${costMsg}). It starts with the firmware's next RUN.`, cat);
+      else this.log(unit, 'info', `Program erased${costMsg}.`, cat);
+    }
+    if (!opts.factory) this.recordSent({ unitId: unit.id, tick: this.tick, kind, slot, bytes, cost: res.cost });
     return res;
   }
 
@@ -507,7 +630,9 @@ export class SimulationEngine {
    */
   stepInstruction(unit: Unit, maxTicks = 10_000): boolean {
     for (let guard = 0; guard < maxTicks; guard++) {
-      if (unit.cpu.state === CpuState.RUNNING && unit.cyclesLeft > 0) {
+      if (unit.machine) {
+        if (unit.vm.state === CpuState.RUNNING && unit.cyclesLeft > 0 && unit.machine.run(1) > 0) return true;
+      } else if (unit.cpu.state === CpuState.RUNNING && unit.cyclesLeft > 0) {
         this.runCpu(unit, 1);
         return true;
       }
@@ -515,7 +640,7 @@ export class SimulationEngine {
       for (const u of this.units) if (u !== unit) this.runCpu(u, Infinity);
       this.beginTick();
       if (!unit.powered || unit.vm.state === CpuState.FAULT || unit.vm.state === CpuState.HALTED) return false;
-      if (unit.slice >= 0 && (unit.prog.state === CpuState.FAULT || unit.prog.state === CpuState.HALTED)) return false;
+      if (!unit.machine && unit.slice >= 0 && (unit.prog.state === CpuState.FAULT || unit.prog.state === CpuState.HALTED)) return false;
     }
     return false;
   }
@@ -541,6 +666,11 @@ export class SimulationEngine {
       this.revealAround(u);
       this.updatePreempt(u, integrity, announced);
       this.updateSlice(u);
+      if (u.machine) {
+        if (u.powered) u.machine.tickStart();
+        u.cyclesLeft = u.vm.state === CpuState.RUNNING ? this.cyclesPerTick(u) : 0;
+        continue;
+      }
       this.wakeIfReady(u, u.cpu);
       u.cyclesLeft = u.cpu.state === CpuState.RUNNING ? u.chassis.cyclesPerTick : 0;
     }
@@ -594,6 +724,11 @@ export class SimulationEngine {
   }
 
   private runCpu(u: Unit, maxInstructions: number): void {
+    if (u.machine) {
+      if (u.vm.state === CpuState.RUNNING) u.machine.run(maxInstructions);
+      else u.cyclesLeft = 0;
+      return;
+    }
     let n = 0;
     while (u.cyclesLeft > 0 && n < maxInstructions) {
       const cpu = u.cpu;
@@ -1185,7 +1320,8 @@ export class SimulationEngine {
 
   /** Transmit this tick's bytes; completed frames and products reach mission control. */
   private updateLink(u: Unit): void {
-    const { sent, sysDone, done, delivered, partial } = u.link.pump(this.signalOf(u), BALANCE.linkMinSignal, u.chassis.linkBytesPerTick);
+    const { sent, sysDone, done, delivered, partial, tx } = u.link.pump(this.signalOf(u), BALANCE.linkMinSignal, u.chassis.linkBytesPerTick);
+    if (tx.length) this.receiveTx(u, tx);
     if (!sent) return;
     this.drain(u, BALANCE.linkEnergyPerTick);
     for (const f of sysDone) {
@@ -1212,6 +1348,18 @@ export class SimulationEngine {
     if (sysDone.length || done.length || delivered.length) this.events.emit('UPLINK_PULSE', { unitId: u.id, x: u.x, y: u.y, science: delivered.length > 0 });
     if (this.received.length > RECEIVED_KEEP) this.received.splice(0, this.received.length - RECEIVED_KEEP);
     if (this.gallery.length > GALLERY_KEEP) this.gallery.splice(0, this.gallery.length - GALLERY_KEEP);
+  }
+
+  /** M15: mission control splits the TX stream into messages (PDP11_IO.md §3.5a). */
+  private receiveTx(u: Unit, bytes: number[]): void {
+    let p = this.parsers.get(u.id);
+    if (!p) this.parsers.set(u.id, (p = freshParser()));
+    for (const msg of parseStream(p, bytes, u.id, this.tick)) {
+      this.messages.push(msg);
+      if (msg.status === 'ok') this.stats.framesReceived++;
+      this.events.emit('DOWNLINK_MESSAGE', msg);
+    }
+    if (this.messages.length > MESSAGES_KEEP) this.messages.splice(0, this.messages.length - MESSAGES_KEEP);
   }
 
   /** Mission control's record of a product, created when its first byte arrives. */
