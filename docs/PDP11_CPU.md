@@ -27,6 +27,8 @@ the UI are rewritten from scratch.
 8. **Interrupts** (not polling only): a line clock every tick and device interrupts (§8,
    [`PDP11_IO.md`](PDP11_IO.md) §5).
 9. **Two documents**: this one (CPU) and [`PDP11_IO.md`](PDP11_IO.md) (I/O).
+10. **64 KB addressable, not all installed at first**: the rover starts with a small core
+    and memory boards add more (§6.1).
 
 M14 is frozen where it is: its last item (boot ROM with safe mode) is not built in
 Rover-ASM. It moves into this milestone's ROM (§10).
@@ -50,8 +52,8 @@ departure).
 | Word | 16 bits, bytes addressable, **little-endian** | as the PDP-11 |
 | Registers | `R0`–`R5` general, `R6` = `SP`, `R7` = `PC` | always 8; the register-file upgrades go (§12) |
 | Flags | `N Z V C` in the processor status word `PSW` | §5 |
-| Memory | **one 64 KB address space** for code, data, stacks and devices | §6 |
-| Core (code + data) | **2 KB** proposed (was 512 B Flash + 64 B RAM) | upgrades 3 / 4 KB; to tune |
+| Address space | **64 KB**, one space for code, data, stacks and devices | most of it empty at first (§6.1) |
+| Core installed (code + data) | **Mk-I 2 KB** proposed (was 512 B Flash + 64 B RAM) | memory boards 4 / 8 KB, room for up to 32 KB; to tune |
 | Cycles per tick | **32–64**, fixed after porting the default firmware | was 8; overclock upgrades ×1.5 / ×2 |
 | Stacks | in memory, through `SP` (no fixed depth) | was 16 data + 8 call entries |
 | Contexts | firmware and program, each with its own `R0`–`R7` and `PSW` | §7 |
@@ -243,14 +245,41 @@ One address space, octal addresses:
 | `000000`–`000177` | **trap and interrupt vectors** (§8), filled by the boot ROM | firmware writes; program reads |
 | `000200`–`PRGBAS−1` | **firmware**: code, data, its stack (grows down from `PRGBAS`) | firmware |
 | `PRGBAS`–core top | **program**: code, data, its stack (grows down from the top) | program and firmware |
-| core top – `077777` | nothing | bus error (trap 4) |
+| core top – `077777` | **not installed** (memory boards fill it, §6.1) | bus error (trap 4) |
 | `100000`–`101777` | **image memory** (256 / 512 / 1024 B by camera) | read / write |
 | `102000`–`157777` | nothing | bus error |
 | `160000`–`167777` | **ROM** (§10) | read and execute only |
 | `170000`–`177777` | **device registers** ([`PDP11_IO.md`](PDP11_IO.md) §3) | per register |
 
-* **Mk-I core 2 KB** (`000000`–`003777`). Default split `PRGBAS` = `002000`: 896 B for the
-  firmware, 1 KB for the program (open question 3).
+* **Mk-I core 2 KB** (§6.1). Default split `PRGBAS` = `002000`: 896 B for the firmware,
+  1 KB for the program (open question 3).
+
+### 6.1 Installed memory grows with upgrades
+
+The CPU can **address** 64 KB, but a rover does not start with it. Owner, 2026-11-15:
+"64k addressable is fine but not necessarily available from the beginning." Real
+PDP-11s were the same: the address space was fixed, and memory came on boards a
+customer bought as needed.
+
+* **Mk-I: 2 KB of core** (`000000`–`003777`). **Memory-board upgrades** take it to 4 KB
+  (`007777`) and 8 KB (`017777`). The map leaves room for up to 32 KB below image memory,
+  should a later chassis want it. Prices and steps get tuned in playtests.
+* **Addresses with nothing installed are a bus error** (trap 4): `MOV @#10000, R0` on a
+  Mk-I faults with "no memory at 010000". The ROM, image memory and the I/O page are
+  always there, whatever core is installed.
+* **The boot ROM finds the size itself**, the way DEC's boot and diagnostic code did. It
+  reads one word per 1 KB block upward, catches the first bus error, and passes the top
+  of core to the firmware in `R0`. The probe is a dozen readable lines in Reference →
+  ROM: a first look at a trap handler.
+* **A new board adds to the program's region.** `PRGBAS` stays where it was, and the
+  program's stack starts at the new top. A firmware and program that fit before still
+  fit, so nothing has to be reassembled.
+* **What else is fitted, not built in:** the EIS instructions (§9.2), the camera's image
+  memory (256 / 512 / 1024 B), cargo slots, tools. An upgrade fills in hardware the
+  address map already has a place for.
+
+### 6.2 Rules
+
 * **Code and data share memory.** Tables in code are read with `MOV`; `LDF` disappears.
   A program can modify its own code: a real retro technique and a real bug source.
 * **Write protection** (the only protection; there is no memory management): the program
@@ -490,7 +519,7 @@ leave the flags from it, so the caller writes:
 | Today (Rover-ASM) | PDP-11 core |
 | :--- | :--- |
 | 4 registers, upgrades 6 / 8 | 8 always; the register upgrades leave the catalogue (EIS and core size replace them) |
-| Flash 512 B + RAM 64 B, upgrades | one core, Mk-I 2 KB, upgrades 3 / 4 KB |
+| Flash 512 B + RAM 64 B, upgrades | one core, Mk-I 2 KB, memory boards 4 / 8 KB |
 | 8 cycles / tick, overclock 12 / 16 | 32–64, overclock ×1.5 / ×2 |
 | data stack 16, call stack 8 | `SP` in memory, stack limit per context |
 | `CONST`, `ALIAS`, `VAR`, `DATA` | `=`, `= %n`, `.BLKW` / `.BLKB`, `.WORD` / `.BYTE` |
@@ -549,6 +578,7 @@ slice 4). The default firmware (166 B today) should land near 300 B, well inside
    table later?
 6. **`TRAP n` from the program:** a "system call" to the firmware (it may serve it and
    resume), or simply a fault in v1?
-7. **Core sizes** and their upgrade prices.
+7. **Core sizes:** 2 KB to start, boards to 4 / 8 KB (this draft), their prices, and whether
+   a later chassis goes further (up to 32 KB fits the map).
 8. **Names:** keep `_` and long names (this draft), or DEC's six-character style?
 9. **Photo byte order:** keep big-endian (a `SWAB` lesson) or switch to little-endian?

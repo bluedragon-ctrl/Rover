@@ -36,7 +36,8 @@ Target a PDP-11-style ISA for its "simpleness, readability and elegance" (RISC-V
 x86 and older machines were discussed). Decisions: saves reset; a simplified call gate
 between firmware and program; cycles charged per bus access (to confirm); octal; multiply
 and divide as ROM subroutines with hardware `MUL` / `DIV` as the EIS upgrade; interrupts
-(line clock every tick, device interrupts); two design documents:
+(line clock every tick, device interrupts); 64 KB addressable but only a small core
+installed at first (Mk-I 2 KB, memory boards add more); two design documents:
 
 * [`PDP11_CPU.md`](PDP11_CPU.md): machine, MACRO-11 subset, addressing modes, cycles,
   flags, memory map, contexts and the gate, traps, interrupts (CPU side), `MUL16` /
