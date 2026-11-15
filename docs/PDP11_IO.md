@@ -2,8 +2,8 @@
 
 Status: **draft; CPU side approved** (2026-11-15). Names shrink to six characters, DEC
 style (§9, question 1). Framed standard output approved (§3.5a). **Built in slice 3**
-(`src/core/machine/iopage.ts`, behind the engine switch; notes in §11), except the
-recorder registers (slice 4). Companion of
+(`src/core/machine/iopage.ts`, behind the engine switch; notes in §11); the recorder
+registers, safe-mode registers and ROM drivers in slice 4 (§12). Companion of
 [`PDP11_CPU.md`](PDP11_CPU.md) (instruction set, memory, call gate, traps, ROM).
 
 This document turns today's 61 ports (`src/core/ports.ts`, SPEC §5.6, M14 devices in
@@ -156,7 +156,7 @@ parameters and answers.
 | **Tools** | `176440` `TOLCS` | `TOLER`, `TOLARG` direction or slot (RW), `TOLLFT` ticks left (RO), `SEITYP` (RO), `SEIDST` (RO) | hardpoint `F.T0`…`F.T3` | `@TOOL`, `@TOOL_ARG`, `@SEISMIC_*` |
 | **Repair** | `176460` `REPCS` | `REPER`, `REPSLT` cargo slot (RW), `REPLFT` (RO) | system `F.HULL`, `F.SOL`, `F.ANT` | `@REPAIR`, `@REPAIR_SYS` |
 | **Camera** | `176500` `CAMCS` | `CAMER`, `CAMDIR` (RW), `CAMLFT` (RO) | mode `F.M1`…`F.M5` | `@CAM`, `@CAM_MODE` |
-| **Image** | `176520` `IMGCS` | `IMGER`, `IMGTYP` photo type, 0 = last mode (RW), `IMGLFT` (RO) | `F.SEND`, `F.ERAS` | `@SEND`, `@ERASE` |
+| **Image** | `176520` `IMGCS` | `IMGER`, `IMGTYP` mode of the last photo (RO), `IMGLFT` (RO), `IMGSIZ` image memory bytes (RO) | `F.ERAS` (slice 4: `F.SEND` retired, the ROM's `SNDIMG` sends photos) | `@SEND`, `@ERASE` |
 
 * **Drive count, DEC style:** `DRVCNT` counts **down** as tiles are driven (like a disk
   controller's word count). Read: tiles left. Written while driving: changes the tiles
@@ -182,7 +182,7 @@ as messages.
 | `176546` | `TXLOST` | RW | bytes dropped since boot (saturates at 255; write to set) |
 | `176550` | `RECCS` | RO | bit 7 `READY`: the recorder has room for a byte |
 | `176552` | `RECBUF` | WO | store one byte in the recorder (store and forward, reliable) |
-| `176554` | `RECFRE` | RO | free recorder bytes (also in telemetry at `176034`) |
+| `176554` | `RECFRE` | RO | free recorder bytes (also readable at `176034` in telemetry, which has no name of its own since slice 4) |
 
 `LOG` stops being an instruction (M14 kept it as one). The ROM routine `LOG` (tag in
 `R0`, value in `R1`) writes a `T.LOG` message; `PUTMSG` writes any message, all or
@@ -297,6 +297,8 @@ The gate and the M10 / M13 machinery ([`PDP11_CPU.md`](PDP11_CPU.md) §7).
 | `177020` | `BATALM` | FW | 0–100 % |
 | `177022` | `WDT` | FW | watchdog, M13 rules (write n > 0 to arm / kick; read: ticks left) |
 | `177024` | `REBOOT` | FW | write a boot reason: hard reboot after the instruction (slice 3; the ROM's fault handlers) |
+| `177026` | `BOOTCS` | FW | slice 4: bits 7–0 why the rover booted (RO); bit 8 `SAFE`: safe mode, latched through reboots, cleared by a firmware upload; the boot ROM sets it |
+| `177030` | `BOOTCT` | RO | slice 4: fault and watchdog reboots (boot reasons 2, 5, 7) in the last 500 ticks, this boot included |
 
 ### 3.8 CPU and clock (real PDP-11 addresses)
 
@@ -378,9 +380,10 @@ SLEEP:  MOV  @#TICKL, R1        ; now...
 ```
 
 `SLEEP` tests `BMI` (the sign of the difference), not `BLT`: that stays right when the
-counter wraps, a real-world technique worth a Reference note. `SCAN`, `ACT`, `USE`, `SNAP`,
-`SEND` and `ERASE` follow `STEP`'s pattern; `LOG` is two `MOV`s (§3.5); `RUN` is in
-[`PDP11_CPU.md`](PDP11_CPU.md) §7.2.
+counter wraps, a real-world technique worth a Reference note. `SCAN`, `ACT`, `USE`, `SNAP`
+and `ERASE` follow `STEP`'s pattern (as built they share its waiting tail `DWAIT`); `LOG`,
+`PUTMSG`, `SEND` and `SNDIMG` write messages (§3.5a); `RUN` is in
+[`PDP11_CPU.md`](PDP11_CPU.md) §7.2. The full table as built: [`PDP11_CPU.md`](PDP11_CPU.md) §10.
 
 **Cost of waiting:** a `WAIT` loop costs 5–6 cycles per tick plus the clock's handler
 (about 7), against today's free `WAIT @port`. With 32–64 cycles per tick that leaves
@@ -628,3 +631,24 @@ new tile can't break the rule; a test checks that every predefined symbol fits.
   until then the image device's `F.SEND` sends photos as today.
 * **Predefined names are reserved:** a label `X:` or `IRON:` is an error ("is a predefined
   symbol"), as with DEC's system symbols.
+
+## 12. Slice 4 as built (owner may veto)
+
+* **Recorder registers** `RECCS` / `RECBUF` / `RECFRE` (`176550`–`176554`): the CPU's bytes
+  share the recorder's room with the spectra and photos the hardware records, and go out
+  after the `TX` stream, before those products. A byte written while the recorder is full
+  is dropped without a count (check `RECFRE` first; the ROM's `SEND` and `SNDIMG` wait). A
+  reboot puts the same out-of-band marker into the recorder stream as into `TX`.
+* **Photos:** `SNDIMG` frames image memory as `T.IMG` messages: body `type, chunk, chunks`
+  and 128 pixel bytes. Ground reassembles them in order into a Gallery photo; a reboot or a
+  lost chunk drops it. The recorder pairs the first chunk with the camera's capture of that
+  type when it stores it (that is what earns the credits; then the capture is used up, as
+  with today's send). Raw or edited is decided by comparing the bytes with the capture.
+* **`F.SEND` retired** on this core (it is `E.INV`); `IMGTYP` became read-only, the mode of
+  the last photo (what `SNDIMG` sends for type 0); new `IMGSIZ` (`176530`) tells the ROM how
+  much image memory the camera has.
+* **Safe mode registers** `BOOTCS` / `BOOTCT` (§3.7): the hardware counts, the boot ROM
+  decides ([`PDP11_CPU.md`](PDP11_CPU.md) §10). The `SAFE` bit is the rover's only
+  non-volatile flag besides image memory.
+* **Not changed, waiting for the owner:** link 2 B/tick and recorder 1 KB. With them a 64×64
+  photo (1080 B on air) takes about 540 ticks at full signal; the proposed 4 B/tick halves it.
