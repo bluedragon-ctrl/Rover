@@ -36,6 +36,10 @@ const r = cpu.run(1000);      // { reason, cycles, instructions, trap? }
 | `save()` / `load(state)` / `reset()` | plain JSON state |
 | `r`, `psw`, `n z v c`, `priority`, `waiting`, `halted` | state |
 
+Options: `eis` (MUL, DIV, ASH, ASHC), `cycles` (below), `protectModes`: the PDP-11/45 rules
+for the non-kernel modes (PSW bits 15–14 ≠ 0): a write to the PSW's address traps to 4,
+`RTI` / `RTT` can't lower the mode bits or change the priority, `RESET` does nothing.
+
 Cycle model `per-bus-access`: every memory read or write costs 1 (instruction words
 included); `MUL` +4, `DIV` +8, `ASH`/`ASHC` +1 internal. `flat`: 1 per instruction.
 

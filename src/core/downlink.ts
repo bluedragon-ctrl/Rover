@@ -28,8 +28,13 @@ export const BootReason = {
   WDT_TIMEOUT: 5,
   /** The game changed the language and rewrote the rover's code (save migration, M14). */
   UPDATE: 6,
+  /** M15: the ROM's fault handler rebooted after a bus error or illegal instruction in the firmware. */
+  FAULT: 7,
 } as const;
-export const BOOT_REASON_NAMES: Record<number, string> = { 1: 'code upload', 2: 'watchdog', 3: 'cold boot', 4: 'admin', 5: 'watchdog timeout', 6: 'software update' };
+export const BOOT_REASON_NAMES: Record<number, string> = { 1: 'code upload', 2: 'watchdog', 3: 'cold boot', 4: 'admin', 5: 'watchdog timeout', 6: 'software update', 7: 'CPU fault' };
+
+/** Out-of-band reboot marker in the TX stream (see {@link Downlink.tx}). */
+export const TX_BOOT = -1;
 
 /** Received frames mission control keeps (console history, saved). */
 export const RECEIVED_KEEP = 200;
@@ -189,6 +194,35 @@ export class Downlink {
   sys: SysFrame[] = [];
   /** Bytes of sys[0] already transmitted. */
   sysSent = 0;
+  /**
+   * M15 `TX` device (PDP11_IO.md §3.5): the CPU's real-time byte stream, oldest first. A
+   * {@link TX_BOOT} entry marks a reboot: out of band, no air time (ground resets its
+   * message parser there, so a message cut off by the reboot shows as incomplete).
+   */
+  tx: number[] = [];
+  /** `TXLOST`: bytes dropped because the FIFO was full, since boot (saturates at 255). */
+  txLost = 0;
+
+  /** Bytes waiting in the TX FIFO (markers take no room). */
+  get txUsed(): number {
+    let n = 0;
+    for (const b of this.tx) if (b >= 0) n++;
+    return n;
+  }
+
+  txFree(capacity: number): number {
+    return Math.max(0, capacity - this.txUsed);
+  }
+
+  /** `TXBUF` write: queue a byte, or drop and count it if the FIFO is full. */
+  txPut(byte: number, capacity: number): boolean {
+    if (this.txUsed >= capacity) {
+      if (this.txLost < 255) this.txLost++;
+      return false;
+    }
+    this.tx.push(byte & 0xff);
+    return true;
+  }
 
   /** Bytes the recorder holds (a product's space is freed only when its last byte is sent). */
   get recUsed(): number {
@@ -234,7 +268,7 @@ export class Downlink {
   }
 
   get idle(): boolean {
-    return this.sys.length === 0 && this.fifo.length === 0 && this.products.length === 0;
+    return this.sys.length === 0 && this.tx.length === 0 && this.fifo.length === 0 && this.products.length === 0;
   }
 
   /**
@@ -246,7 +280,8 @@ export class Downlink {
     signal: number,
     minSignal: number,
     bytesPerTick: number,
-  ): { sent: number; sysDone: SysFrame[]; done: QueuedFrame[]; delivered: ProductDesc[]; partial: ProductDesc | null } {
+  ): { sent: number; sysDone: SysFrame[]; done: QueuedFrame[]; delivered: ProductDesc[]; partial: ProductDesc | null; tx: number[] } {
+    const tx: number[] = [];
     const sysDone: SysFrame[] = [];
     const done: QueuedFrame[] = [];
     const delivered: ProductDesc[] = [];
@@ -254,9 +289,13 @@ export class Downlink {
     let recBytes = 0;
     if (signal < minSignal || this.idle) {
       this.acc = 0;
-      return { sent, sysDone, done, delivered, partial: null };
+      return { sent, sysDone, done, delivered, partial: null, tx };
     }
     this.acc += bytesPerTick * signal;
+    const markers = () => {
+      while (this.tx.length && this.tx[0] < 0 && !this.sys.length && !this.fifo.length) tx.push(this.tx.shift()!);
+    };
+    markers();
     while (this.acc >= 100 && !this.idle) {
       this.acc -= 100;
       sent++;
@@ -266,10 +305,14 @@ export class Downlink {
           this.sysSent = 0;
         }
       } else if (this.fifo.length) {
+        // Log frames; on the PDP-11 core only the system's boot frames use this queue.
         if (++this.headSent >= this.fifo[0].bytes.length) {
           done.push(this.fifo.shift()!);
           this.headSent = 0;
         }
+      } else if (this.tx.length) {
+        tx.push(this.tx.shift()!);
+        markers();
       } else {
         recBytes++;
         if (++this.recSent >= productFrameBytes(this.products[0].type)) {
@@ -279,8 +322,9 @@ export class Downlink {
         }
       }
     }
+    markers();
     if (this.idle) this.acc = 0;
-    return { sent, sysDone, done, delivered, partial: recBytes > 0 ? this.products[0] : null };
+    return { sent, sysDone, done, delivered, partial: recBytes > 0 ? this.products[0] : null, tx };
   }
 }
 

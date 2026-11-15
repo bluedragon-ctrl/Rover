@@ -1,6 +1,7 @@
 import type { CpuState, Status } from './types';
 import type { WorldEventType } from './EventDirector';
 import type { ReceivedFrame, ReceivedProduct } from './downlink';
+import type { ReceivedMessage } from './messages';
 
 export interface SimEvents {
   TICK: { tick: number };
@@ -17,6 +18,8 @@ export interface SimEvents {
   UNIT_STATE: { unitId: number; state: CpuState };
   UNIT_STATUS: { unitId: number; status: Status };
   DOWNLINK_FRAME: ReceivedFrame;
+  /** M15: a message from the TX device, complete or not. */
+  DOWNLINK_MESSAGE: ReceivedMessage;
   SCIENCE_DELIVERED: ReceivedProduct;
   /** Mission-log message; `category` says what it is about (SimulationEngine `LogCategory`). */
   LOG: { unitId: number; level: 'info' | 'warn' | 'error'; message: string; category?: 'world' | 'sent' | 'rover' };

@@ -242,7 +242,7 @@ describe('save v18 (M14 devices)', () => {
     expect(lu.vm.state).toBe(CpuState.RUNNING);
     const boot = lu.link.fifo.map((f) => decodeFrame(f.bytes)).filter((d) => d.kind === 0 && d.tag === 15).at(-1); // after the upload's boot frame
     expect(boot).toMatchObject({ value: BootReason.UPDATE });
-    expect(SAVE_VERSION).toBe(18);
+    expect(SAVE_VERSION).toBeGreaterThanOrEqual(18);
   });
 });
 

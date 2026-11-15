@@ -10,8 +10,10 @@ import { DEVICES, type Capture, type Device, type Unit, type UnitAction, type Un
 import { fromHex, toHex } from './imaging';
 import { ambientTemp, Environment } from './Environment';
 import { migrateHardwareOps, migrateImageMemory } from './migrateSource';
+import type { MachineSave } from './machine/RoverMachine';
+import type { ParserState, ReceivedMessage } from './messages';
 
-export const SAVE_VERSION = 18;
+export const SAVE_VERSION = 19;
 
 interface UnitSave {
   id: number;
@@ -38,7 +40,7 @@ interface UnitSave {
   /** v7: @POST display */
   post: number;
   /** v4: downlink transmitter (v5: recorder, v6: dump replies) */
-  link: { fifo: QueuedFrame[]; headSent: number; acc: number; lost: number; gap: number; products: ProductDesc[]; recSent: number; seq: number; sys: SysFrame[]; sysSent: number };
+  link: { fifo: QueuedFrame[]; headSent: number; acc: number; lost: number; gap: number; products: ProductDesc[]; recSent: number; seq: number; sys: SysFrame[]; sysSent: number; tx?: number[]; txLost?: number };
   action: UnitAction | null;
   motion: UnitMotion | null;
   cyclesLeft: number;
@@ -66,6 +68,8 @@ interface UnitSave {
     imgOp: Unit['imgOp'];
     results: Record<Device, number>;
   };
+  /** v19 (M15): the PDP-11 core (only in a `cpu: 'pdp11'` save). */
+  machine?: MachineSave;
   /** Set by a migration that rewrote this rover's code: its saved CPU state no longer matches, reboot on load. */
   rebootOnLoad?: boolean;
 }
@@ -154,6 +158,10 @@ export interface SaveSnapshot {
   sent: SentRecord[];
   units: UnitSave[];
   chunks: ChunkSave[];
+  /** v19 (M15): which computer the rovers have (absent = Rover-ASM); messages and parsers of the TX stream. */
+  cpu?: 'pdp11';
+  messages?: ReceivedMessage[];
+  parsers?: Array<[unitId: number, state: ParserState]>;
 }
 
 function rle(a: Uint8Array): number[] {
@@ -215,6 +223,13 @@ export function serialize(e: SimulationEngine): SaveSnapshot {
     sent: e.sent.map((r) => ({ ...r })),
     units: e.units.map(saveUnit),
     chunks,
+    ...(e.pdp11
+      ? {
+          cpu: 'pdp11' as const,
+          messages: e.messages.map((m) => ({ ...m, body: [...m.body] })),
+          parsers: [...e.parsers.entries()].map(([id, p]): [number, ParserState] => [id, structuredClone(p)]),
+        }
+      : {}),
   };
 }
 
@@ -245,6 +260,8 @@ function saveUnit(u: Unit): UnitSave {
       seq: u.link.seq,
       sys: u.link.sys.map((f) => ({ bytes: [...f.bytes], taken: f.taken })),
       sysSent: u.link.sysSent,
+      tx: [...u.link.tx],
+      txLost: u.link.txLost,
     },
     solar: [u.solarOpen, u.solarDeploy, u.solarAngle, u.solarTarget],
     antenna: [u.antennaAngle, u.antennaTarget],
@@ -273,6 +290,7 @@ function saveUnit(u: Unit): UnitSave {
       imgOp: u.imgOp ? { ...u.imgOp } : null,
       results: { ...u.results },
     },
+    ...(u.machine ? { machine: u.machine.save() } : {}),
   };
 }
 
@@ -454,16 +472,50 @@ export function migrate(raw: unknown): SaveSnapshot {
     }
     v = 18;
   }
+  if (v === 18) {
+    // v18 -> v19 (M15 slice 3): the TX stream and the PDP-11 core are new and optional.
+    for (const u of out.units) {
+      u.link.tx ??= [];
+      u.link.txLost ??= 0;
+    }
+    v = 19;
+  }
   if (v !== SAVE_VERSION) throw new SaveError(`Unsupported save version ${s.version}.`);
   out.version = v;
   return out;
+}
+
+/** M15: reassemble both images from their saved sources, then restore the machine. */
+function loadMachine(e: SimulationEngine, u: Unit, us: UnitSave): void {
+  const m = u.machine!;
+  const ms = us.machine;
+  if (!ms) throw new SaveError(`Saved rover ${us.name} has no PDP-11 state.`);
+  for (const slot of ['firmware', 'program'] as const) {
+    const src = slot === 'firmware' ? ms.firmware : ms.program;
+    if (!src) continue;
+    const r = e.assembleFor(u, src, slot);
+    if (!r.image) throw new SaveError(`Saved ${slot} of ${us.name} no longer assembles: ${r.errors[0]?.message}`);
+    if (slot === 'firmware') m.firmware = r.image;
+    else m.program = r.image.bytes.length ? r.image : null;
+  }
+  m.load(ms);
+  u.sourceCode = us.sourceCode;
+  u.firmwareBytes = m.firmware?.bytes.length ?? 0;
+  u.programSource = us.program.source;
+  u.programBytes = m.program?.bytes.length ?? 0;
+  u.progState = us.program.state;
+  u.progResult = us.program.result;
+  u.slice = us.program.slice;
+  loadVm(u.vm, us.vm);
 }
 
 /** Rebuild an engine from a snapshot (any supported version). Throws SaveError on bad data. */
 export function deserialize(raw: unknown): SimulationEngine {
   const s = migrate(raw);
 
-  const e = new SimulationEngine({ seed: s.seed });
+  const e = new SimulationEngine({ seed: s.seed, cpu: s.cpu === 'pdp11' ? 'pdp11' : 'rover-asm' });
+  e.messages = (s.messages ?? []).map((m) => ({ ...m, body: [...m.body] }));
+  e.parsers = new Map((s.parsers ?? []).map(([id, p]) => [id, structuredClone(p)]));
   e.tick = s.tick;
   e.world.now = s.tick;
   e.credits = s.credits;
@@ -510,6 +562,8 @@ export function deserialize(raw: unknown): SimulationEngine {
       seq: us.link.seq,
       sys: us.link.sys.map((f) => ({ bytes: [...f.bytes], taken: f.taken })),
       sysSent: us.link.sysSent,
+      tx: [...(us.link.tx ?? [])],
+      txLost: us.link.txLost ?? 0,
     });
     u.seismicType = us.seismic[0];
     u.seismicDist = us.seismic[1];
@@ -563,6 +617,10 @@ export function deserialize(raw: unknown): SimulationEngine {
     ram.fill(0);
     ram.set(fromHex(us.ram).slice(0, ram.length));
     u.fwRamTop = us.fwRamTop;
+    if (u.machine) {
+      loadMachine(e, u, us);
+      continue;
+    }
     u.sourceCode = us.sourceCode; // before compiling: the installed firmware keeps its RAM layout
     const res = e.compileFor(u, us.sourceCode);
     if (!res.program) throw new SaveError(`Saved firmware of ${us.name} no longer compiles: ${res.errors[0]?.message}`);

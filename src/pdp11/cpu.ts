@@ -28,6 +28,12 @@ export interface CpuOptions {
    * instruction fetches; EIS adds a fixed internal cost. `flat`: 1 per instruction.
    */
   cycles?: CycleModel;
+  /**
+   * PDP-11/45 rules for the non-kernel modes (PSW bits 15–14 ≠ 0): `RTI` / `RTT` can't lower
+   * the mode bits (15–11) or change the priority (7–5); a write to the PSW's bus address
+   * traps to 4 (the I/O page is not the user's); `RESET` does nothing. Default off.
+   */
+  protectModes?: boolean;
 }
 
 /** Vectors of the real machine. */
@@ -127,6 +133,7 @@ export class Cpu {
 
   readonly eis: boolean;
   readonly cycleModel: CycleModel;
+  readonly protectModes: boolean;
 
   private pending: Array<{ vector: number; level: number }> = [];
   private cyc = 0;
@@ -136,7 +143,11 @@ export class Cpu {
   constructor(private readonly bus: Bus, opts: CpuOptions = {}) {
     this.eis = opts.eis ?? false;
     this.cycleModel = opts.cycles ?? 'per-bus-access';
+    this.protectModes = opts.protectModes ?? false;
   }
+
+  /** Current mode (PSW bits 15–14): 0 kernel, 3 user. */
+  get mode(): number { return this.psw >> 14; }
 
   // ---------------------------------------------------------------- public API
 
@@ -240,6 +251,9 @@ export class Cpu {
     if (!byte && (addr & 1)) throw new Abort({ vector: VEC.BUS_ERROR, cause: 'odd-address', pc: this.ipc, detail: addr });
     if (this.cycleModel === 'per-bus-access') this.cyc++;
     if ((addr & 0xfffe) === PSW_ADDRESS) {
+      if (this.protectModes && this.mode !== 0) {
+        throw new Abort({ vector: VEC.BUS_ERROR, cause: 'bus-error', pc: this.ipc, detail: addr });
+      }
       let w: number;
       if (!byte) w = value & 0xffff;
       else if (addr & 1) w = ((value & 0xff) << 8) | (this.psw & 0xff);
@@ -687,7 +701,11 @@ export class Cpu {
       case 1: this.waiting = true; return { stop: 'wait' };
       case 2: case 6: { // RTI, RTT
         const pc = this.pop();
-        const psw = this.pop();
+        let psw = this.pop();
+        if (this.protectModes && this.mode !== 0) {
+          // Not kernel: the mode bits can only go up, the priority stays.
+          psw = (psw & ~0o174340) | ((psw | this.psw) & 0o174000) | (this.psw & 0o340);
+        }
         this.r[PC] = pc;
         this.setPsw(psw);
         if (w === 6) return 'rtt';
@@ -695,7 +713,9 @@ export class Cpu {
       }
       case 3: return { vector: VEC.BPT, cause: 'bpt', pc: this.ipc };
       case 4: return { vector: VEC.IOT, cause: 'iot', pc: this.ipc };
-      case 5: this.bus.reset?.(); this.pending = []; return;
+      case 5: // RESET
+        if (this.protectModes && this.mode !== 0) return;
+        this.bus.reset?.(); this.pending = []; return;
       default: return this.illegal();
     }
   }

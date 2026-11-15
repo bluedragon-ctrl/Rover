@@ -119,6 +119,26 @@ export const MEMORY_MAP = {
   CARGO: 0x600, // cargo: one read-only byte per slot (the item's tile ID)
 } as const;
 
+/**
+ * M15 PDP-11 core (docs/PDP11_CPU.md §2, §6): memory map and budgets. Draft values, to be
+ * measured in slice 4 and tuned in playtests (owner, 2026-11-15).
+ */
+export const PDP11 = {
+  /** CPU cycles (bus accesses) per tick for each Rover-ASM cycle of the chassis: Mk-I 8 × 6 = 48. */
+  cyclesPerRoverCycle: 6,
+  /** Core installed on a Mk-I (memory boards: 4 / 8 KB later). */
+  coreBytes: 2048,
+  /** Firmware image origin (after the vectors) and the program base (fixed per chassis, decision 13). */
+  firmwareBase: 0o200,
+  programBase: 0o2000,
+  /** Image memory window, ROM and the I/O page. */
+  imageBase: 0o100000,
+  romBase: 0o160000,
+  ioBase: 0o170000,
+  /** Real-time output FIFO of the TX device (PDP11_IO.md §3.5a). */
+  txFifoBytes: 64,
+} as const;
+
 export interface ChassisDef {
   name: string;
   /** Program memory in bytes (see ENCODING). */

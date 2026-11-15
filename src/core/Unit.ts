@@ -4,6 +4,7 @@ import type { ToolId } from './tools';
 import { RoverVM } from './vm/RoverVM';
 import { Downlink, type ProductDesc } from './downlink';
 import { photoBytes } from './photos';
+import type { RoverMachine } from './machine/RoverMachine';
 
 /** Image memory size (SPEC §3.8.7): the largest photo the installed camera modes take. */
 export const imageBytes = (c: Pick<ChassisDef, 'cameraModes'>): number => c.cameraModes.reduce((n, m) => Math.max(n, photoBytes(m)), 0);
@@ -138,6 +139,11 @@ export class Unit {
   cyclesLeft = 0;
   /** Firmware source (the firmware slot). */
   sourceCode = '';
+  /**
+   * M15 PDP-11 core (engine option `cpu: 'pdp11'`): the bus, both contexts and the CPU.
+   * null on the Rover-ASM core. `vm.state` still carries power, halts and faults.
+   */
+  machine: RoverMachine | null = null;
   /** Firmware context. Its state is the CPU's state (power, faults, halts). */
   readonly vm: RoverVM;
   /** M10: program slot source ('' = no program) and its own context (SPEC §3.9). */
