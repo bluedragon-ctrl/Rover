@@ -98,6 +98,8 @@ export interface ProductDesc {
   horizon?: HorizonView;
   /** Photos: the subject tile is an anomaly (ground truth: the gallery never shows this). */
   anomaly?: boolean;
+  /** M15: a photo at double resolution (PHOTO_FORMATS_2X, the PDP-11 core's camera). */
+  x2?: boolean;
   /** M12: processing level (Level; absent = RAW). */
   level?: number;
   /** M12: the payload as hex, for edited and drawn products (raw ones are regenerated). */
@@ -202,6 +204,26 @@ export class Downlink {
   tx: number[] = [];
   /** `TXLOST`: bytes dropped because the FIFO was full, since boot (saturates at 255). */
   txLost = 0;
+  /**
+   * M15 recorder messages (`RECBUF`, PDP11_IO.md §3.5): the CPU's store-and-forward byte
+   * stream, oldest first, with {@link TX_BOOT} markers like `tx`. It shares the recorder's
+   * room with the products and goes out after `tx`, before them.
+   */
+  rec: number[] = [];
+
+  /** Bytes of CPU messages waiting in the recorder (markers take no room). */
+  get recMsgUsed(): number {
+    let n = 0;
+    for (const b of this.rec) if (b >= 0) n++;
+    return n;
+  }
+
+  /** `RECBUF` write: store a byte if the recorder has room (else it is dropped: check `RECFRE`). */
+  recPut(byte: number, capacity: number): boolean {
+    if (this.recFree(capacity) < 1) return false;
+    this.rec.push(byte & 0xff);
+    return true;
+  }
 
   /** Bytes waiting in the TX FIFO (markers take no room). */
   get txUsed(): number {
@@ -228,7 +250,7 @@ export class Downlink {
   get recUsed(): number {
     let n = 0;
     for (const p of this.products) n += productFrameBytes(p.type);
-    return n;
+    return n + this.recMsgUsed;
   }
 
   recFree(capacity: number): number {
@@ -268,7 +290,7 @@ export class Downlink {
   }
 
   get idle(): boolean {
-    return this.sys.length === 0 && this.tx.length === 0 && this.fifo.length === 0 && this.products.length === 0;
+    return this.sys.length === 0 && this.tx.length === 0 && this.fifo.length === 0 && this.products.length === 0 && this.rec.length === 0;
   }
 
   /**
@@ -280,8 +302,9 @@ export class Downlink {
     signal: number,
     minSignal: number,
     bytesPerTick: number,
-  ): { sent: number; sysDone: SysFrame[]; done: QueuedFrame[]; delivered: ProductDesc[]; partial: ProductDesc | null; tx: number[] } {
+  ): { sent: number; sysDone: SysFrame[]; done: QueuedFrame[]; delivered: ProductDesc[]; partial: ProductDesc | null; tx: number[]; rec: number[] } {
     const tx: number[] = [];
+    const rec: number[] = [];
     const sysDone: SysFrame[] = [];
     const done: QueuedFrame[] = [];
     const delivered: ProductDesc[] = [];
@@ -289,13 +312,17 @@ export class Downlink {
     let recBytes = 0;
     if (signal < minSignal || this.idle) {
       this.acc = 0;
-      return { sent, sysDone, done, delivered, partial: null, tx };
+      return { sent, sysDone, done, delivered, partial: null, tx, rec };
     }
     this.acc += bytesPerTick * signal;
     const markers = () => {
       while (this.tx.length && this.tx[0] < 0 && !this.sys.length && !this.fifo.length) tx.push(this.tx.shift()!);
     };
+    const recMarkers = () => {
+      while (this.rec.length && this.rec[0] < 0) rec.push(this.rec.shift()!);
+    };
     markers();
+    recMarkers();
     while (this.acc >= 100 && !this.idle) {
       this.acc -= 100;
       sent++;
@@ -313,6 +340,9 @@ export class Downlink {
       } else if (this.tx.length) {
         tx.push(this.tx.shift()!);
         markers();
+      } else if (this.rec.length) {
+        rec.push(this.rec.shift()!);
+        recMarkers();
       } else {
         recBytes++;
         if (++this.recSent >= productFrameBytes(this.products[0].type)) {
@@ -323,8 +353,9 @@ export class Downlink {
       }
     }
     markers();
+    recMarkers();
     if (this.idle) this.acc = 0;
-    return { sent, sysDone, done, delivered, partial: recBytes > 0 ? this.products[0] : null, tx };
+    return { sent, sysDone, done, delivered, partial: recBytes > 0 ? this.products[0] : null, tx, rec };
   }
 }
 

@@ -23,11 +23,11 @@ function flat(e: SimulationEngine, r = 12): void {
     }
 }
 
-function rover(firmware: string, program?: string, seed = 3, setup?: (u: Unit) => void): { e: SimulationEngine; u: Unit } {
+function rover(firmware: string, program?: string, seed = 3, setup?: (u: Unit, e: SimulationEngine) => void): { e: SimulationEngine; u: Unit } {
   const e = new SimulationEngine({ seed, cpu: 'pdp11' });
   const u = e.spawnUnit('t');
   flat(e);
-  setup?.(u);
+  setup?.(u, e);
   if (program !== undefined) expect(e.uploadProgram(u, program, factory).errors).toEqual([]);
   expect(e.upload(u, firmware, factory).errors).toEqual([]);
   booted(e, u);
@@ -73,7 +73,7 @@ describe('M15 names (PDP11_IO.md §10)', () => {
     const syms = predefinedSymbols(createDefaultRegistry());
     const bad = Object.keys(syms).filter((k) => !isDecName(k));
     expect(bad).toEqual([]);
-    for (const r of IO_REGISTERS) expect(syms[r.name]).toBe(r.addr);
+    for (const r of IO_REGISTERS) if (!r.alias) expect(syms[r.name]).toBe(r.addr);
     expect(syms['E.BUSY']).toBe(Status.ERR_BUSY);
     expect(syms.IRON).toBe(T.IRON_ORE);
     expect(syms['F.M3']).toBe(0o6);
@@ -203,8 +203,7 @@ DRVINT: MOV  #GREEN, @#IND3
     run(ok.e, 20);
     expect(ok.u.x).toBe(2);
     expect(ok.u.indicators[2]).toBe(2);
-    const blocked = rover(fw('NORTH'));
-    blocked.e.world.setTile(0, 1, Layer.OBSTACLE, T.CLIFF_WALL);
+    const blocked = rover(fw('NORTH'), undefined, 3, (_u, e) => e.world.setTile(0, 1, Layer.OBSTACLE, T.CLIFF_WALL));
     run(blocked.e, 3);
     expect(blocked.u.indicators[2]).toBe(1); // refused at once: the handler saw ERR
   });

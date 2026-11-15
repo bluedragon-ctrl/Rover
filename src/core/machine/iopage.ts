@@ -10,6 +10,7 @@ import { wrapDeg } from '../Environment';
 import { getPort, type PortContext } from '../ports';
 import { ProgState, Status } from '../types';
 import type { Device, Unit } from '../Unit';
+import { MsgType, parseStream } from '../messages';
 
 /** RO read-only, RW read/write, WO write-only (reads 0), FW written by the firmware only (the program may read). */
 export type Access = 'RO' | 'RW' | 'WO' | 'FW';
@@ -39,6 +40,9 @@ export const CLOCK_VECTOR = 0o100;
 /** Device interrupts request at level 4, the line clock at 6 (PDP11_CPU.md §8). */
 export const DEVICE_LEVEL = 4;
 export const CLOCK_LEVEL = 6;
+
+/** `BOOTCS` bit 8: safe mode latched. */
+export const BOOT_SAFE = 0o400;
 
 /** `PRGCS` bits 3–1: why the last program run ended (PDP11_IO.md §3.7). */
 export const Why = { NONE: 0, DONE: 1, TIME: 2, PRE: 3, FLT: 4, BPT: 5 } as const;
@@ -112,6 +116,8 @@ export interface IoRegister {
   /** 16-bit value (signed values come back as two's complement). */
   read?: (h: IoHost) => number;
   write?: (h: IoHost, v: number) => void;
+  /** A second address for a register named elsewhere (no symbol of its own). */
+  alias?: true;
 }
 
 const s16 = (v: number): number => ((v & 0xffff) ^ 0x8000) - 0x8000;
@@ -167,10 +173,12 @@ function start(h: IoHost, key: DevKey): void {
       ctx.device(u, 'CAM', l.arg);
       break;
     case 'img':
-      if (l.fn === 1 || l.fn === 2) {
-        io.imgLast = l.fn === 1 ? 'send' : 'erase';
-        ctx.device(u, l.fn === 1 ? 'SEND' : 'ERASE', l.arg);
+      if (l.fn === 2) {
+        io.imgLast = 'erase';
+        ctx.device(u, 'ERASE', l.arg);
       } else {
+        // FN 1 (the camera's send) is retired on this core: the ROM's SNDIMG frames the photo
+        // into the recorder instead (PDP11_IO.md §3.5a). Anything else is invalid.
         io.imgLast = 'send';
         u.results.send = Status.ERR_INVALID;
       }
@@ -203,7 +211,7 @@ function deviceRegisters(b: DeviceBlock): IoRegister[] {
     tol: ' FN (bits 3–1): hardpoint F.T0…F.T3.',
     rep: ' FN: system F.HULL, F.SOL, F.ANT.',
     cam: ' FN: camera mode F.M1…F.M5.',
-    img: ' FN: F.SEND (image memory → recorder) or F.ERAS (zero it).',
+    img: ' FN: F.ERAS (zero image memory). Photos go home through the recorder (ROM SNDIMG).',
   };
   const left = (d: Device) => (h: IoHost) => h.u.deviceLeft(d);
   const regs: IoRegister[] = [
@@ -276,13 +284,11 @@ function deviceRegisters(b: DeviceBlock): IoRegister[] {
       regs.push(arg('CAMDIR', 'Direction of the next photo'), { addr: base + 6, name: 'CAMLFT', access: 'RO', description: 'Ticks left of the exposure', read: left('cam') });
       break;
     case 'img':
-      regs.push(arg('IMGTYP', 'Photo type to send, 0 = the mode of the last photo', 5), {
-        addr: base + 6,
-        name: 'IMGLFT',
-        access: 'RO',
-        description: 'Ticks left of the send or erase',
-        read: (h) => h.u.deviceLeft('send') || h.u.deviceLeft('erase'),
-      });
+      regs.push(
+        { addr: base + 4, name: 'IMGTYP', access: 'RO', description: 'Mode of the last photo the camera took (1–5): ROM SNDIMG with R0 = 0 sends that', read: (h) => h.u.snapMode },
+        { addr: base + 6, name: 'IMGLFT', access: 'RO', description: 'Ticks left of the erase', read: (h) => h.u.deviceLeft('send') || h.u.deviceLeft('erase') },
+        { addr: base + 8, name: 'IMGSIZ', access: 'RO', description: 'Bytes of image memory the installed camera has (from IMGBAS)', read: (h) => h.u.imageMemory().length },
+      );
       break;
   }
   return regs;
@@ -344,6 +350,7 @@ function fromPorts(): IoRegister[] {
         },
       });
     } else if (name === 'TICKH') regs.push({ addr, name, access: 'RO', description, read: (h) => h.io.tickH });
+    else if (name === 'RECFRE') regs.push({ addr, name, access: 'RO', description: `${description} (the same as RECFRE in the recorder block, 176554)`, read: recFree, alias: true });
     else regs.push({ addr, name, access: 'RO', description, read: port(p) });
   });
   ACTUATORS.forEach(([name, p, description, signed], i) => {
@@ -408,6 +415,21 @@ const CONTROL: IoRegister[] = [
     },
   },
   {
+    addr: 0o177026,
+    name: 'BOOTCS',
+    access: 'FW',
+    description: 'Boot status: bits 7–0 why the rover booted (RO); bit 8 SAFE, safe mode latched: kept through reboots, cleared by a firmware upload (the boot ROM sets it)',
+    read: (h) => (h.u.bootReason & 0xff) | (h.u.safeMode ? BOOT_SAFE : 0),
+    write: (h, v) => (h.u.safeMode = (v & BOOT_SAFE) !== 0),
+  },
+  {
+    addr: 0o177030,
+    name: 'BOOTCT',
+    access: 'RO',
+    description: `Fault and watchdog reboots in the last ${PDP11.safeModeTicks} ticks, this boot included`,
+    read: (h) => h.u.faultBoots.length,
+  },
+  {
     addr: 0o177024,
     name: 'REBOOT',
     access: 'FW',
@@ -417,7 +439,7 @@ const CONTROL: IoRegister[] = [
   },
 ];
 
-/** Output: the TX device (176540; PDP11_IO.md §3.5). The recorder registers come with slice 4. */
+/** Output: the TX device (176540; PDP11_IO.md §3.5). */
 const OUTPUT: IoRegister[] = [
   {
     addr: 0o176540,
@@ -442,6 +464,41 @@ const OUTPUT: IoRegister[] = [
   { addr: 0o176544, name: 'TXFREE', access: 'RO', description: `Free FIFO bytes (${PDP11.txFifoBytes} on Mk-I)`, read: (h) => h.u.link.txFree(PDP11.txFifoBytes) },
   { addr: 0o176546, name: 'TXLOST', access: 'RW', description: 'Bytes dropped since boot (saturates at 255; write to set)', read: (h) => h.u.link.txLost, write: (h, v) => (h.u.link.txLost = clamp(v, 0, 255)) },
 ];
+
+/** The recorder: CPU messages stored and forwarded (PDP11_IO.md §3.5). */
+const recFree = (h: IoHost): number => h.u.link.recFree(h.u.chassis.recorderBytes);
+const RECORDER: IoRegister[] = [
+  {
+    addr: 0o176550,
+    name: 'RECCS',
+    access: 'RO',
+    description: 'Recorder status: bit 7 READY (room for a byte)',
+    read: (h) => (recFree(h) > 0 ? CSR.DONE : 0),
+  },
+  {
+    addr: 0o176552,
+    name: 'RECBUF',
+    access: 'WO',
+    description: 'Store one byte of a message in the recorder (store and forward: it reaches ground even through a bad link). Dropped if the recorder is full: check RECFRE first',
+    read: () => 0,
+    write: (h, v) => recordByte(h.u, v),
+  },
+  { addr: 0o176554, name: 'RECFRE', access: 'RO', description: 'Free recorder bytes', read: recFree },
+];
+
+/**
+ * A byte into the recorder. The recorder follows the messages it stores, so a photo's header
+ * (T.IMG chunk 0) takes the camera's capture of that type with it (what earns its credits).
+ */
+export function recordByte(u: Unit, v: number): void {
+  if (!u.link.recPut(v, u.chassis.recorderBytes)) return;
+  for (const m of parseStream(u.recParser, [v & 0xff], u.id, 0)) {
+    if (m.status !== 'ok' || m.type !== MsgType.IMG || m.body[1] !== 0) continue;
+    const cap = u.capture?.type === m.body[0] ? u.capture : null;
+    if (cap) u.capture = null;
+    u.imgCaps.push(cap);
+  }
+}
 
 /** Clock, CPU and console registers at their real PDP-11 addresses. */
 const SYSTEM: IoRegister[] = [
@@ -475,7 +532,7 @@ const SYSTEM: IoRegister[] = [
 export const CARGO_BASE = 0o176600;
 export const CARGO_BYTES = 8;
 
-export const IO_REGISTERS: readonly IoRegister[] = [...fromPorts(), ...DEVICE_BLOCKS.flatMap(deviceRegisters), ...OUTPUT, ...CONTROL, ...SYSTEM].sort((a, b) => a.addr - b.addr);
+export const IO_REGISTERS: readonly IoRegister[] = [...fromPorts(), ...DEVICE_BLOCKS.flatMap(deviceRegisters), ...OUTPUT, ...RECORDER, ...CONTROL, ...SYSTEM].sort((a, b) => a.addr - b.addr);
 
 const byAddr = new Map(IO_REGISTERS.map((r) => [r.addr, r]));
 export const ioRegister = (addr: number): IoRegister | undefined => byAddr.get(addr & 0xfffe);

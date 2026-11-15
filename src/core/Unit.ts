@@ -3,17 +3,19 @@ import { CpuState, ProgState } from './types';
 import type { ToolId } from './tools';
 import { RoverVM } from './vm/RoverVM';
 import { Downlink, type ProductDesc } from './downlink';
-import { photoBytes } from './photos';
+import { freshParser, type ParserState } from './messages';
+import { PHOTO_FORMATS, photoBytes, type PhotoFormats } from './photos';
 import type { RoverMachine } from './machine/RoverMachine';
 
 /** Image memory size (SPEC §3.8.7): the largest photo the installed camera modes take. */
-export const imageBytes = (c: Pick<ChassisDef, 'cameraModes'>): number => c.cameraModes.reduce((n, m) => Math.max(n, photoBytes(m)), 0);
+export const imageBytes = (c: Pick<ChassisDef, 'cameraModes'>, formats: PhotoFormats = PHOTO_FORMATS): number =>
+  c.cameraModes.reduce((n, m) => Math.max(n, photoBytes(m, formats)), 0);
 
 /**
  * What the camera saw at the last SNAP (M12): the photo fields of a product descriptor plus
  * the noise seed its bytes were generated with. The first SEND of the same type carries it.
  */
-export type Capture = Pick<ProductDesc, 'type' | 'subject' | 'x' | 'y' | 'sx' | 'sy' | 'lit' | 'horizon' | 'anomaly'> & { noise: { tick: number; seq: number } };
+export type Capture = Pick<ProductDesc, 'type' | 'subject' | 'x' | 'y' | 'sx' | 'sy' | 'lit' | 'horizon' | 'anomaly' | 'x2'> & { noise: { tick: number; seq: number } };
 
 /**
  * The chassis' mechanical work (M14 devices drive, tools, repair, camera: they share the
@@ -86,8 +88,23 @@ export class Unit {
    * imageMemory() to read it at the right size.
    */
   img = new Uint8Array(0);
+  /** M15: the camera's formats (PHOTO_FORMATS_2X on the PDP-11 core, PDP11_CPU.md §6.3). */
+  photoFormats: PhotoFormats = PHOTO_FORMATS;
   /** The last SNAP's capture, until a SEND of the same type carries it home. */
   capture: Capture | null = null;
+  /**
+   * M15: the recorder's own view of the CPU's messages (`RECBUF`), so it knows where a photo
+   * starts. A `SNDIMG` header (T.IMG chunk 0) takes the capture of its type with it, as
+   * today's send did; ground pairs them in order (PDP11_IO.md §3.5a).
+   */
+  recParser: ParserState = freshParser();
+  /** M15: why the rover last booted (`BOOTCS` bits 7–0). */
+  bootReason = 0;
+  /** M15: ticks of the fault and watchdog reboots in the last PDP11.safeModeTicks (`BOOTCT`). */
+  faultBoots: number[] = [];
+  /** M15: safe mode latched (`BOOTCS` SAFE): kept through reboots, cleared by a firmware upload. */
+  safeMode = false;
+  imgCaps: Array<Capture | null> = [];
   /** Mode of the last SNAP: the default type of SEND. */
   snapMode = 1;
   /** An STB since the last SNAP (the next SEND is EDITED, not RAW). */
@@ -185,7 +202,7 @@ export class Unit {
 
   /** Image memory at its current size (grows, keeping its contents, when an upgrade adds a camera mode). */
   imageMemory(): Uint8Array {
-    const n = imageBytes(this.chassis);
+    const n = imageBytes(this.chassis, this.photoFormats);
     if (this.img.length < n) {
       const grown = new Uint8Array(n);
       grown.set(this.img);

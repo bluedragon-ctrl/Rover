@@ -35,7 +35,15 @@ export interface ReceivedMessage {
   type: number | null;
   body: number[];
   status: MsgStatus;
+  /** M15: 'rec' for messages that came through the recorder (`RECBUF`); absent = the TX stream. */
+  channel?: 'rec';
 }
+
+/**
+ * M15 photo messages (ROM `SNDIMG`): a photo goes home as T.IMG messages of up to
+ * {@link IMG_CHUNK} pixel bytes, each body `type, chunk, chunks, bytes…`.
+ */
+export const IMG_CHUNK = 128;
 
 /** Messages mission control keeps (saved). */
 export const MESSAGES_KEEP = 200;
