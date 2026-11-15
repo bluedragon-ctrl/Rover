@@ -201,7 +201,7 @@ export class GalleryPanel {
     const units = this.engine.units;
     const waiting = units.reduce((n, u) => n + u.link.products.length, 0);
     const used = units.reduce((n, u) => n + u.link.recUsed, 0);
-    const cap = units.reduce((n, u) => n + u.chassis.recorderBytes, 0);
+    const cap = units.reduce((n, u) => n + u.recorderBytes, 0);
     this.status.textContent = `recorder ${used}/${cap} B · ${waiting} waiting · ${this.engine.stats.scienceDelivered} delivered`;
     const gl = this.engine.gallery;
     const last = gl.at(-1);

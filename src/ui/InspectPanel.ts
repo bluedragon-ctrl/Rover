@@ -162,7 +162,7 @@ export class InspectPanel {
         more = true;
       }
     }
-    const perTick = (u.chassis.linkBytesPerTick * sig) / 100;
+    const perTick = (u.linkBytesPerTick * sig) / 100;
     const left = Math.ceil(bytes / perTick) - (e.tick - ahead[0].tick);
     return left > 0 ? `≈ ${left}${more ? '+' : ''} tick${left === 1 && !more ? '' : 's'} at signal ${sig}` : 'any moment now';
   }

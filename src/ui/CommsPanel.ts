@@ -135,7 +135,7 @@ export class CommsPanel {
       <div class="link-row"><span class="dir down">▼ down</span>${meter}<span class="${ok ? '' : 'warn'}">signal ${sig}${ok ? '' : ` · needs ${min}: nothing arrives`}</span></div>
       <div class="link-row small dim"><span class="dir"></span>
         <span title="LOG messages waiting on the rover. When the queue is full, new ones are lost.">log queue ${link.used}/${u.chassis.logFifoBytes} B</span> ·
-        <span title="Photos and spectra waiting on the rover (sent after the log)">science ${link.recUsed}/${u.chassis.recorderBytes} B</span> ·
+        <span title="Photos and spectra waiting on the rover (sent after the log)">science ${link.recUsed}/${u.recorderBytes} B</span> ·
         <span class="${link.lost ? 'warn' : ''}" title="LOG messages dropped since the last reboot (@LOG_LOST)">lost ${link.lost}</span></div>
       <div class="link-row small dim"><span class="dir up">▲ up</span>
         <span>${cost ? `each request ≈ ${costText(cost)}` : 'requests free (admin)'} · send code and requests from the <b>Code</b> tab</span></div>`;

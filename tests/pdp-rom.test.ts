@@ -189,7 +189,8 @@ TXTEND:`;
     const fw = `START:  MOV #T.DATA, R0\n        MOV #D, R1\n        MOV #3, R2\n        JSR PC, SEND\n        MOV @#RECFRE, R3${HANG}\nD:      .BYTE 1, 2, 3`;
     const { e, u } = rover(fw);
     run(e, 8);
-    expect(regs(u)[3]).toBe(u.chassis.recorderBytes - 7);
+    expect(regs(u)[3]).toBe(u.recorderBytes - 7);
+    expect(u.recorderBytes).toBe(2048); // Mk-I 1 KB x PDP11.recorderScale
     run(e, 20, true);
     expect(e.messages).toMatchObject([{ channel: 'rec', type: MsgType.DATA, body: [1, 2, 3], status: 'ok' }]);
   });
@@ -245,9 +246,13 @@ ${edit}
   });
 
   it('a reboot in the middle of a photo: ground drops it (no gallery entry)', () => {
-    const { e, u } = rover(snapSend(), undefined, lit);
-    run(e, 200); // no link: the recorder fills after 7 of the 8 chunks
-    expect(u.link.recFree(u.chassis.recorderBytes)).toBeLessThan(IMG_CHUNK + 7);
+    const small = (r: Unit, e: SimulationEngine) => {
+      lit(r, e);
+      r.chassis.recorderBytes = 512; // x 2 = 1 KB: the recorder fills after 7 of the 8 chunks
+    };
+    const { e, u } = rover(snapSend(), undefined, small);
+    run(e, 200); // no link
+    expect(u.link.recFree(u.recorderBytes)).toBeLessThan(IMG_CHUNK + 7);
     e.upload(u, `START:${HANG}`, factory);
     run(e, 900, true);
     expect(e.messages.filter((m) => m.channel === 'rec' && m.status === 'ok')).toHaveLength(7);
@@ -269,10 +274,11 @@ ${edit}
     const a = rover(snapSend(), undefined, lit).e;
     run(a, 700, true);
     const b0 = rover(snapSend(), undefined, lit).e;
-    run(b0, 333, true);
+    run(b0, 133, true);
     expect(b0.units[0].link.rec.length).toBeGreaterThan(0);
+    expect(b0.photoAsm.size).toBe(1); // ground has part of it
     const b = deserialize(JSON.parse(JSON.stringify(serialize(b0))));
-    run(b, 367, true);
+    run(b, 567, true);
     expect(serialize(b)).toEqual(serialize(a));
     expect(b.gallery).toHaveLength(1);
   });

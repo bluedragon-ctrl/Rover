@@ -124,8 +124,18 @@ export const MEMORY_MAP = {
  * measured in slice 4 and tuned in playtests (owner, 2026-11-15).
  */
 export const PDP11 = {
-  /** CPU cycles (bus accesses) per tick for each Rover-ASM cycle of the chassis: Mk-I 8 × 6 = 48. */
-  cyclesPerRoverCycle: 6,
+  /**
+   * CPU cycles (bus accesses) per tick for each Rover-ASM cycle of the chassis: Mk-I 8 × 8 = 64,
+   * overclock 96 / 128 (owner, 2026-11-15, after the slice 4 measurement: PDP11_CPU.md §14.5).
+   */
+  cyclesPerRoverCycle: 8,
+  /**
+   * Photos at double resolution are four times bigger, so the downlink and the recorder
+   * scale too (owner, 2026-11-15; PDP11_CPU.md §6.3): × the chassis values, Mk-I link
+   * 4 B/tick (amplifier 6), recorder 2 KB (upgrades 4 / 8 KB).
+   */
+  linkScale: 2,
+  recorderScale: 2,
   /** Core installed on a Mk-I (memory boards: 4 / 8 KB later). */
   coreBytes: 2048,
   /** Firmware image origin (after the vectors) and the program base (fixed per chassis, decision 13). */
