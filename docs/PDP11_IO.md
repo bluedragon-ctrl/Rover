@@ -1,7 +1,7 @@
 # M15 — PDP-11 core: I/O page, devices and interrupts (design draft)
 
 Status: **draft; CPU side approved** (2026-11-15). Names shrink to six characters, DEC
-style (§9, question 1). Framed standard output to design (§3.5a). Not built yet (slice 3). Companion of
+style (§9, question 1). Framed standard output: proposal in §3.5a. Not built yet (slice 3). Companion of
 [`PDP11_CPU.md`](PDP11_CPU.md) (instruction set, memory, call gate, traps, ROM).
 
 This document turns today's 61 ports (`src/core/ports.ts`, SPEC §5.6, M14 devices in
@@ -423,32 +423,89 @@ Reference *I/O page* tab is generated from it, as the Ports tab is today.
    program runs.
 7. **Function codes:** pre-shifted `F.` symbols (this draft) or plain numbers with the
    shift written out?
-8. **Standard output as framed messages** (owner note, 2026-11-15; decide in slice 3, see
-   §3.5a).
+8. **Standard output as framed messages** (§3.5a): framing by the program and incomplete
+   messages decided; channels, types and costs proposed, for owner review.
 
-### 3.5a Standard output: framed messages (owner note, to design in slice 3)
+### 3.5a Standard output: framed messages
 
 Owner, 2026-11-15: "even the rover will need some standard output, which will probably be
 sent as a message. Maybe all outputs go out to be sent directly, with start / end codes, to
 be able to distinguish between error codes, scientific data and so on."
 
-Today the downlink carries several separate kinds of traffic (log frames with a tag and
-a value, boot frames, dumps, science products), each with its own format. The idea is
-**one output stream** the firmware and program write to, like the console terminal
-(`XCSR` / `XBUF`) in the simulator, where every message is **framed**: a start code, a
-type, the body, an end code. Ground (the Comms tab) splits the stream by type. A sketch to
-start the slice 3 discussion, not a decision:
+**Decided (owner, 2026-11-15):**
+
+1. **The program writes the framing itself** (start code, type, length, body, end code),
+   byte by byte. ROM routines do it for the common cases, for example sending a whole
+   photo.
+2. **A message cut off by a reboot stays incomplete.** Ground shows it as incomplete;
+   nothing resumes it.
+
+**Proposal for 3 and 4 (for owner review):**
+
+#### How real missions do it
+
+On spacecraft (the CCSDS standards that NASA and ESA use), **everything that goes down
+is a packet**: a small header that says *who sent it and what it is* (the APID), a
+sequence count (so ground notices a lost packet) and a length, then the data.
+Housekeeping, error / event messages, memory dumps and science are all packets with
+different APIDs; there is no separate "error wire". The packets travel on a few **virtual
+channels** with priorities: real-time telemetry and events go out at once and may be lost
+when the link is bad; science is **stored and forwarded** from the recorder until it gets
+through. On the PDP-11 itself, output was a plain byte stream to a terminal (`XCSR` /
+`XBUF`), and the program added any structure.
+
+#### Proposed design: two channels, one message format
 
 ```
-SOH  type  length  body…  ETX        ; 001, a type byte, a byte count, data, 003
-     type: T.TEXT (characters, like a printf), T.ERR (an error code + where),
-           T.LOG (today's tag + value), T.SCI (a science product), T.DUMP …
+            ┌─ TX  (real time, lossy, 64 B FIFO) ── text, errors, log values, small data
+CPU writes ─┤
+            └─ REC (store and forward, 1024 B)  ── photos, spectra, big data
+                                                  ─► transmitter ─► ground (Comms splits by type)
+system (boot reasons, dumps) ── its own channel, never mixed into the CPU's bytes
 ```
 
-* Pros: one device and one ROM routine (`PUTMSG`) instead of several; `.ASCIZ` text
-  output becomes possible (a `PRINT` lesson, as in the simulator's Hello example);
-  framing and bytes that get lost in a lossy downlink become a visible, teachable topic.
-* To decide: whether the CPU writes bytes and the device frames them (simple), or the
-  program writes the frame bytes itself (more to learn, more to get wrong); what happens
-  to a half-written frame at a reboot; whether it replaces the log registers of §3.5 or
-  sits beside them; cost per byte (it shares the downlink budget).
+* **One device for the CPU's real-time output, `TX`**, in the DL11 style: `TXCS` (bit 7
+  `READY`: room for a byte; bit 6 `IE`), `TXBUF` (write a byte), `TXFREE` (free FIFO
+  bytes), `TXLOST` (bytes dropped). It **replaces the log registers of §3.5**: today's
+  `LOG tag, value` becomes a ROM routine that writes a `T.LOG` message.
+* **The recorder takes messages too**, the same format through `RECBUF` / `RECFREE`, for
+  data that must arrive. The camera's send function becomes the ROM routine `SNDIMG`,
+  which frames the photo and writes it into the recorder: owner decision 1's "full photo".
+  A photo (256–1024 B) is too big for the real-time FIFO, which is a lesson in itself.
+* **System messages stay on their own channel** (boot reason, dump replies). The hardware
+  never inserts bytes into the CPU's stream, so it can't break a message the program is
+  writing.
+* **Message format** (written by the program, decision 1):
+
+  ```
+  SOH  type  length  body (length bytes)  ETX
+  001  1 B   1 B     0–255 B              003
+  ```
+
+  Ground checks two things: the length must match, and an `ETX` must follow. If either
+  fails, the message is shown as **incomplete** (cut off by a reboot, decision 2) or
+  **broken** (bytes lost when the FIFO was full). A message has 4 bytes of overhead, which
+  makes many tiny messages expensive: a real design trade-off.
+* **Types:** `T.TEXT` (characters: ground prints them), `T.ERR` (an error code and the
+  address where it happened), `T.LOG` (a tag and a 16-bit value: today's log),
+  `T.DATA` (raw bytes, shown in hex), `T.IMG` / `T.SPEC` (science, recorder only).
+  Types `000`–`077` are reserved for these and later ones; `100`–`377` are free for the
+  player's own formats. Comms shows the number for those, and the bytes in hex.
+* **When the FIFO is full**, a byte written to `TXBUF` is dropped and `TXLOST` counts it,
+  so the message breaks. The ROM routine `PUTMSG` (type in `R0`, buffer address in `R1`,
+  length in `R2`) first checks `TXFREE` for room for the whole message and otherwise
+  returns `E.FULL`, so ROM output is all or nothing. A hand-written loop that doesn't check
+  can break its own messages: a lesson, not a bug.
+* **No sequence count in v1** (ground sees broken messages, but not a message that was
+  dropped whole). It's easy to add as a header byte later, CCSDS style.
+
+#### Proposed costs and sizes (all in `balance.ts`, tunable)
+
+| What | Proposed | Why |
+| :--- | :--- | :--- |
+| Writing a byte to `TXBUF` / `RECBUF` | the bus write only (1 cycle) | the CPU pays in cycles; no energy per byte |
+| Transmitter | unchanged: 2 B / tick at full signal, 2 energy per tick that sends | the link is the bottleneck, as today |
+| Message overhead | 4 bytes on air | comes with the format; no extra rule needed |
+| Real-time FIFO (Mk-I) | **64 B** (today's log FIFO: 32 B) | a text message such as "STUCK AT 12,-4" needs about 18 B |
+| Recorder | 1024 B, upgrades 2 / 4 KB as today | |
+| Order on the link | system, then `TX`, then `REC` (as today: dump, log, recorder) | real-time first; chatty output starves science, as now |
