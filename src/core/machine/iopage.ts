@@ -466,7 +466,7 @@ const OUTPUT: IoRegister[] = [
 ];
 
 /** The recorder: CPU messages stored and forwarded (PDP11_IO.md §3.5). */
-const recFree = (h: IoHost): number => h.u.link.recFree(h.u.chassis.recorderBytes);
+const recFree = (h: IoHost): number => h.u.link.recFree(h.u.recorderBytes);
 const RECORDER: IoRegister[] = [
   {
     addr: 0o176550,
@@ -491,7 +491,7 @@ const RECORDER: IoRegister[] = [
  * (T.IMG chunk 0) takes the camera's capture of that type with it (what earns its credits).
  */
 export function recordByte(u: Unit, v: number): void {
-  if (!u.link.recPut(v, u.chassis.recorderBytes)) return;
+  if (!u.link.recPut(v, u.recorderBytes)) return;
   for (const m of parseStream(u.recParser, [v & 0xff], u.id, 0)) {
     if (m.status !== 'ok' || m.type !== MsgType.IMG || m.body[1] !== 0) continue;
     const cap = u.capture?.type === m.body[0] ? u.capture : null;

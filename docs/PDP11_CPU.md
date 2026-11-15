@@ -3,7 +3,7 @@
 Status: **design approved with the decisions of §0** (2026-11-15). Slice 2, the library, is
 built (§14); slice 3, Rover's bus, devices, gate and interrupts, is built behind the engine
 switch `cpu: 'pdp11'` (§14.4); slice 4, the ROM, default firmware and lessons, is built and
-the cycle budget measured (§14.5; a budget proposal waits for the owner, §16).
+the cycle budget measured (§14.5): Mk-I 64, decided by the owner.
 Companion document: [`PDP11_IO.md`](PDP11_IO.md), which covers the device
 registers, the I/O page and interrupts from devices.
 
@@ -76,7 +76,7 @@ departure).
 | Flags | `N Z V C` in the processor status word `PSW` | §5 |
 | Address space | **64 KB**, one space for code, data, stacks and devices | most of it empty at first (§6.1) |
 | Core installed (code + data) | **Mk-I 2 KB** proposed (was 512 B Flash + 64 B RAM) | memory boards 4 / 8 KB, room for up to 32 KB; to tune |
-| Cycles per tick | **32–64**, fixed after porting the default firmware | was 8; overclock upgrades ×1.5 / ×2 |
+| Cycles per tick | **64** (owner, after the slice 4 measurement, §14.5) | was 8; overclock upgrades ×1.5 / ×2 = 96 / 128 |
 | Stacks | in memory, through `SP` (no fixed depth) | was 16 data + 8 call entries |
 | Contexts | firmware and program, each with its own `R0`–`R7` and `PSW` | §7 |
 
@@ -333,9 +333,10 @@ shift away (64 px × 2 bpp = 16 bytes):
 | 5 RGB332 | 32×32 · 8 bpp | 64×64 · 8 bpp | 4 KB |
 
 The image window grows to 4 KB. To keep sending a photo about as long as today, the
-downlink and recorder scale too (proposed; owner may veto): Mk-I link 4 B/tick (amplifier
-upgrade 6), recorder 2 KB (upgrades 4 / 8 KB). A base photo then takes about 260 ticks at
-full signal. Review page: `preview.html?photos2x=1`. Built in the game with the switch-over
+downlink and recorder scale too (**approved by the owner, 2026-11-15**; built on the PDP-11
+core as `PDP11.linkScale` / `recorderScale` = 2 on the chassis values): Mk-I link 4 B/tick
+(amplifier upgrade 6), recorder 2 KB (upgrades 4 / 8 KB). A base photo, 1080 B on air as
+`SNDIMG` messages, then takes about 270 ticks at full signal. Review page: `preview.html?photos2x=1`. Built in the game with the switch-over
 (slice 6), together with little-endian photos; the Rover-ASM game keeps today's formats.
 Software compression (run-length coding before `SNDIMG`) becomes a worthwhile later lesson.
 
@@ -602,7 +603,7 @@ library itself stays a plain PDP-11.
 | :--- | :--- |
 | 4 registers, upgrades 6 / 8 | 8 always; the register upgrades leave the catalogue (EIS and core size replace them) |
 | Flash 512 B + RAM 64 B, upgrades | one core, Mk-I 2 KB, memory boards 4 / 8 KB |
-| 8 cycles / tick, overclock 12 / 16 | 32–64, overclock ×1.5 / ×2 |
+| 8 cycles / tick, overclock 12 / 16 | 64, overclock 96 / 128 |
 | data stack 16, call stack 8 | `SP` in memory, stack limit per context |
 | `CONST`, `ALIAS`, `VAR`, `DATA` | `=`, `= %n`, `.BLKW` / `.BLKB`, `.WORD` / `.BYTE` |
 | `LDB` / `STB` / `LDF`, bracket addresses | `MOVB` / `MOV` with the eight modes |
@@ -828,10 +829,10 @@ budgets (ticks):
 
 At 48 the firmware's own work takes half the budget, so a computing program gets about 24
 cycles a tick, and a photo-sized loop (1 KB, four times today's) takes several hundred ticks.
-**Proposal (not built; `balance.ts` unchanged): 64 cycles a tick for Mk-I**
-(`PDP11.cyclesPerRoverCycle` 8), overclock ×1.5 / ×2 = 96 / 128: the firmware's share drops
-to about a third and programs get about 40 cycles a tick, which brings the image lessons
-close to today's few hundred ticks. Driving lessons are paced by the wheels at any budget.
+**Decided (owner, 2026-11-15): 64 cycles a tick for Mk-I** (`PDP11.cyclesPerRoverCycle` 8),
+overclock ×1.5 / ×2 = 96 / 128. Measured again at 64: the idle firmware takes 24 cycles a
+tick (38 %), driving lessons 36, so programs get about 40 cycles a tick and the image lessons
+take 113–391 ticks. Driving lessons are paced by the wheels at any budget.
 
 ## 15. Plan (slices)
 
@@ -861,11 +862,11 @@ program interrupt handlers, `TRAP n`, names, photo byte order. Then (owner, same
 
 1. **Budget:** no number yet; **start with a value from the slice 4 measurement and tune
    it in playtests** (expected 32–64). It lives in `balance.ts`. *Measured in slice 4
-   (§14.5): proposal 64 for Mk-I (today 48); for the owner to decide.*
+   (§14.5); the owner set Mk-I to 64.*
 2. **Core sizes:** **start with this draft** (2 KB, boards to 4 / 8 KB) and tune prices
    and steps later.
 3. **Six-character names for the I/O page:** **DEC style approved**, a family prefix and
    a dot where it helps (`E.BLK`, `SOLHLT`); the rename table comes with slice 3.
 
 No open questions block slice 5. The slice 3 and 4 decisions (§14.4, §14.5) are open to veto;
-the budget (64?) and the link / recorder sizes of §6.3 wait for the owner.
+the budget (64) and the link / recorder sizes of §6.3 are decided.

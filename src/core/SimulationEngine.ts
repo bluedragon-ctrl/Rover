@@ -858,7 +858,7 @@ export class SimulationEngine {
 
   /** Record a science product in the rover's recorder (null if it does not fit). */
   recordProduct(u: Unit, p: Omit<ProductDesc, 'seq' | 'tick'>): ProductDesc | null {
-    return u.link.record({ ...p, tick: this.tick }, u.chassis.recorderBytes);
+    return u.link.record({ ...p, tick: this.tick }, u.recorderBytes);
   }
 
   /**
@@ -962,7 +962,7 @@ export class SimulationEngine {
     const mem = u.imageMemory();
     const n = isPhoto(type) ? photoBytes(type) : 0;
     if (!n || n > mem.length) return Status.ERR_INVALID;
-    if (u.link.recFree(u.chassis.recorderBytes) < productFrameBytes(type)) return Status.ERR_FULL;
+    if (u.link.recFree(u.recorderBytes) < productFrameBytes(type)) return Status.ERR_FULL;
     if (u.energy < BALANCE.sendEnergy) return Status.ERR_LOW_POWER;
     const cap = u.capture?.type === type ? u.capture : null;
     let p: Omit<ProductDesc, 'seq' | 'tick'>;
@@ -1344,7 +1344,7 @@ export class SimulationEngine {
 
   /** Transmit this tick's bytes; completed frames and products reach mission control. */
   private updateLink(u: Unit): void {
-    const { sent, sysDone, done, delivered, partial, tx, rec } = u.link.pump(this.signalOf(u), BALANCE.linkMinSignal, u.chassis.linkBytesPerTick);
+    const { sent, sysDone, done, delivered, partial, tx, rec } = u.link.pump(this.signalOf(u), BALANCE.linkMinSignal, u.linkBytesPerTick);
     if (tx.length) this.receiveTx(u, tx);
     if (rec.length) this.receiveRec(u, rec);
     if (!sent) return;

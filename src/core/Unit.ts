@@ -1,4 +1,4 @@
-import { BALANCE, cloneChassis, type ChassisDef } from './balance';
+import { BALANCE, cloneChassis, PDP11, type ChassisDef } from './balance';
 import { CpuState, ProgState } from './types';
 import type { ToolId } from './tools';
 import { RoverVM } from './vm/RoverVM';
@@ -199,6 +199,16 @@ export class Unit {
   upgrades: string[] = [];
   /** This rover's own stats: base chassis + upgrades. */
   readonly chassis: ChassisDef;
+
+  /** Science recorder size in bytes (M15: scaled on the PDP-11 core, PDP11.recorderScale). */
+  get recorderBytes(): number {
+    return this.machine ? this.chassis.recorderBytes * PDP11.recorderScale : this.chassis.recorderBytes;
+  }
+
+  /** Downlink bytes per tick at full signal (M15: scaled on the PDP-11 core, PDP11.linkScale). */
+  get linkBytesPerTick(): number {
+    return this.machine ? this.chassis.linkBytesPerTick * PDP11.linkScale : this.chassis.linkBytesPerTick;
+  }
 
   /** Image memory at its current size (grows, keeping its contents, when an upgrade adds a camera mode). */
   imageMemory(): Uint8Array {

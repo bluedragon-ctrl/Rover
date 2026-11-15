@@ -25,7 +25,7 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | M11 | User interface review (after M10) | 🚧 Comms tab, Code tab dump box, Reference → Radio, Mission events: default since 2026-11-13 (save v13); `BRK` reports itself |
 | M12 | Image memory: `SNAP` → `LDB` / `STB` → `SEND` (SPEC §3.8.7, guide [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md)) | ✅ done (bit instructions; image memory in the core, save v14; templates, Reference → Image, Gallery labels + hex view, `SNAP` warning; goal *Darkroom* + first-edit bonus per camera mode, save v15) |
 | **M14** | **Assembler core**: hardware through device ports + `WAIT`, ROM library, RAM / `VAR` / addressing modes / `DATA`, program called like a subroutine (design [`ASSEMBLER_CORE.md`](ASSEMBLER_CORE.md)) | 🚧 design approved; slices 2 (memory model, save v17) and 3 (devices, `WAIT`, ROM, `CALL PROGRAM`, save v18) done; slice 4 (lessons, Reference *CPU* / *Devices* / *Memory map*) in review; **frozen** (2026-11-15): the boot ROM with safe mode moves into M15's ROM |
-| **M15** | **PDP-11 core**: Rover-ASM replaced by a PDP-11-style 16-bit CPU and a MACRO-11 subset (octal, eight addressing modes, flags, traps, interrupts), devices as DEC-style registers in the I/O page; saves reset (design [`PDP11_CPU.md`](PDP11_CPU.md), [`PDP11_IO.md`](PDP11_IO.md)) | 🚧 design approved (owner answers 2026-11-15); slices 2 (standalone library `src/pdp11/` + simulator page `simulator.html`) and 3 (Rover's bus, I/O page, gate, interrupts, `TX` output, save v19) done; slice 4 in review: ROM drivers and helpers, recorder registers + `SNDIMG`, safe mode, default firmware and every lesson in MACRO-11, cycle budget measured (proposal 64, owner to decide), save v20; all behind the engine switch `cpu: 'pdp11'`, the game is unchanged |
+| **M15** | **PDP-11 core**: Rover-ASM replaced by a PDP-11-style 16-bit CPU and a MACRO-11 subset (octal, eight addressing modes, flags, traps, interrupts), devices as DEC-style registers in the I/O page; saves reset (design [`PDP11_CPU.md`](PDP11_CPU.md), [`PDP11_IO.md`](PDP11_IO.md)) | 🚧 design approved (owner answers 2026-11-15); slices 2 (standalone library `src/pdp11/` + simulator page `simulator.html`) and 3 (Rover's bus, I/O page, gate, interrupts, `TX` output, save v19) done; slice 4 done: ROM drivers and helpers, recorder registers + `SNDIMG`, safe mode, default firmware and every lesson in MACRO-11, cycle budget measured and set to 64, link and recorder ×2, save v20; all behind the engine switch `cpu: 'pdp11'`, the game is unchanged |
 | M13 | Realism pass 1: watchdog `@WDT`, thermal model + array dust, fault protection `@PREEMPT` (SPEC §3.3.4, §3.9.2, §3.9.5) | 🚧 core, default firmware, *Fault protection* template, Reference, save v16 done; in review (balance numbers to playtest) |
 
 ## M15 — PDP-11 core (in progress)
@@ -98,8 +98,8 @@ codes, a type per message: text, error codes, science data…), sketched in
   - Moved to slice 4: recorder registers (`RECCS` / `RECBUF`) with `SNDIMG`.
 - [x] Owner decision (2026-11-15): **photos at double resolution** on the PDP-11 core
       (`PDP11_CPU.md` §6.3): `PHOTO_FORMATS_2X` and the review page `preview.html?photos2x=1`
-      built; link 4 B/tick and recorder 2 KB proposed; in the game with slice 6.
-- [x] Slice 4 (in review): ROM, default firmware, lessons; cycle budget measured
+      built; link 4 B/tick and recorder 2 KB approved and built on the PDP-11 core; in the game with slice 6.
+- [x] Slice 4: ROM, default firmware, lessons; cycle budget measured
       (`PDP11_CPU.md` §10, §14.5; `PDP11_IO.md` §12; decisions there, owner may veto).
   - [x] ROM in MACRO-11 (`src/core/machine/rom.ts`): drivers `STEP SCAN SLEEP ACT USE SNAP
         SEND ERASE RUN LOG PUTMSG SNDIMG`, helpers `MUL16 DIV16 ABS DIRTO PLOT`; their
@@ -118,8 +118,9 @@ codes, a type per message: text, error codes, science data…), sketched in
   - [x] Cycle budget measured (`RoverMachine.meter`): idle firmware 24 cycles a tick of 48;
         **proposal: Mk-I 64** (`PDP11.cyclesPerRoverCycle` 8), not changed in `balance.ts`.
   - [x] Save v20 (recorder stream, photo assembly, boot status); 48 new tests.
-  - Waiting for the owner: the budget (64?), link 4 B/tick and recorder 2 KB (`PDP11_CPU.md`
-    §6.3); `balance.ts` unchanged.
+  - [x] Owner decisions after review (2026-11-15): budget **Mk-I 64** (`PDP11.cyclesPerRoverCycle`
+        8; overclock 96 / 128); link and recorder ×2 on the PDP-11 core (`PDP11.linkScale`,
+        `recorderScale`: Mk-I 4 B/tick, 2 KB; upgrades 6 B/tick, 4 / 8 KB).
 - [ ] Slice 5: UI (editor, listing, debugger, Comms dumps, Reference).
 - [ ] Slice 6: switch over, delete Rover-ASM, reset saves, rewrite SPEC §5 and CLAUDE.md.
 
@@ -910,3 +911,4 @@ window with a fixed dish?
 | 2026-11-15 | `claude/relaxed-keller-ff4622` | M15 slice 3: Rover's side of the PDP-11 core behind `cpu: 'pdp11'` (`src/core/machine/`): I/O page over the existing devices, six-character names (tile `shortName`), bus with protection, boot ROM, gate and program exits, `TRAP` system call, interrupts at tick starts with handlers on the firmware's SP, `REBOOT`, library option `protectModes`, `TX` device + ground message parser, save v19; 32 new tests. Game unchanged. |
 | 2026-11-15 | `claude/relaxed-keller-ff4622` (2) | Owner decision: photos at double resolution on the PDP-11 core (64×64 base, 128×128 hi-res, image window 4 KB); `PHOTO_FORMATS_2X` in the generator, review page `preview.html?photos2x=1` (today vs doubled), link / recorder scaling proposed (`PDP11_CPU.md` §6.3). Game unchanged. |
 | 2026-11-15 | `claude/m15-slice4-rom` | M15 slice 4: ROM drivers and helpers in MACRO-11 (exported as predefined symbols), recorder registers and `SNDIMG` (photos as `T.IMG` messages, reassembled by ground), 2× photos on the PDP-11 engine, safe mode (`BOOTCS` / `BOOTCT`, built-in safe firmware), default firmware (326 B: line clock, `RUN`, watchdog, fault protection) and every firmware / program / image lesson in `programs-pdp11.ts`, each run by a test; cycle budget measured, proposal Mk-I 64 (owner to decide); save v20; 48 new tests. Game unchanged. |
+| 2026-11-15 | `claude/m15-balance` | M15 owner decisions after slice 4: Mk-I budget 64 cycles a tick on the PDP-11 core (overclock 96 / 128); link and recorder ×2 there (4 B/tick, 2 KB; upgrades 6 B/tick, 4 / 8 KB) through `Unit.linkBytesPerTick` / `recorderBytes`; photo review page shows the new air times. Rover-ASM game unchanged. |

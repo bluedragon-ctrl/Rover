@@ -104,7 +104,7 @@ export const TOOLS: Record<ToolId, ToolDef> = {
     check(e, u, slot) {
       if (!validSlot(u, slot)) return Status.ERR_INVALID;
       if (!e.registry.get(u.cargo[slot])?.science) return Status.ERR_INVALID;
-      return u.link.recFree(u.chassis.recorderBytes) < productFrameBytes(ProductType.SPECTRUM) ? Status.ERR_FULL : Status.OK;
+      return u.link.recFree(u.recorderBytes) < productFrameBytes(ProductType.SPECTRUM) ? Status.ERR_FULL : Status.OK;
     },
     complete(e, u, slot) {
       const st = this.check(e, u, slot);

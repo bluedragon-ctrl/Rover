@@ -1,7 +1,7 @@
 // M15 review (preview.html?photos2x=1): today's camera formats next to the doubled ones of the
 // PDP-11 core (PHOTO_FORMATS_2X). The game's own generator (src/core/photos.ts) draws both, at
 // the same on-screen size, so the difference is only the resolution.
-import { BALANCE } from '../core/balance';
+import { BALANCE, PDP11 } from '../core/balance';
 import { decodePhoto, PHOTO_FORMATS, PHOTO_FORMATS_2X, photoBytes, photoPayload, type PhotoFormats, type PhotoShot } from '../core/photos';
 import { T } from '../core/WorldRegistry';
 
@@ -51,10 +51,11 @@ export function mountPhotos2x(root: HTMLElement, q: URLSearchParams): void {
   root.hidden = false;
   const modes = (q.get('modes') ?? '1,2,3,4,5').split(',').map(Number);
   const link = BALANCE.linkBytesPerTick;
+  const link2 = link * PDP11.linkScale;
   root.innerHTML = `
     <div class="pl-head">
       <b>CAMERA · TODAY vs DOUBLED (M15)</b>
-      <span class="dim">game generator (src/core/photos.ts), both drawn at ${CELL}×${CELL} px · air time at full signal: today ${link} B/tick, proposed 4 B/tick (Mk-I)</span>
+      <span class="dim">game generator (src/core/photos.ts), both drawn at ${CELL}×${CELL} px · air time at full signal: today ${link} B/tick, PDP-11 core ${link2} B/tick (Mk-I)</span>
     </div>
     <div class="pl-grid" style="grid-template-columns: 90px repeat(${modes.length * 2}, ${CELL + 4}px)"></div>`;
   const grid = root.querySelector('.pl-grid')!;
@@ -63,7 +64,7 @@ export function mountPhotos2x(root: HTMLElement, q: URLSearchParams): void {
     const a = photoBytes(m);
     const b = photoBytes(m, PHOTO_FORMATS_2X);
     grid.insertAdjacentHTML('beforeend', `<div class="pl-colhead">mode ${m} today<br><span class="dim">${PHOTO_FORMATS[m].label}<br>${a} B · ${airTicks(a, link)} ticks</span></div>`);
-    grid.insertAdjacentHTML('beforeend', `<div class="pl-colhead">mode ${m} doubled<br><span class="dim">${PHOTO_FORMATS_2X[m].label}<br>${b} B · ${airTicks(b, 4)} ticks</span></div>`);
+    grid.insertAdjacentHTML('beforeend', `<div class="pl-colhead">mode ${m} doubled<br><span class="dim">${PHOTO_FORMATS_2X[m].label}<br>${b} B · ${airTicks(b, link2)} ticks</span></div>`);
   }
   for (const r of ROWS) {
     grid.insertAdjacentHTML('beforeend', `<div class="pl-name"><b>${r.name}</b></div>`);

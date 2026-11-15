@@ -650,5 +650,5 @@ new tile can't break the rule; a test checks that every predefined symbol fits.
 * **Safe mode registers** `BOOTCS` / `BOOTCT` (§3.7): the hardware counts, the boot ROM
   decides ([`PDP11_CPU.md`](PDP11_CPU.md) §10). The `SAFE` bit is the rover's only
   non-volatile flag besides image memory.
-* **Not changed, waiting for the owner:** link 2 B/tick and recorder 1 KB. With them a 64×64
-  photo (1080 B on air) takes about 540 ticks at full signal; the proposed 4 B/tick halves it.
+* **Link and recorder** (owner, 2026-11-15): on this core ×2 the chassis values, Mk-I
+  4 B/tick and 2 KB. A 64×64 photo (1080 B on air) takes about 270 ticks at full signal.
