@@ -30,8 +30,23 @@ export const PHOTO_FORMATS: Record<number, PhotoFormat> = {
   5: { w: 32, h: 32, bpp: 8, kind: 'rgb332', label: '32×32 · 8 bpp RGB332' },
 };
 
-export const photoBytes = (type: number): number => {
-  const f = PHOTO_FORMATS[type];
+/**
+ * M15 (owner, 2026-11-15): the PDP-11 core's camera at double resolution, a format table
+ * of its own until the switch-over (slice 6); the Rover-ASM game keeps PHOTO_FORMATS. Sizes
+ * stay powers of two, so a row is a shift away (64 px × 2 bpp = 16 bytes).
+ */
+export const PHOTO_FORMATS_2X: Record<number, PhotoFormat> = {
+  1: { w: 64, h: 64, bpp: 2, kind: 'grey', label: '64×64 · 2 bpp grey' },
+  2: { w: 64, h: 64, bpp: 2, kind: 'dither', label: '64×64 · 2 bpp grey, dithered' },
+  3: { w: 64, h: 64, bpp: 4, kind: 'palette', label: '64×64 · 4 bpp, 16-colour palette' },
+  4: { w: 128, h: 128, bpp: 2, kind: 'dither', label: '128×128 · 2 bpp grey, dithered' },
+  5: { w: 64, h: 64, bpp: 8, kind: 'rgb332', label: '64×64 · 8 bpp RGB332' },
+};
+
+export type PhotoFormats = Record<number, PhotoFormat>;
+
+export const photoBytes = (type: number, formats: PhotoFormats = PHOTO_FORMATS): number => {
+  const f = formats[type];
   return f ? (f.w * f.h * f.bpp) / 8 : 0;
 };
 
@@ -462,8 +477,8 @@ function unpack(b: readonly number[], count: number, bpp: number): number[] {
 }
 
 /** Photo payload bytes (pixels packed MSB-first, row by row). */
-export function photoPayload(seed: number, p: PhotoShot): number[] {
-  const f = PHOTO_FORMATS[p.type];
+export function photoPayload(seed: number, p: PhotoShot, formats: PhotoFormats = PHOTO_FORMATS): number[] {
+  const f = formats[p.type];
   if (!f) return [];
   const px = capture(seed, p, f.w, f.h);
   const max = (1 << f.bpp) - 1;
@@ -503,8 +518,8 @@ export function photoPayload(seed: number, p: PhotoShot): number[] {
  * Decode received photo bytes into RGB 0..255 per pixel (w×h×3). `bytes` may be partial:
  * pixels from `pixelsReceived` on have not arrived yet (callers hatch them).
  */
-export function decodePhoto(type: number, bytes: readonly number[]): { w: number; h: number; rgb: Uint8ClampedArray; pixelsReceived: number } | null {
-  const f = PHOTO_FORMATS[type];
+export function decodePhoto(type: number, bytes: readonly number[], formats: PhotoFormats = PHOTO_FORMATS): { w: number; h: number; rgb: Uint8ClampedArray; pixelsReceived: number } | null {
+  const f = formats[type];
   if (!f) return null;
   const n = f.w * f.h;
   const v = unpack(bytes, n, f.bpp);

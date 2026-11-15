@@ -267,8 +267,8 @@ One address space, octal addresses:
 | `000200`–`PRGBAS−1` | **firmware**: code, data, its stack (grows down from `PRGBAS`) | firmware |
 | `PRGBAS`–core top | **program**: code, data, its stack (grows down from the top) | program and firmware |
 | core top – `077777` | **not installed** (memory boards fill it, §6.1) | bus error (trap 4) |
-| `100000`–`101777` | **image memory** (256 / 512 / 1024 B by camera) | read / write |
-| `102000`–`157777` | nothing | bus error |
+| `100000`–`107777` | **image memory** (1 / 2 / 4 KB by camera: photos at double resolution, §6.3) | read / write |
+| `110000`–`157777` | nothing | bus error |
 | `160000`–`167777` | **ROM** (§10) | read and execute only |
 | `170000`–`177777` | **device registers** ([`PDP11_IO.md`](PDP11_IO.md) §3) | per register |
 
@@ -317,6 +317,26 @@ customer bought as needed.
   too (decision 18), so `MOV` reads them directly.
 * **Cargo** becomes read-only byte registers in the I/O page ([`PDP11_IO.md`](PDP11_IO.md)
   §3.6), read with `MOVB CARGO(R1), R0`.
+
+### 6.3 Photos at double resolution (owner, 2026-11-15)
+
+With the PDP-11 core the camera doubles its resolution in every mode (`PHOTO_FORMATS_2X` in
+`photos.ts`), so photos take four times the bytes; sizes stay powers of two, so a row is a
+shift away (64 px × 2 bpp = 16 bytes):
+
+| Mode | Today | PDP-11 core | Bytes |
+| :--- | :--- | :--- | :--- |
+| 1 grey, 2 dithered | 32×32 · 2 bpp | 64×64 · 2 bpp | 1 KB |
+| 3 palette | 32×32 · 4 bpp | 64×64 · 4 bpp | 2 KB |
+| 4 hi-res | 64×64 · 2 bpp | 128×128 · 2 bpp | 4 KB |
+| 5 RGB332 | 32×32 · 8 bpp | 64×64 · 8 bpp | 4 KB |
+
+The image window grows to 4 KB. To keep sending a photo about as long as today, the
+downlink and recorder scale too (proposed; owner may veto): Mk-I link 4 B/tick (amplifier
+upgrade 6), recorder 2 KB (upgrades 4 / 8 KB). A base photo then takes about 260 ticks at
+full signal. Review page: `preview.html?photos2x=1`. Built in the game with the switch-over
+(slice 6), together with little-endian photos; the Rover-ASM game keeps today's formats.
+Software compression (run-length coding before `SNDIMG`) becomes a worthwhile later lesson.
 
 ## 7. Firmware, program and the call gate
 

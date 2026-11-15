@@ -96,6 +96,9 @@ codes, a type per message: text, error codes, science data…), sketched in
         `tests/pdp-core.test.ts` (30): devices, gate, faults, protection, system calls,
         output, determinism, round trips mid-run and mid-handler.
   - Moved to slice 4: recorder registers (`RECCS` / `RECBUF`) with `SNDIMG`.
+- [x] Owner decision (2026-11-15): **photos at double resolution** on the PDP-11 core
+      (`PDP11_CPU.md` §6.3): `PHOTO_FORMATS_2X` and the review page `preview.html?photos2x=1`
+      built; link 4 B/tick and recorder 2 KB proposed; in the game with slice 6.
 - [ ] Slice 4: ROM, default firmware, lessons; cycle budget measured.
 - [ ] Slice 5: UI (editor, listing, debugger, Comms dumps, Reference).
 - [ ] Slice 6: switch over, delete Rover-ASM, reset saves, rewrite SPEC §5 and CLAUDE.md.
@@ -885,3 +888,4 @@ window with a fixed dish?
 | 2026-11-15 | `ccr-3e1733dc-lef7dz` (3) | Framed standard output: owner decisions (the program frames, a reboot leaves a message incomplete); proposal for the rest after the CCSDS practice (packets with a type, real-time vs store-and-forward channels): `TX` device replacing the log registers, messages into the recorder (`SNDIMG` for photos), `SOH type len body ETX`, types, 64 B FIFO, costs (`PDP11_IO.md` §3.5a). Documentation only. |
 | 2026-11-15 | `ccr-3e1733dc-lef7dz` (4) | Owner approved the output proposal (channels, format, types, 64 B FIFO, costs); `PDP11_IO.md` §3.5 rewritten as the `TX` device + recorder registers, §3.5a moved beside it; six-character name table (`PDP11_IO.md` §10: `E.` / `F.` / `T.` / `A.` / `P.` / `PR.` families, telemetry, tiles) applied to both design documents. Documentation only. |
 | 2026-11-15 | `claude/relaxed-keller-ff4622` | M15 slice 3: Rover's side of the PDP-11 core behind `cpu: 'pdp11'` (`src/core/machine/`): I/O page over the existing devices, six-character names (tile `shortName`), bus with protection, boot ROM, gate and program exits, `TRAP` system call, interrupts at tick starts with handlers on the firmware's SP, `REBOOT`, library option `protectModes`, `TX` device + ground message parser, save v19; 32 new tests. Game unchanged. |
+| 2026-11-15 | `claude/relaxed-keller-ff4622` (2) | Owner decision: photos at double resolution on the PDP-11 core (64×64 base, 128×128 hi-res, image window 4 KB); `PHOTO_FORMATS_2X` in the generator, review page `preview.html?photos2x=1` (today vs doubled), link / recorder scaling proposed (`PDP11_CPU.md` §6.3). Game unchanged. |

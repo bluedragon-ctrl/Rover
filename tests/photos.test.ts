@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BALANCE, CHASSIS_MK1 } from '../src/core/balance';
 import { productFrameBytes, ProductType } from '../src/core/downlink';
 import { productFrame } from '../src/core/imaging';
-import { decodePhoto, photoBytes, photoPayload, type PhotoShot } from '../src/core/photos';
+import { decodePhoto, PHOTO_FORMATS, PHOTO_FORMATS_2X, photoBytes, photoPayload, type PhotoShot } from '../src/core/photos';
 import { deserialize, migrate, serialize } from '../src/core/SaveManager';
 import { SimulationEngine } from '../src/core/SimulationEngine';
 import { Layer, Status } from '../src/core/types';
@@ -258,5 +258,21 @@ describe('photo delivery and credits', () => {
     expect(m.photoSubjects).toEqual([]);
     expect(m.stats.photosDelivered).toBe(0);
     expect(deserialize(v7).photoSubjects).toEqual([]);
+  });
+});
+
+describe('M15 doubled camera formats (PHOTO_FORMATS_2X)', () => {
+  it('double every side, keep powers of two, leave the game\'s formats alone', () => {
+    for (const m of [1, 2, 3, 4, 5]) {
+      expect(PHOTO_FORMATS_2X[m].w).toBe(2 * PHOTO_FORMATS[m].w);
+      expect(PHOTO_FORMATS_2X[m].h).toBe(2 * PHOTO_FORMATS[m].h);
+      expect(photoBytes(m, PHOTO_FORMATS_2X)).toBe(4 * photoBytes(m));
+      const shot = { type: m, subject: T.CLIFF_WALL, sx: 3, sy: 4, lit: true, tick: 50, seq: 0, anomaly: true };
+      const a = photoPayload(5, shot, PHOTO_FORMATS_2X);
+      expect(a).toHaveLength(photoBytes(m, PHOTO_FORMATS_2X));
+      expect(photoPayload(5, shot, PHOTO_FORMATS_2X)).toEqual(a); // deterministic
+      expect(decodePhoto(m, a, PHOTO_FORMATS_2X)!.w).toBe(PHOTO_FORMATS_2X[m].w);
+    }
+    expect([1, 2, 3, 4, 5].map((m) => photoBytes(m))).toEqual([256, 256, 512, 1024, 1024]);
   });
 });

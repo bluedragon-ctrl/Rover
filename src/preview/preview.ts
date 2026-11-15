@@ -216,6 +216,8 @@ if (q.get('editor') === '1') void import('./uiLab').then((m) => m.mountUiLab(doc
 if (q.get('photos') === '1') mountPhotoLab(document.getElementById('photolab')!, q);
 // ?anomaly=1: M9 slice 6 fossil anomalies through every camera mode (game generator).
 if (q.get('anomaly') === '1') mountAnomalyLab(document.getElementById('photolab')!);
+// ?photos2x=1: M15 camera at double resolution next to today's formats (owner review).
+if (q.get('photos2x') === '1') void import('./photos2x').then((m) => m.mountPhotos2x(document.getElementById('photolab')!, q));
 
 // ------------------------------------------------------------------ frame
 function resize(): void {
