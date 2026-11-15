@@ -1,6 +1,7 @@
 # M15 — PDP-11 core: the CPU (design draft)
 
-Status: **draft for owner review** (2026-11-15). Documentation only: nothing here is
+Status: **design approved with the decisions of §0** (2026-11-15); open questions 2 and 7
+remain (slice 4 measures them). Slice 2, the library, is built (§14). Documentation only: nothing here is
 built yet. Companion document: [`PDP11_IO.md`](PDP11_IO.md), which covers the device
 registers, the I/O page and interrupts from devices.
 
@@ -31,6 +32,23 @@ the UI are rewritten from scratch.
     and memory boards add more (§6.1).
 11. **The CPU and assembler are a standalone library** (`src/pdp11/`) that other
     projects could reuse; everything Rover-specific stays outside it (§14).
+
+Owner answers to §16 (2026-11-15, second round):
+
+12. **Cycles per bus access** confirmed (decision 5 is no longer "to confirm").
+13. **Program base fixed per chassis** (`PRGBAS`), no re-linking.
+14. **Memory on reboot: the images are reloaded** from "disk" (as §6.2 describes).
+15. **Program interrupt handlers: firmware only in v1.**
+16. **`TRAP n` is a system call:** it goes through vector `034` to a firmware handler,
+    which may serve it and `RTI` back into the program (§7.3).
+17. **DEC names: at most six characters**, letters, digits, `.` and `$`; no `_`. Longer
+    names are an assembler error rather than silently cut to six (two names that agree in
+    their first six letters would otherwise be the same symbol). Every predefined name in
+    [`PDP11_IO.md`](PDP11_IO.md) must be renamed to fit (slice 3).
+18. **Photos switch to little-endian**, the CPU's byte order.
+19. **A standalone simulator page** (`simulator.html`) is built with the library in slice 2:
+    editor, registers and flags, memory, console, step / run / breakpoints. It proves the
+    library stands alone and lets the owner try the CPU before it is in the game.
 
 M14 is frozen where it is: its last item (boot ROM with safe mode) is not built in
 Rover-ASM. It moves into this milestone's ROM (§10).
@@ -73,9 +91,9 @@ label:  OPCODE  src, dst        ; comment
 
 * **Source before destination**: `MOV #5, R0` puts 5 into R0. `CMP a, b` computes
   `a − b` and sets the flags (so `CMP R0, #10` / `BLT` means "R0 < 10").
-* Names: letters, digits, `.` and `$`, case-insensitive. They may be longer than
-  MACRO-11's six significant characters (§11); `_` is allowed so today's port names keep
-  their spelling.
+* Names: **one to six** letters, digits, `.` and `$` (not starting with a digit),
+  case-insensitive, as in MACRO-11 (decision 17). A seventh character is an error,
+  not silently dropped.
 * **Local labels** `1$` … `99$` are valid between two ordinary labels. Loops and branches
   inside a routine use them, so routines don't fight over names like `loop`:
 
@@ -292,11 +310,10 @@ customer bought as needed.
   reboot runs the boot ROM, which **copies both images into core**, so initial values
   (`.WORD 5`) and any self-modified code are restored, like a PDP-11 booting from disk.
   A program restart (*Run again*) does **not** reload: its memory keeps what it
-  changed, so the *Count with a variable* lesson still works (open question 4).
+  changed, so the *Count with a variable* lesson still works (decision 14).
 * **Image memory** keeps its M12 rules (non-volatile, cleared by the camera or erase).
-  Words are little-endian; the photo format's 16-bit values are big-endian, so code
-  that reads them as words needs `SWAB`. That's a small byte-order lesson, or a reason to
-  change the photo format (open question 9).
+  Words are little-endian, and the photo format's 16-bit values become little-endian
+  too (decision 18), so `MOV` reads them directly.
 * **Cargo** becomes read-only byte registers in the I/O page ([`PDP11_IO.md`](PDP11_IO.md)
   §3.6), read with `MOVB CARGO(R1), R0`.
 
@@ -333,7 +350,7 @@ RUN:    MOV  R0, @#SLICE
   | a `PREEMPT` condition (M13) | `PROG_READY` | `PREEMPTED` = the bits |
   | a fault (§7.3) | `PROG_FAULT` | `PRGER` = which fault, `PRGPC` = where |
   | `BPT` | `PROG_HALTED` | breakpoint, *Continue* resumes after it |
-  | `TRAP n` | `PROG_READY` | a request to the firmware (optional, open question 6) |
+  | (`TRAP n` does not exit: it is a system call, served by the firmware's handler, §7.3) | | |
 
 * **`HALT` ends the program.** On a real PDP-11, `HALT` in user mode is not allowed and
   traps to the kernel; here that trap is "the program has finished". A program's first
@@ -354,7 +371,7 @@ Real PDP-11 trap vectors, used by both contexts:
 | `014` | `BPT` (breakpoint), and the trace bit `T` (single step) | ROM default: halt and dump (today's `BRK`) | `PROG_HALTED` |
 | `020` | `IOT` | reserved | `PROG_FAULT` |
 | `030` | `EMT` | reserved for ROM services (later) | `PROG_FAULT` |
-| `034` | `TRAP n` | reserved | `TRAP` exit, or `PROG_FAULT` (open question 6) |
+| `034` | `TRAP n` | system-call handler | **system call** (decision 16): like an interrupt, the CPU switches to the firmware's registers and runs its vector-`034` handler, which finds `n` in the low byte of the `TRAP` word before the return address, serves it, and `RTI`s back into the program; the ROM default is a program fault |
 
 * **Stack overflow:** each context has a stack limit: the end of its own code and data.
   A push below it traps. The firmware's limit is the real PDP-11/70 register `STKLIM` at
@@ -375,7 +392,7 @@ Device details, register bits and vectors: [`PDP11_IO.md`](PDP11_IO.md) §5.
   registers, pushes the program's `PC` / `PSW` on the firmware's stack, runs the handler,
   and `RTI` (whose popped `PSW` says "program") switches back. This is exactly what a
   PDP-11/45 did for a user process. The program cannot install handlers in v1
-  (vectors are firmware memory; open question 5).
+  (vectors are firmware memory; decision 15).
 * **When:** the world moves in ticks, so requests arrive at the **start of a tick**, before
   its first instruction (as `@SLICE` and `@PREEMPT` do today).
 * **`WAIT`** sleeps until the next interrupt is taken, then continues after the `WAIT`
@@ -512,11 +529,12 @@ leave the flags from it, so the caller writes:
    ours. Kept real: the trap vectors `004`–`034`, the line clock `177546` / vector `100`,
    `PSW` `177776`, `STKLIM` `177774`, the display register `177570`.
 4. Program-mode faults and `HALT` go to the firmware through the gate, not through vectors.
-5. Names longer than six characters, and `_` in names.
+5. ~~Names longer than six characters~~: dropped (decision 17). The library keeps a
+   `names: 'long'` option for other projects.
 6. No `.MACRO`, `.PSECT`, linker or floating point in v1.
 7. Booting copies the images from "disk" on every hard reboot (§6).
 
-In the library of §14, departures 2 and 5 are options (the cycle model, long names), as
+In the library of §14, departure 2 and long names are options (the cycle model, long names), as
 is EIS; 6 is simply its scope. Departures 1, 3, 4 and 7 are Rover's code around it, so the
 library itself stays a plain PDP-11.
 
@@ -584,27 +602,36 @@ program swaps to the firmware before it is taken, and a hook reports when `RTI` 
 slots, slices or `PRGCS`: it is a plain PDP-11 with options, testable against how the real
 machine behaved.
 
-### 14.2 Interface (sketch)
+### 14.2 Interface (built in slice 2)
+
+The full reference is [`src/pdp11/README.md`](../src/pdp11/README.md). In short:
 
 ```ts
 interface Bus {                       // supplied by the host (Rover: memory + I/O page)
-  read(addr: number, byte: boolean): number | 'bus-error';
-  write(addr: number, value: number, byte: boolean): void | 'bus-error';
+  read(addr: number, byte: boolean): number;            // BUS_ERROR (−1) if nothing answers
+  write(addr: number, value: number, byte: boolean): boolean; // false = bus error / protection
+  reset?(): void;                     // the RESET instruction
 }
 
 const cpu = new Cpu(bus, { eis: false, cycles: 'per-bus-access' });
-cpu.run(maxCycles);                   // stops at the budget, WAIT or HALT; reports why and the cycles used
+cpu.run(maxCycles, breakpoints?);     // → { reason: budget | wait | halt | trap | double-fault | breakpoint, cycles, instructions, trap? }
 cpu.step();                           // one instruction (debugger)
 cpu.interrupt(vector, level);         // the host decides when (Rover: at tick start)
-cpu.onModeChange = (mode) => { … };   // RTI / trap changed PSW bits 15–14 (Rover's gate)
-cpu.save() / cpu.load(state);         // saves, and swapping register sets
+cpu.onTrap = (t) => 'vector' | 'stop';   // Rover: program-mode faults leave through the gate
+cpu.onModeChange = (mode, old) => …;  // PSW bits 15–14 changed (RTI, trap, PSW write)
+cpu.stackLimit = 0o1000;              // a push below it traps to 4
+cpu.save() / cpu.load(state);         // plain JSON; swapping the two register sets
 
-assemble(source, { origin, symbols, longNames: true });
-// → { words, listing, symbols, lines, errors }
-disassemble(words, address);
+assemble(source, { origin, symbols, names: 'dec' });
+// → { ok, errors[{line, column, message}], origin, bytes, start, symbols, labels,
+//     lines, lineAt (address → line), listing, listingRows }
+disassemble(readWord, address, { nameOf });   // → { address, words, text }
+new SimpleMachine({ memory, clockCycles, eis });   // RAM + DL11 console + KW11-L clock
 ```
 
-The names are a sketch; slice 2 settles them.
+The PSW answers on the bus at `177776` inside the CPU, as on every PDP-11. `HALT` stops
+`run` with reason `halt` and sets `cpu.halted`; the host decides what it means (for Rover's
+program: "finished").
 
 ### 14.3 Rules
 
@@ -622,34 +649,32 @@ The names are a sketch; slice 2 settles them.
   description, to stay clear of DEC's old trademark (held by HP today). Emulators such as
   SIMH use the name freely, so this is caution, not a blocker.
 
-## 15. Plan (slices, after approval)
+## 15. Plan (slices)
 
-1. **Design** (this document and [`PDP11_IO.md`](PDP11_IO.md)): owner review.
+1. **Design** (this document and [`PDP11_IO.md`](PDP11_IO.md)): ✅ reviewed; decisions in §0.
 2. **CPU, assembler and disassembler** as the standalone library `src/pdp11/` (§14), with
-   tests (instruction set, flags, modes, cycles, traps, listing) and the boundary test.
-   Nothing in the game changes.
+   tests (instruction set, flags, modes, cycles, traps, interrupts, listing) and the
+   boundary test; **the standalone simulator page** `simulator.html` (decision 19).
+   ✅ built; nothing in the game changes.
 3. **Bus and devices** (Rover's side of §14): the I/O page over the existing device
-   logic, interrupts, the gate;
+   logic, interrupts, the gate, the `TRAP` system call; names renamed to six characters;
    the engine runs it behind a switch. Determinism and save round-trip tests.
 4. **ROM, default firmware, lessons**: every template rewritten; measure the cycle budget.
 5. **UI**: editor language, listing, debugger (octal, `NZVC`, `PSW`), Comms dumps,
-   Reference (Instructions, Modes, Flags, I/O page, ROM).
+   Reference (Instructions, Modes, Flags, I/O page, ROM). The simulator's panels are the
+   starting point.
 6. **Switch over**: delete Rover-ASM (`Compiler.ts`, `RoverVM.ts`, `isa.ts`,
-   `migrateSource.ts`, the old ROM), reset saves, rewrite SPEC §5 and CLAUDE.md.
+   `migrateSource.ts`, the old ROM), reset saves, little-endian photos, rewrite SPEC §5
+   and CLAUDE.md.
 
 ## 16. Open questions
 
-1. **Cycles:** charge per bus access (this draft) or a flat 1 per instruction?
-2. **Budget:** cycles per tick for Mk-I, measured in slice 4 (expected 32–64).
-3. **Program base:** a fixed `PRGBAS` per chassis (simplest), or the firmware declares it
-   (the assembler re-links the program when a new firmware moves it)?
-4. **Memory on reboot:** reload the images from "disk" (this draft), or core keeps
-   everything (authentic core memory: self-modified code survives reboots)?
-5. **Program interrupt handlers:** firmware-only in v1 (this draft), or a program vector
-   table later?
-6. **`TRAP n` from the program:** a "system call" to the firmware (it may serve it and
-   resume), or simply a fault in v1?
-7. **Core sizes:** 2 KB to start, boards to 4 / 8 KB (this draft), their prices, and whether
+Answered on 2026-11-15 (§0, decisions 12–18): cycles, program base, memory on reboot,
+program interrupt handlers, `TRAP n`, names, photo byte order. Still open:
+
+1. **Budget:** cycles per tick for Mk-I, measured in slice 4 (expected 32–64).
+2. **Core sizes:** 2 KB to start, boards to 4 / 8 KB (this draft), their prices, and whether
    a later chassis goes further (up to 32 KB fits the map).
-8. **Names:** keep `_` and long names (this draft), or DEC's six-character style?
-9. **Photo byte order:** keep big-endian (a `SWAB` lesson) or switch to little-endian?
+3. **Six-character names for the I/O page** ([`PDP11_IO.md`](PDP11_IO.md) §9): a naming
+   scheme is needed before slice 3, e.g. DEC's habit of a device prefix and a dot
+   (`E.BLK` for `ERR_BLOCKED`, `SOLHLT` for `SOLAR_HEALTH`).

@@ -18,7 +18,7 @@ Three.js + CodeMirror 6, Vitest for the core.
 
 ## Commands
 ```bash
-npm run dev        # dev server
+npm run dev        # dev server (game; /preview.html assets; /simulator.html PDP-11 simulator)
 npm test           # vitest (headless core)
 npm run typecheck
 npm run build      # typecheck + production bundle in dist/
@@ -47,6 +47,10 @@ npm run build      # typecheck + production bundle in dist/
   Repair materials: `repairs` on the tile in `WorldRegistry`.
   New upgrades: `UPGRADES` in `src/core/upgrades.ts` (modify the rover's own `chassis`;
   never the shared `CHASSIS_MK1`).
+- `src/pdp11/` (M15) is a **standalone library** (CPU, assembler, disassembler): nothing in
+  it may import from the game (a test enforces it); Rover-specific things (memory map,
+  I/O page, gate, ROM) live outside it. API: `src/pdp11/README.md`. `simulator.html`
+  (`src/simulator/`) is its standalone page; its examples are tested.
 - Shapes are drawn only in `src/render/VectorFactory.ts` (keeps M8 visual work local).
 - New or changed visuals go into `preview.html` (`src/preview/`) first; the owner reviews
   screenshots before they replace what the game renders.

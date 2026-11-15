@@ -25,10 +25,10 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | M11 | User interface review (after M10) | 🚧 Comms tab, Code tab dump box, Reference → Radio, Mission events: default since 2026-11-13 (save v13); `BRK` reports itself |
 | M12 | Image memory: `SNAP` → `LDB` / `STB` → `SEND` (SPEC §3.8.7, guide [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md)) | ✅ done (bit instructions; image memory in the core, save v14; templates, Reference → Image, Gallery labels + hex view, `SNAP` warning; goal *Darkroom* + first-edit bonus per camera mode, save v15) |
 | **M14** | **Assembler core**: hardware through device ports + `WAIT`, ROM library, RAM / `VAR` / addressing modes / `DATA`, program called like a subroutine (design [`ASSEMBLER_CORE.md`](ASSEMBLER_CORE.md)) | 🚧 design approved; slices 2 (memory model, save v17) and 3 (devices, `WAIT`, ROM, `CALL PROGRAM`, save v18) done; slice 4 (lessons, Reference *CPU* / *Devices* / *Memory map*) in review; **frozen** (2026-11-15): the boot ROM with safe mode moves into M15's ROM |
-| **M15** | **PDP-11 core**: Rover-ASM replaced by a PDP-11-style 16-bit CPU and a MACRO-11 subset (octal, eight addressing modes, flags, traps, interrupts), devices as DEC-style registers in the I/O page; saves reset (design [`PDP11_CPU.md`](PDP11_CPU.md), [`PDP11_IO.md`](PDP11_IO.md)) | 📝 design draft for owner review; nothing built |
+| **M15** | **PDP-11 core**: Rover-ASM replaced by a PDP-11-style 16-bit CPU and a MACRO-11 subset (octal, eight addressing modes, flags, traps, interrupts), devices as DEC-style registers in the I/O page; saves reset (design [`PDP11_CPU.md`](PDP11_CPU.md), [`PDP11_IO.md`](PDP11_IO.md)) | 🚧 design approved (owner answers 2026-11-15); slice 2 in review: standalone library `src/pdp11/` (CPU, assembler, disassembler, reference machine) + simulator page `simulator.html`; the game is unchanged |
 | M13 | Realism pass 1: watchdog `@WDT`, thermal model + array dust, fault protection `@PREEMPT` (SPEC §3.3.4, §3.9.2, §3.9.5) | 🚧 core, default firmware, *Fault protection* template, Reference, save v16 done; in review (balance numbers to playtest) |
 
-## M15 — PDP-11 core (design draft)
+## M15 — PDP-11 core (in progress)
 
 Owner, 2026-11-15: after many tuning steps, rewrite the language, VM and control layer
 from scratch instead of growing Rover-ASM further; the visuals and console look stay.
@@ -49,9 +49,28 @@ standalone library `src/pdp11/` that other projects could reuse; two design docu
   no `@TIMER`), device interrupts and vectors, ROM drivers, examples, an audit of every
   current port.
 
-- [ ] Slice 1: owner review of both drafts (open questions at the end of each).
-- [ ] Slice 2: CPU, assembler, disassembler as the standalone library `src/pdp11/`
+Owner answers, second round (2026-11-15, `PDP11_CPU.md` §0 decisions 12–19): cycles per
+bus access confirmed; `PRGBAS` fixed per chassis; images reloaded on a hard reboot;
+program interrupt handlers firmware-only in v1; `TRAP n` is a system call served by the
+firmware; **DEC six-character names** (longer is an error; the I/O page names must be
+renamed, scheme open); photos become little-endian; and a **standalone simulator page**
+built together with the library. Still open: cycle budget, core sizes, the short-name
+scheme.
+
+- [x] Slice 1: owner review of both drafts (open questions at the end of each).
+- [x] Slice 2 (in review): CPU, assembler, disassembler as the standalone library `src/pdp11/`
       (no imports from the game, enforced by a test), with tests.
+      Built: `cpu.ts` (PDP-11/40 set + EIS option, eight modes, flags, traps, interrupts,
+      `WAIT`, trace bit, stack limit, PSW at `177776`, cycle models), `assembler.ts`
+      (MACRO-11 subset, two passes, local labels, listing, line map, errors as values),
+      `disassembler.ts`, `machine.ts` (`SimpleMachine`: RAM + DL11 console + KW11-L
+      clock, deterministic), `codemirror.ts` (optional), `README.md`. Tests in
+      `tests/pdp11/` (78): flags, modes, the §4 cycle table, the §3.5 listing, the §9
+      `MUL16` / `DIV16` routines, round trip of every instruction through the
+      disassembler, save/load, the boundary test (no imports from the game, no DOM /
+      randomness / clock). Simulator page `simulator.html` (`src/simulator/`): editor
+      with errors and breakpoints, registers / NZVC / PSW, memory with PC / SP, console
+      with keyboard input, listing; seven example programs, each run by a test.
 - [ ] Slice 3: Rover's side: I/O page over the existing device logic, interrupts, the
       gate (swapping two saved CPU states); engine behind a switch.
 - [ ] Slice 4: ROM, default firmware, lessons; cycle budget measured.
@@ -838,3 +857,4 @@ window with a fixed dish?
 | 2026-11-14 | `claude/m14-slice4-lessons` | M14 slice 4: lesson templates *Count with a variable* and *Drive and scan at once*, the course order in the Code tab, device wording in every template header; `IMAGE_MEMORY.md` on the ROM (`SNAP` driver, *With the ROM* Stamp / Plot, tested); Reference tabs *CPU*, *Devices*, *Memory map*, Image tab fixes; `tests/reference.test.ts`. Owner review: *CPU* / *Memory map* as parts of Basics; *Image: Stamp* / *Plot* on `PUT16` / `PLOT`, hand-written versions kept in the guide. |
 | 2026-11-15 | `claude/kind-meitner-6u9fuj` | Design discussion with the owner: Rover-ASM against RISC-V, MIPS, x86 and retro CPUs; decision to rewrite the CPU layer as a PDP-11-style machine (M15). Drafts `docs/PDP11_CPU.md` (ISA, MACRO-11 subset, octal, cycles per bus access, memory map, gate, traps, interrupts, `MUL16` / `DIV16`, EIS) and `docs/PDP11_IO.md` (DEC-style device registers, I/O page map, 16-bit fixes, device interrupts, port audit); then 64 KB addressable with a small core at first (Mk-I 2 KB, memory boards, boot ROM probes the size). M14 frozen. Documentation only. |
 | 2026-11-15 | `claude/kind-meitner-6u9fuj` (2) | M15 design: owner decision 11, the CPU and assembler as a standalone, reusable library `src/pdp11/` (`PDP11_CPU.md` §14: what goes where, the gate outside the CPU, interface sketch, boundary test); plan slices 2–3 updated. Documentation only. |
+| 2026-11-15 | `ccr-3e1733dc-lef7dz` | M15 owner answers (cycles per bus access, fixed `PRGBAS`, reload on reboot, firmware-only handlers, `TRAP` as system call, DEC six-character names, little-endian photos, simulator page); slice 2: standalone library `src/pdp11/` (CPU, MACRO-11 assembler, disassembler, `SimpleMachine`, CodeMirror mode, README) with 78 tests incl. the boundary test, and the standalone simulator page `simulator.html` with seven tested examples. Game unchanged. |

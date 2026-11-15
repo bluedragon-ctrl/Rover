@@ -1,6 +1,6 @@
 # M15 — PDP-11 core: I/O page, devices and interrupts (design draft)
 
-Status: **draft for owner review** (2026-11-15). Documentation only. Companion of
+Status: **draft; CPU side approved** (2026-11-15). Names must shrink to six characters (§9, question 1). Not built yet (slice 3). Companion of
 [`PDP11_CPU.md`](PDP11_CPU.md) (instruction set, memory, call gate, traps, ROM).
 
 This document turns today's 61 ports (`src/core/ports.ts`, SPEC §5.6, M14 devices in
@@ -403,8 +403,11 @@ Reference *I/O page* tab is generated from it, as the Ports tab is today.
 
 ## 9. Open questions
 
-1. **Names:** DEC-style short names for device blocks (`DRVCS`, this draft) and today's
-   names for telemetry, or one style everywhere?
+1. **Names:** ~~DEC-style short names for device blocks and today's names for
+   telemetry?~~ Decided 2026-11-15: **six characters at most everywhere**, no `_`
+   ([`PDP11_CPU.md`](PDP11_CPU.md) §0, decision 17). Every long name in this document
+   (`SOLAR_HEALTH`, `ERR_BLOCKED`, `ALERT_ECLIPSE`, …) needs a short name before slice 3;
+   a scheme is still open (DEC used device prefixes and dots: `E.BLK`, `SOLHLT`).
 2. **`@TIMER`:** drop it and sleep on `TICKL` (this draft), or keep a per-context timer?
 3. **`DISPLAY`:** keep two hex digits (today's `@POST`), or three octal digits `000`–`377`
    to match the octal theme (a visual change: preview first)?

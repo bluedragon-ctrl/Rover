@@ -5,7 +5,7 @@ export default defineConfig({
   build: {
     target: 'es2022',
     chunkSizeWarningLimit: 1200,
-    rollupOptions: { input: { main: 'index.html', preview: 'preview.html' } },
+    rollupOptions: { input: { main: 'index.html', preview: 'preview.html', simulator: 'simulator.html' } },
   },
   test: { include: ['tests/**/*.test.ts'], environment: 'node' },
 });

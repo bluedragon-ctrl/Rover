@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PDP-11 compatible simulator</title>
+    <style>
+      :root { --cyan: #38bdf8; --green: #3affc8; --amber: #ffb020; --red: #ff6b6b; --panel: rgba(10, 20, 32, 0.92); --line: rgba(56, 189, 248, 0.28); --dim: #7d8ca3; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: #050910; color: #e2e8f0; font: 12px/1.45 ui-monospace, 'JetBrains Mono', Menlo, monospace; }
+      body { display: grid; grid-template-rows: auto 1fr; height: 100vh; }
+      header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+      header b { color: var(--cyan); letter-spacing: 2px; margin-right: 8px; }
+      button, select { background: rgba(15, 30, 48, 0.9); border: 1px solid rgba(56, 189, 248, 0.35); color: #cbd5e1; border-radius: 5px; padding: 4px 9px; font: inherit; cursor: pointer; }
+      button:hover { border-color: var(--cyan); color: var(--cyan); }
+      button.primary { border-color: var(--green); color: var(--green); }
+      button:disabled { opacity: 0.4; cursor: default; }
+      label { color: var(--dim); display: inline-flex; align-items: center; gap: 4px; }
+      .sep { width: 1px; height: 20px; background: var(--line); }
+      main { display: grid; grid-template-columns: minmax(360px, 1.15fr) minmax(250px, 0.6fr) minmax(330px, 1fr); grid-template-rows: 1fr 1fr; gap: 8px; padding: 8px; min-height: 0; }
+      section { background: var(--panel); border: 1px solid var(--line); border-radius: 7px; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+      section > h2 { margin: 0; padding: 5px 9px; font-size: 11px; font-weight: normal; color: #7dd3fc; letter-spacing: 1px; text-transform: uppercase; border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: center; }
+      section > h2 .right { margin-left: auto; text-transform: none; letter-spacing: 0; color: var(--dim); }
+      .body { padding: 7px 9px; overflow: auto; flex: 1; min-height: 0; }
+      #editor-sec { grid-row: 1 / span 2; }
+      #editor { flex: 1; min-height: 0; overflow: hidden; }
+      #editor .cm-editor { height: 100%; }
+      #errors { max-height: 90px; overflow: auto; border-top: 1px solid var(--line); padding: 4px 9px; color: var(--red); }
+      #errors:empty { display: none; }
+      #errors div { cursor: pointer; }
+      #cpu-sec { grid-row: 1 / span 2; }
+      table { border-collapse: collapse; width: 100%; }
+      td { padding: 1px 4px; white-space: nowrap; }
+      .regs td:first-child { color: var(--dim); width: 34px; }
+      .regs .oct { color: #e6edf3; }
+      .regs .dec { color: var(--dim); text-align: right; }
+      .changed { color: var(--amber) !important; }
+      .flags { display: flex; gap: 4px; margin: 8px 0 4px; }
+      .flag { border: 1px solid var(--line); border-radius: 4px; padding: 1px 7px; color: #475569; }
+      .flag.on { color: var(--green); border-color: var(--green); }
+      .kv { color: var(--dim); margin: 2px 0; }
+      .kv span { color: #e6edf3; }
+      #next { margin-top: 8px; padding: 6px; border: 1px dashed var(--line); border-radius: 5px; color: var(--green); white-space: pre; }
+      #status { margin-top: 8px; color: var(--amber); white-space: pre-wrap; }
+      #status.err { color: var(--red); }
+      .mem { font-size: 11.5px; }
+      .mem td.addr { color: var(--dim); }
+      .mem td.w { color: #94a3b8; cursor: default; }
+      .mem td.w.nz { color: #e6edf3; }
+      .mem td.pc { background: rgba(58, 255, 200, 0.18); color: var(--green); }
+      .mem td.sp { outline: 1px solid var(--amber); }
+      .mem td.ascii { color: #64748b; padding-left: 8px; }
+      #memaddr { width: 72px; background: #0b1520; border: 1px solid var(--line); color: #e2e8f0; font: inherit; padding: 2px 4px; border-radius: 4px; }
+      #tty { white-space: pre-wrap; word-break: break-all; color: var(--green); outline: none; min-height: 100%; }
+      #tty:focus { box-shadow: inset 0 0 0 1px var(--green); }
+      #tty .cursor { animation: blink 1s steps(1) infinite; }
+      @keyframes blink { 50% { opacity: 0; } }
+      #listing { white-space: pre; font-size: 11px; color: #94a3b8; }
+      #listing .cur { background: rgba(58, 255, 200, 0.16); color: var(--green); }
+      .cm-pc-line { background: rgba(58, 255, 200, 0.14) !important; }
+      .cm-bp-line .cm-gutterElement, .cm-lineNumbers .cm-bp { color: var(--red) !important; font-weight: bold; }
+      .bp-mark { background: rgba(255, 107, 107, 0.10); }
+      .tabs button { padding: 1px 8px; font-size: 11px; }
+      .tabs button.on { color: var(--cyan); border-color: var(--cyan); }
+      .help { color: var(--dim); font-size: 11px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <b>PDP-11 SIM</b>
+      <select id="example" title="Example programs"></select>
+      <span class="sep"></span>
+      <button id="assemble" class="primary" title="Assemble and load (Ctrl+Enter)">Assemble &amp; load</button>
+      <button id="reset" title="Reload the program and reset the CPU">Reset</button>
+      <button id="step" title="One instruction (F10)">Step</button>
+      <button id="run" title="Run / stop (F5)">Run</button>
+      <label>speed
+        <select id="speed">
+          <option value="slow">5 instr/s</option>
+          <option value="100">100 cycles/frame</option>
+          <option value="2000" selected>2k cycles/frame</option>
+          <option value="50000">50k cycles/frame</option>
+        </select>
+      </label>
+      <span class="sep"></span>
+      <label title="Extended Instruction Set: MUL, DIV, ASH, ASHC"><input type="checkbox" id="eis" /> EIS</label>
+      <label title="Cycle model">cycles
+        <select id="cycles"><option value="per-bus-access">per bus access</option><option value="flat">1 per instruction</option></select>
+      </label>
+      <span class="help">Click a line number to set a breakpoint.</span>
+    </header>
+    <main>
+      <section id="editor-sec">
+        <h2>Source <span class="right">MACRO-11 subset · octal by default, <code>10.</code> is decimal</span></h2>
+        <div id="editor"></div>
+        <div id="errors"></div>
+      </section>
+      <section id="cpu-sec">
+        <h2>CPU</h2>
+        <div class="body">
+          <table class="regs" id="regs"></table>
+          <div class="flags" id="flags"></div>
+          <div class="kv">PSW <span id="psw"></span> · priority <span id="pri"></span></div>
+          <div class="kv">cycles <span id="cyc">0</span> · instructions <span id="ins">0</span></div>
+          <div id="next"></div>
+          <div id="status"></div>
+        </div>
+      </section>
+      <section>
+        <h2>Memory <span class="right"><input id="memaddr" value="001000" title="Start address (octal)" /> <span class="tabs"><button id="mem-pc">PC</button> <button id="mem-sp">SP</button></span></span></h2>
+        <div class="body"><table class="mem" id="mem"></table></div>
+      </section>
+      <section>
+        <h2><span class="tabs"><button id="tab-tty" class="on">Console</button> <button id="tab-list">Listing</button></span> <span class="right" id="tty-help">click, then type: keys go to RBUF</span></h2>
+        <div class="body" id="tty-body"><div id="tty" tabindex="0"></div></div>
+        <div class="body" id="list-body" hidden><div id="listing"></div></div>
+      </section>
+    </main>
+    <script type="module" src="/src/simulator/main.ts"></script>
+  </body>
+</html>
