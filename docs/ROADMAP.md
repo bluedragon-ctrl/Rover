@@ -37,21 +37,23 @@ x86 and older machines were discussed). Decisions: saves reset; a simplified cal
 between firmware and program; cycles charged per bus access (to confirm); octal; multiply
 and divide as ROM subroutines with hardware `MUL` / `DIV` as the EIS upgrade; interrupts
 (line clock every tick, device interrupts); 64 KB addressable but only a small core
-installed at first (Mk-I 2 KB, memory boards add more); two design documents:
+installed at first (Mk-I 2 KB, memory boards add more); the CPU and assembler as a
+standalone library `src/pdp11/` that other projects could reuse; two design documents:
 
 * [`PDP11_CPU.md`](PDP11_CPU.md): machine, MACRO-11 subset, addressing modes, cycles,
   flags, memory map, contexts and the gate, traps, interrupts (CPU side), `MUL16` /
   `DIV16`, EIS, ROM, departures from the real PDP-11, what happens to today's features,
-  plan, open questions.
+  the library boundary (§14), plan, open questions.
 * [`PDP11_IO.md`](PDP11_IO.md): the DEC device CSR (`GO` / `FN` / `IE` / `DONE` / `ERR`),
   the register map of the I/O page, 16-bit fixes (`TICKL` / `TICKH`, signed `X` / `Y`,
   no `@TIMER`), device interrupts and vectors, ROM drivers, examples, an audit of every
   current port.
 
 - [ ] Slice 1: owner review of both drafts (open questions at the end of each).
-- [ ] Slice 2: CPU, assembler, disassembler in `src/core/cpu11/` with tests.
-- [ ] Slice 3: I/O page over the existing device logic, interrupts, the gate; engine
-      behind a switch.
+- [ ] Slice 2: CPU, assembler, disassembler as the standalone library `src/pdp11/`
+      (no imports from the game, enforced by a test), with tests.
+- [ ] Slice 3: Rover's side: I/O page over the existing device logic, interrupts, the
+      gate (swapping two saved CPU states); engine behind a switch.
 - [ ] Slice 4: ROM, default firmware, lessons; cycle budget measured.
 - [ ] Slice 5: UI (editor, listing, debugger, Comms dumps, Reference).
 - [ ] Slice 6: switch over, delete Rover-ASM, reset saves, rewrite SPEC §5 and CLAUDE.md.
@@ -835,3 +837,4 @@ window with a fixed dish?
 | 2026-11-14 | `ccr-298af329-qtcfs9` (2) | Owner decisions on slice 3: ROM helpers may change `r0`/`r1` → helpers `ABS`, `DIR_TO`, `PUT16`, `GET16`, `PLOT` built (ROM 330 B; Stamp / Plot templates renamed their routines `put2` / `pixel`); retired port numbers 30, 33, 34 to be reused once before the extended operand; tick-start preemption and radar timing accepted. |
 | 2026-11-14 | `claude/m14-slice4-lessons` | M14 slice 4: lesson templates *Count with a variable* and *Drive and scan at once*, the course order in the Code tab, device wording in every template header; `IMAGE_MEMORY.md` on the ROM (`SNAP` driver, *With the ROM* Stamp / Plot, tested); Reference tabs *CPU*, *Devices*, *Memory map*, Image tab fixes; `tests/reference.test.ts`. Owner review: *CPU* / *Memory map* as parts of Basics; *Image: Stamp* / *Plot* on `PUT16` / `PLOT`, hand-written versions kept in the guide. |
 | 2026-11-15 | `claude/kind-meitner-6u9fuj` | Design discussion with the owner: Rover-ASM against RISC-V, MIPS, x86 and retro CPUs; decision to rewrite the CPU layer as a PDP-11-style machine (M15). Drafts `docs/PDP11_CPU.md` (ISA, MACRO-11 subset, octal, cycles per bus access, memory map, gate, traps, interrupts, `MUL16` / `DIV16`, EIS) and `docs/PDP11_IO.md` (DEC-style device registers, I/O page map, 16-bit fixes, device interrupts, port audit); then 64 KB addressable with a small core at first (Mk-I 2 KB, memory boards, boot ROM probes the size). M14 frozen. Documentation only. |
+| 2026-11-15 | `claude/kind-meitner-6u9fuj` (2) | M15 design: owner decision 11, the CPU and assembler as a standalone, reusable library `src/pdp11/` (`PDP11_CPU.md` §14: what goes where, the gate outside the CPU, interface sketch, boundary test); plan slices 2–3 updated. Documentation only. |

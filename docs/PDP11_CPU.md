@@ -29,6 +29,8 @@ the UI are rewritten from scratch.
 9. **Two documents**: this one (CPU) and [`PDP11_IO.md`](PDP11_IO.md) (I/O).
 10. **64 KB addressable, not all installed at first**: the rover starts with a small core
     and memory boards add more (§6.1).
+11. **The CPU and assembler are a standalone library** (`src/pdp11/`) that other
+    projects could reuse; everything Rover-specific stays outside it (§14).
 
 M14 is frozen where it is: its last item (boot ROM with safe mode) is not built in
 Rover-ASM. It moves into this milestone's ROM (§10).
@@ -201,7 +203,7 @@ writes, `CMP` / `TST` / `BIT` only read, `ADD` / `INC` do both.
 
 **Why:** it teaches the real reason registers exist. A value kept in R2 is free; the same
 value in memory costs a cycle every time. **Cost:** the budget per tick is retuned once,
-after the default firmware has been ported and measured (§12, open question 2).
+after the default firmware has been ported and measured (§16, open question 2).
 
 A `WAIT` costs 1 cycle and then nothing while asleep. Cycles left in a tick are not saved.
 
@@ -514,6 +516,10 @@ leave the flags from it, so the caller writes:
 6. No `.MACRO`, `.PSECT`, linker or floating point in v1.
 7. Booting copies the images from "disk" on every hard reboot (§6).
 
+In the library of §14, departures 2 and 5 are options (the cycle model, long names), as
+is EIS; 6 is simply its scope. Departures 1, 3, 4 and 7 are Rover's code around it, so the
+library itself stays a plain PDP-11.
+
 ## 12. What happens to today's features
 
 | Today (Rover-ASM) | PDP-11 core |
@@ -553,12 +559,77 @@ slice 4). The default firmware (166 B today) should land near 300 B, well inside
 * **PDP-11**: the smallest distance from Rover-ASM (memory operands, two-operand
   instructions), readable octal encoding, flags, real traps and interrupts, and history.
 
-## 14. Plan (slices, after approval)
+## 14. Library boundary
+
+Owner decision 11 (2026-11-15): the CPU and its assembler are built as a **self-contained
+library** that could be reused in other projects (a tutorial site, a standalone emulator
+page, a command-line assembler). Rover is its first user, not its owner.
+
+### 14.1 What goes where
+
+| Library `src/pdp11/` | Rover (`src/core/` and the UI) |
+| :--- | :--- |
+| CPU: registers, `PSW`, the eight addressing modes, the instruction set (§9.3), flags, traps, interrupts, `WAIT` / `HALT` / `RESET` | the memory map (§6): core size, image memory, ROM, write protection |
+| Options: EIS on / off, cycle model (per bus access as in §4, or flat), long names and `_` | the I/O page and every device ([`PDP11_IO.md`](PDP11_IO.md)) |
+| Assembler: MACRO-11 subset (§3) → words, listing, symbol table, source line map, errors | predefined symbols (`BAT`, `DRVCS`, `ERR_BUSY`, directions, tiles) |
+| Disassembler and the octal listing format (§3.5) | ROM source: boot, safe mode, handlers, drivers, helpers (§10) |
+| Saving and restoring CPU state (plain JSON) | the gate and the two register sets (§7), when interrupts arrive (tick starts) |
+| Optional, separate entry point: CodeMirror syntax mode | lessons, Reference, debugger, Comms, saves |
+
+**The gate stays outside the CPU.** Rover keeps two saved CPU states (firmware and
+program) and swaps them: `MOV #GO, @#PRGCS` is a bus write that Rover sees and answers by
+loading the program's state; a gate exit loads the firmware's. An interrupt during the
+program swaps to the firmware before it is taken, and a hook reports when `RTI` pops a
+`PSW` whose mode bits say "program", so Rover swaps back. The library knows nothing about
+slots, slices or `PRGCS`: it is a plain PDP-11 with options, testable against how the real
+machine behaved.
+
+### 14.2 Interface (sketch)
+
+```ts
+interface Bus {                       // supplied by the host (Rover: memory + I/O page)
+  read(addr: number, byte: boolean): number | 'bus-error';
+  write(addr: number, value: number, byte: boolean): void | 'bus-error';
+}
+
+const cpu = new Cpu(bus, { eis: false, cycles: 'per-bus-access' });
+cpu.run(maxCycles);                   // stops at the budget, WAIT or HALT; reports why and the cycles used
+cpu.step();                           // one instruction (debugger)
+cpu.interrupt(vector, level);         // the host decides when (Rover: at tick start)
+cpu.onModeChange = (mode) => { … };   // RTI / trap changed PSW bits 15–14 (Rover's gate)
+cpu.save() / cpu.load(state);         // saves, and swapping register sets
+
+assemble(source, { origin, symbols, longNames: true });
+// → { words, listing, symbols, lines, errors }
+disassemble(words, address);
+```
+
+The names are a sketch; slice 2 settles them.
+
+### 14.3 Rules
+
+* **A folder, not a package, for now:** `src/pdp11/` with its own `index.ts` (the only
+  entry point) and its own tests in `tests/pdp11/`. It moves to an npm workspace or its
+  own repository only when a second project needs it.
+* **No imports from the game.** A test fails if any file in `src/pdp11/` imports from
+  outside the folder, so the boundary can't erode quietly (like the determinism test).
+* **The game's core rules apply inside:** no DOM, no `Math.random`, no wall-clock time,
+  integer arithmetic only. The library is deterministic by construction, which helps any
+  other user too.
+* **Errors are values,** never exceptions thrown into the host: the assembler returns a
+  list with line and column; the CPU reports traps and stops.
+* **Name for a public release:** a neutral name with "PDP-11 compatible" in the
+  description, to stay clear of DEC's old trademark (held by HP today). Emulators such as
+  SIMH use the name freely, so this is caution, not a blocker.
+
+## 15. Plan (slices, after approval)
 
 1. **Design** (this document and [`PDP11_IO.md`](PDP11_IO.md)): owner review.
-2. **CPU, assembler and disassembler** in `src/core/cpu11/`, headless, with tests
-   (instruction set, flags, modes, cycles, traps, listing). Nothing in the game changes.
-3. **Bus and devices**: the I/O page over the existing device logic, interrupts, the gate;
+2. **CPU, assembler and disassembler** as the standalone library `src/pdp11/` (§14), with
+   tests (instruction set, flags, modes, cycles, traps, listing) and the boundary test.
+   Nothing in the game changes.
+3. **Bus and devices** (Rover's side of §14): the I/O page over the existing device
+   logic, interrupts, the gate;
    the engine runs it behind a switch. Determinism and save round-trip tests.
 4. **ROM, default firmware, lessons**: every template rewritten; measure the cycle budget.
 5. **UI**: editor language, listing, debugger (octal, `NZVC`, `PSW`), Comms dumps,
@@ -566,7 +637,7 @@ slice 4). The default firmware (166 B today) should land near 300 B, well inside
 6. **Switch over**: delete Rover-ASM (`Compiler.ts`, `RoverVM.ts`, `isa.ts`,
    `migrateSource.ts`, the old ROM), reset saves, rewrite SPEC §5 and CLAUDE.md.
 
-## 15. Open questions
+## 16. Open questions
 
 1. **Cycles:** charge per bus access (this draft) or a flat 1 per instruction?
 2. **Budget:** cycles per tick for Mk-I, measured in slice 4 (expected 32–64).
