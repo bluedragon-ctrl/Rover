@@ -24,8 +24,36 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | **M10** | **Firmware + program slot (SPEC §3.9)** | 🚧 slice 1 (core, save v10) done; slice 2 (machine code + byte addresses, save v11, Code tab / Console redesign, listing pane) in review |
 | M11 | User interface review (after M10) | 🚧 Comms tab, Code tab dump box, Reference → Radio, Mission events: default since 2026-11-13 (save v13); `BRK` reports itself |
 | M12 | Image memory: `SNAP` → `LDB` / `STB` → `SEND` (SPEC §3.8.7, guide [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md)) | ✅ done (bit instructions; image memory in the core, save v14; templates, Reference → Image, Gallery labels + hex view, `SNAP` warning; goal *Darkroom* + first-edit bonus per camera mode, save v15) |
-| **M14** | **Assembler core**: hardware through device ports + `WAIT`, ROM library, RAM / `VAR` / addressing modes / `DATA`, program called like a subroutine (design [`ASSEMBLER_CORE.md`](ASSEMBLER_CORE.md)) | 🚧 design approved; slices 2 (memory model, save v17) and 3 (devices, `WAIT`, ROM, `CALL PROGRAM`, save v18) done; slice 4 (lessons, Reference *CPU* / *Devices* / *Memory map*) in review; boot ROM with safe mode next |
+| **M14** | **Assembler core**: hardware through device ports + `WAIT`, ROM library, RAM / `VAR` / addressing modes / `DATA`, program called like a subroutine (design [`ASSEMBLER_CORE.md`](ASSEMBLER_CORE.md)) | 🚧 design approved; slices 2 (memory model, save v17) and 3 (devices, `WAIT`, ROM, `CALL PROGRAM`, save v18) done; slice 4 (lessons, Reference *CPU* / *Devices* / *Memory map*) in review; **frozen** (2026-11-15): the boot ROM with safe mode moves into M15's ROM |
+| **M15** | **PDP-11 core**: Rover-ASM replaced by a PDP-11-style 16-bit CPU and a MACRO-11 subset (octal, eight addressing modes, flags, traps, interrupts), devices as DEC-style registers in the I/O page; saves reset (design [`PDP11_CPU.md`](PDP11_CPU.md), [`PDP11_IO.md`](PDP11_IO.md)) | 📝 design draft for owner review; nothing built |
 | M13 | Realism pass 1: watchdog `@WDT`, thermal model + array dust, fault protection `@PREEMPT` (SPEC §3.3.4, §3.9.2, §3.9.5) | 🚧 core, default firmware, *Fault protection* template, Reference, save v16 done; in review (balance numbers to playtest) |
+
+## M15 — PDP-11 core (design draft)
+
+Owner, 2026-11-15: after many tuning steps, rewrite the language, VM and control layer
+from scratch instead of growing Rover-ASM further; the visuals and console look stay.
+Target a PDP-11-style ISA for its "simpleness, readability and elegance" (RISC-V, MIPS,
+x86 and older machines were discussed). Decisions: saves reset; a simplified call gate
+between firmware and program; cycles charged per bus access (to confirm); octal; multiply
+and divide as ROM subroutines with hardware `MUL` / `DIV` as the EIS upgrade; interrupts
+(line clock every tick, device interrupts); two design documents:
+
+* [`PDP11_CPU.md`](PDP11_CPU.md): machine, MACRO-11 subset, addressing modes, cycles,
+  flags, memory map, contexts and the gate, traps, interrupts (CPU side), `MUL16` /
+  `DIV16`, EIS, ROM, departures from the real PDP-11, what happens to today's features,
+  plan, open questions.
+* [`PDP11_IO.md`](PDP11_IO.md): the DEC device CSR (`GO` / `FN` / `IE` / `DONE` / `ERR`),
+  the register map of the I/O page, 16-bit fixes (`TICKL` / `TICKH`, signed `X` / `Y`,
+  no `@TIMER`), device interrupts and vectors, ROM drivers, examples, an audit of every
+  current port.
+
+- [ ] Slice 1: owner review of both drafts (open questions at the end of each).
+- [ ] Slice 2: CPU, assembler, disassembler in `src/core/cpu11/` with tests.
+- [ ] Slice 3: I/O page over the existing device logic, interrupts, the gate; engine
+      behind a switch.
+- [ ] Slice 4: ROM, default firmware, lessons; cycle budget measured.
+- [ ] Slice 5: UI (editor, listing, debugger, Comms dumps, Reference).
+- [ ] Slice 6: switch over, delete Rover-ASM, reset saves, rewrite SPEC §5 and CLAUDE.md.
 
 ## M14 — Assembler core (in progress)
 
@@ -805,3 +833,4 @@ window with a fixed dish?
 | 2026-11-14 | `ccr-298af329-qtcfs9` | M14 slice 3: devices behind ports (15 ports 49–63, `WAIT` 12, `ERR_BUSY`, chassis interlock, `@DRIVE_N 0` stop), ROM library at 0xF000 (drivers, Reference → ROM listing, argument check), `CALL PROGRAM` + `@SLICE` timer interrupt, top-level `RET`; hardware instructions, `RUN`, `@TX_DATA` retired, `LDF` = 13; Mk-I 8 cycles / 16-deep data stack; save v18 with code rewrite; template *Drive yourself*; `tests/devices.test.ts`. |
 | 2026-11-14 | `ccr-298af329-qtcfs9` (2) | Owner decisions on slice 3: ROM helpers may change `r0`/`r1` → helpers `ABS`, `DIR_TO`, `PUT16`, `GET16`, `PLOT` built (ROM 330 B; Stamp / Plot templates renamed their routines `put2` / `pixel`); retired port numbers 30, 33, 34 to be reused once before the extended operand; tick-start preemption and radar timing accepted. |
 | 2026-11-14 | `claude/m14-slice4-lessons` | M14 slice 4: lesson templates *Count with a variable* and *Drive and scan at once*, the course order in the Code tab, device wording in every template header; `IMAGE_MEMORY.md` on the ROM (`SNAP` driver, *With the ROM* Stamp / Plot, tested); Reference tabs *CPU*, *Devices*, *Memory map*, Image tab fixes; `tests/reference.test.ts`. Owner review: *CPU* / *Memory map* as parts of Basics; *Image: Stamp* / *Plot* on `PUT16` / `PLOT`, hand-written versions kept in the guide. |
+| 2026-11-15 | `claude/kind-meitner-6u9fuj` | Design discussion with the owner: Rover-ASM against RISC-V, MIPS, x86 and retro CPUs; decision to rewrite the CPU layer as a PDP-11-style machine (M15). Drafts `docs/PDP11_CPU.md` (ISA, MACRO-11 subset, octal, cycles per bus access, memory map, gate, traps, interrupts, `MUL16` / `DIV16`, EIS) and `docs/PDP11_IO.md` (DEC-style device registers, I/O page map, 16-bit fixes, device interrupts, port audit); M14 frozen. Documentation only. |
