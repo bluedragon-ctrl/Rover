@@ -5,7 +5,7 @@
  * Edited and drawn products carry their own bytes. No Math.random, no float trig.
  */
 import { productFrameBytes, ProductType, scienceHeader, type ProductDesc } from './downlink';
-import { photoPayload } from './photos';
+import { PHOTO_FORMATS, PHOTO_FORMATS_2X, photoPayload } from './photos';
 import { hash3 } from './rng';
 import { T } from './WorldRegistry';
 
@@ -64,7 +64,7 @@ export function productPayload(seed: number, d: ProductDesc): number[] {
     case ProductType.PHOTO_PALETTE:
     case ProductType.PHOTO_HIRES:
     case ProductType.PHOTO_RGB:
-      return photoPayload(seed, { type: d.type, subject: d.subject, sx: d.sx ?? d.x, sy: d.sy ?? d.y, lit: d.lit ?? false, tick: d.noise?.tick ?? d.tick, seq: d.noise?.seq ?? d.seq, horizon: d.horizon, anomaly: d.anomaly });
+      return photoPayload(seed, { type: d.type, subject: d.subject, sx: d.sx ?? d.x, sy: d.sy ?? d.y, lit: d.lit ?? false, tick: d.noise?.tick ?? d.tick, seq: d.noise?.seq ?? d.seq, horizon: d.horizon, anomaly: d.anomaly }, d.x2 ? PHOTO_FORMATS_2X : PHOTO_FORMATS);
     default:
       return [];
   }

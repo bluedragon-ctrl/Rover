@@ -137,6 +137,10 @@ export const PDP11 = {
   ioBase: 0o170000,
   /** Real-time output FIFO of the TX device (PDP11_IO.md §3.5a). */
   txFifoBytes: 64,
+  /** Safe mode (PDP11_CPU.md §10, from M14 §6.3): this many fault / watchdog reboots within... */
+  safeModeBoots: 3,
+  /** ...this many ticks make the boot ROM run its built-in safe firmware. */
+  safeModeTicks: 500,
 } as const;
 
 export interface ChassisDef {

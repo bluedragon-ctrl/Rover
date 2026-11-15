@@ -16,6 +16,7 @@ import {
   productFrameBytes,
   RECEIVED_KEEP,
   SYSTEM_TAG,
+  TX_BOOT,
   type ProductDesc,
   type ReceivedFrame,
   type ReceivedProduct,
@@ -30,11 +31,20 @@ import { resetDevices, toolDevice, Unit, type Capture, type Device } from './Uni
 import { productPayload, toHex } from './imaging';
 import { compile, FIRMWARE_ONLY_PORTS, PROGRAM_GATE, romProgram, ROM_BASE, type CompileResult, type Slot } from './vm/Compiler';
 import type { RoverVM, VmHost } from './vm/RoverVM';
-import { HORIZON_COLUMNS, HORIZON_V, isAnomaly, photoBytes, type HorizonView } from './photos';
+import { HORIZON_COLUMNS, HORIZON_V, isAnomaly, PHOTO_FORMATS_2X, photoBytes, type HorizonView } from './photos';
 import { coneOffsets, shapeContains, type SensorShape } from './sensors';
 import { createDefaultRegistry, T, type WorldRegistry } from './WorldRegistry';
 import { assembleImage, RoverMachine, type ImageResult, type MachineHost } from './machine/RoverMachine';
-import { MESSAGES_KEEP, parseStream, freshParser, type ParserState, type ReceivedMessage } from './messages';
+import { MESSAGES_KEEP, MsgType, parseStream, freshParser, type ParserState, type ReceivedMessage } from './messages';
+
+/** M15: a photo from SNDIMG being put back together at mission control (saved). */
+export interface PhotoAssembly {
+  type: number;
+  chunks: number;
+  next: number;
+  data: number[];
+  cap: Capture | null;
+}
 import { PDP11 } from './balance';
 
 export interface EngineOptions {
@@ -159,6 +169,9 @@ export class SimulationEngine {
   messages: ReceivedMessage[] = [];
   /** M15: mission control's message parser per rover (saved). */
   parsers = new Map<number, ParserState>();
+  /** M15: the same for the recorder's message stream, and photos being put together (saved). */
+  recParsers = new Map<number, ParserState>();
+  photoAsm = new Map<number, PhotoAssembly>();
   private machineHost: MachineHost | null = null;
 
   constructor(readonly opts: EngineOptions) {
@@ -224,6 +237,8 @@ export class SimulationEngine {
       programFault: (unit, why) => this.log(unit, 'error', `Program FAULT: ${why}. Control returns to the firmware.`, 'rover'),
     };
     u.machine = new RoverMachine(u, this.machineHost);
+    u.photoFormats = PHOTO_FORMATS_2X; // owner decision: photos at double resolution (PDP11_CPU.md §6.3)
+    u.img = new Uint8Array(0);
   }
 
   /** M15: assemble a slot for this rover (MACRO-11, predefined symbols). */
@@ -461,6 +476,12 @@ export class SimulationEngine {
     u.preempted = 0;
     u.ramMemory().fill(0); // M14: RAM is zero after a hard reboot
     u.vm.reboot();
+    if (u.machine) {
+      // M15 safe mode bookkeeping (BOOTCS, BOOTCT): the boot ROM decides (PDP11_CPU.md §10).
+      u.bootReason = reason;
+      u.faultBoots = u.faultBoots.filter((t) => t > this.tick - PDP11.safeModeTicks);
+      if (reason === BootReason.WATCHDOG || reason === BootReason.WDT_TIMEOUT || reason === BootReason.FAULT) u.faultBoots.push(this.tick);
+    }
     u.machine?.hardReboot(); // M15: core reloaded from the images, the CPU at the boot ROM
     this.restartProgram(u);
     this.booted(u, reason);
@@ -588,6 +609,8 @@ export class SimulationEngine {
       unit.sourceCode = source;
       unit.firmwareBytes = bytes;
       m.firmware = r.image;
+      unit.safeMode = false; // a new firmware ends safe mode
+      unit.faultBoots = [];
       this.hardReboot(unit, BootReason.UPLOAD);
       unit.cyclesLeft = 0;
       this.log(unit, 'info', `Firmware flashed (${bytes} bytes${costMsg}). Rebooting.`, cat);
@@ -917,6 +940,7 @@ export class SimulationEngine {
       sy: shot.y,
       lit: this.photoLit(u, dir),
       noise: { tick: this.tick, seq: u.link.seq },
+      ...(u.machine ? { x2: true } : {}),
       ...(shot.horizon ? { horizon: shot.horizon } : {}),
       ...(this.anomalyAt(shot.subject, shot.x, shot.y) ? { anomaly: true } : {}),
     };
@@ -1320,8 +1344,9 @@ export class SimulationEngine {
 
   /** Transmit this tick's bytes; completed frames and products reach mission control. */
   private updateLink(u: Unit): void {
-    const { sent, sysDone, done, delivered, partial, tx } = u.link.pump(this.signalOf(u), BALANCE.linkMinSignal, u.chassis.linkBytesPerTick);
+    const { sent, sysDone, done, delivered, partial, tx, rec } = u.link.pump(this.signalOf(u), BALANCE.linkMinSignal, u.chassis.linkBytesPerTick);
     if (tx.length) this.receiveTx(u, tx);
+    if (rec.length) this.receiveRec(u, rec);
     if (!sent) return;
     this.drain(u, BALANCE.linkEnergyPerTick);
     for (const f of sysDone) {
@@ -1360,6 +1385,71 @@ export class SimulationEngine {
       this.events.emit('DOWNLINK_MESSAGE', msg);
     }
     if (this.messages.length > MESSAGES_KEEP) this.messages.splice(0, this.messages.length - MESSAGES_KEEP);
+  }
+
+  /**
+   * M15: mission control splits the recorder's message stream too (PDP11_IO.md §3.5a) and
+   * puts photos sent by the ROM's SNDIMG back together, chunk by chunk, in order. A photo
+   * that lost a chunk (a reboot cut it off) is dropped.
+   */
+  private receiveRec(u: Unit, bytes: number[]): void {
+    let p = this.recParsers.get(u.id);
+    if (!p) this.recParsers.set(u.id, (p = freshParser()));
+    let from = 0;
+    for (let i = 0; i <= bytes.length; i++) {
+      if (i < bytes.length && bytes[i] !== TX_BOOT) continue;
+      for (const msg of parseStream(p, bytes.slice(from, i + 1), u.id, this.tick)) {
+        msg.channel = 'rec';
+        this.messages.push(msg);
+        if (msg.status === 'ok') this.stats.framesReceived++;
+        this.events.emit('DOWNLINK_MESSAGE', msg);
+        this.assemblePhoto(u, msg);
+      }
+      if (i < bytes.length) this.photoAsm.delete(u.id); // a reboot: the rest of the photo never comes
+      from = i + 1;
+    }
+    if (this.messages.length > MESSAGES_KEEP) this.messages.splice(0, this.messages.length - MESSAGES_KEEP);
+  }
+
+  private assemblePhoto(u: Unit, msg: ReceivedMessage): void {
+    const asm = this.photoAsm.get(u.id);
+    const b = msg.body;
+    const isImg = msg.type === MsgType.IMG && msg.status === 'ok' && b.length >= 3;
+    if (isImg && b[1] === 0) {
+      // A header: the recorder paired it with the capture when it was stored.
+      const cap = u.imgCaps.shift() ?? null;
+      this.photoAsm.set(u.id, { type: b[0], chunks: b[2], next: 1, data: b.slice(3), cap });
+    } else if (isImg && asm && b[0] === asm.type && b[1] === asm.next && b[2] === asm.chunks) {
+      asm.data.push(...b.slice(3));
+      asm.next++;
+    } else {
+      if (asm && (msg.type === MsgType.IMG || msg.type === null)) this.photoAsm.delete(u.id); // a chunk went missing
+      return;
+    }
+    const a = this.photoAsm.get(u.id)!;
+    if (a.next < a.chunks) return;
+    this.photoAsm.delete(u.id);
+    const n = photoBytes(a.type, PHOTO_FORMATS_2X);
+    if (!n || a.data.length !== n) return;
+    const cap = a.cap?.type === a.type ? a.cap : null;
+    let d: ProductDesc;
+    const base = { seq: u.link.seq, tick: this.tick, credits: 0, x2: true as const };
+    u.link.seq = (u.link.seq + 1) & 255;
+    if (cap) {
+      const { noise, ...photo } = cap;
+      const raw = productPayload(this.seed, { ...cap, seq: 0, tick: 0, credits: 0 });
+      const same = raw.length === a.data.length && raw.every((v, i) => v === a.data[i]);
+      d = { ...photo, noise, ...base, ...(same ? {} : { level: Level.EDITED, data: toHex(Uint8Array.from(a.data)) }) };
+    } else {
+      d = { type: a.type, subject: 0, x: u.x, y: u.y, lit: false, ...base, level: Level.DRAWN, data: toHex(Uint8Array.from(a.data)) };
+    }
+    const g = this.galleryEntry(u, d);
+    g.received = 2 + n;
+    g.credits = this.deliveryCredits(d);
+    this.stats.scienceDelivered++;
+    this.credits += g.credits;
+    this.events.emit('SCIENCE_DELIVERED', g);
+    if (this.gallery.length > GALLERY_KEEP) this.gallery.splice(0, this.gallery.length - GALLERY_KEEP);
   }
 
   /** Mission control's record of a product, created when its first byte arrives. */

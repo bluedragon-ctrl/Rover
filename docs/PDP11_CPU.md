@@ -1,8 +1,9 @@
 # M15 — PDP-11 core: the CPU (design draft)
 
-Status: **design approved with the decisions of §0** (2026-11-15); open questions 2 and 7
-remain (slice 4 measures them). Slice 2, the library, is built (§14); slice 3, Rover's bus,
-devices, gate and interrupts, is built behind the engine switch `cpu: 'pdp11'` (§14.4).
+Status: **design approved with the decisions of §0** (2026-11-15). Slice 2, the library, is
+built (§14); slice 3, Rover's bus, devices, gate and interrupts, is built behind the engine
+switch `cpu: 'pdp11'` (§14.4); slice 4, the ROM, default firmware and lessons, is built and
+the cycle budget measured (§14.5; a budget proposal waits for the owner, §16).
 Companion document: [`PDP11_IO.md`](PDP11_IO.md), which covers the device
 registers, the I/O page and interrupts from devices.
 
@@ -532,8 +533,38 @@ listing format of §3.5.
 | Boot | reset, vectors with defaults, load the images (§6), set both stacks, line clock on, jump to the firmware at `000200`; **safe mode** (from M14 §6.3: after 3 fault or watchdog reboots in 500 ticks, run a built-in safe firmware) |
 | Default handlers | clock: `RTI`; bus error / illegal: reboot; `BPT`: halt and dump |
 | Program stub | `EXIT: HALT`, the return address a program starts with |
-| Drivers | `STEP SCAN SLEEP ACT USE SNAP SEND ERASE RUN LOG` ([`PDP11_IO.md`](PDP11_IO.md) §6) |
+| Drivers | `STEP SCAN SLEEP ACT USE SNAP SEND ERASE RUN LOG PUTMSG SNDIMG` ([`PDP11_IO.md`](PDP11_IO.md) §6) |
 | Helpers | `MUL16 DIV16 ABS DIRTO PLOT` (`PUT16` / `GET16` go: a word `MOV` does it) |
+
+As built in slice 4 (`src/core/machine/rom.ts`, about 1.1 KB; the routines' addresses are
+predefined, reserved symbols, so a program writes `JSR PC, STEP`):
+
+| Routine | Arguments | Result in `R0` |
+| :--- | :--- | :--- |
+| `STEP` | `R0` direction, `R1` tiles | drive error (`OK`, `E.BLK`, …) |
+| `SCAN` | `R0` direction | radar error; then `RADHIT`, `RADDST` |
+| `ACT` | `R0` argument (direction or cargo slot), `R1` hardpoint `F.T0`…`F.T3` | tool error |
+| `USE` | `R0` cargo slot, `R1` system `F.HULL` / `F.SOL` / `F.ANT` | repair error |
+| `SNAP` | `R0` direction, `R1` mode `F.M1`…`F.M5` | camera error |
+| `ERASE` | – | image error |
+| `SLEEP` | `R0` ticks (≤ 32767) | `OK` |
+| `RUN` | `R0` slice ticks, 0 = no limit (firmware only) | `PRGST` when the program came back |
+| `LOG` | `R0` tag, `R1` value | `OK` / `E.FULL`: one `T.LOG` message (tag, value low byte first) on `TX`, all or nothing |
+| `PUTMSG` | `R0` type, `R1` body address, `R2` length (kept) | `OK` / `E.FULL` / `E.INV`, all or nothing on `TX` |
+| `SEND` | as `PUTMSG` | `OK` / `E.INV`: the same message into the **recorder**; waits for room |
+| `SNDIMG` | `R0` photo type 1–5, 0 = the last photo's (`IMGTYP`) | `OK` / `E.INV`: the photo in image memory as `T.IMG` messages into the recorder; waits for room |
+| `MUL16` | `R0` × `R1` | low 16 bits; about 70 cycles for × 100. |
+| `DIV16` | `R0` / `R1` | quotient, `R1` remainder, `C` = 1 on ÷ 0; about 130 cycles |
+| `ABS` | `R0` | \|`R0`\| |
+| `DIRTO` | `R0` dx (east +), `R1` dy (north +) | direction along the larger, −1 (`N` set) if both are 0 |
+| `PLOT` | `R0` x, `R1` y (0–63), `R2` grey 0–3 (kept) | `OK` / `E.INV`: one pixel of a 64×64 2-bpp photo |
+
+**Safe mode** as built: the host counts fault and watchdog reboots (boot reasons 2, 5, 7) of
+the last 500 ticks in `BOOTCT`; the boot ROM sets the latched `SAFE` bit of `BOOTCS` when
+there are 3, and while it is set it starts `SAFEFW` in the ROM instead of the firmware: lamp 1
+red, a `T.TEXT` "SAFE MODE", dish on the orbiter, array on the sun (stowed for a squall), a
+battery `LOG 1` every 50 ticks, never the program. A firmware upload clears `SAFE` and the
+count ([`PDP11_IO.md`](PDP11_IO.md) §3.7).
 
 **Calling convention:** `JSR PC, NAME`. Arguments in **`R0`, `R1`** (a third in `R2`,
 which is kept); the result in **`R0`**; `R0` and `R1` are scratch, every other register
@@ -717,6 +748,91 @@ Decisions taken while building it (owner may veto):
    fault is a CPU `FAULT` with today's watchdog reboot. Comms dumps of the new CPU come with
    slice 5 (the commands answer "not yet" until then).
 
+### 14.5 Slice 4 as built: ROM, default firmware, lessons (owner may veto)
+
+Files: `src/core/machine/rom.ts` (the ROM, §10), `names.ts` (system names; `symbols.ts` adds
+the ROM's entry points and the tiles), `src/core/programs-pdp11.ts` (default firmware, four
+more firmware templates, the 13 program lessons and the 6 image lessons; the Rover-ASM ones
+stay in `programs.ts` until slice 6). Tests: `tests/pdp-rom.test.ts` (every routine, photos,
+safe mode, saves mid-photo) and `tests/pdp-programs.test.ts` (each template assembles, fits
+and runs to its expected result; the measurement below).
+
+Decisions taken while building it:
+
+1. **Argument order:** "what or where" in `R0`, the function code in `R1` (`ACT dir, F.T0`;
+   `USE slot, F.HULL`; `SNAP dir, F.M1`), so every driver with a function reads the same.
+   M14's `ACT tool arg` had them the other way round.
+2. **`SEND` is `PUTMSG` into the recorder** (store and forward, waits for room); `SNDIMG`
+   is the photo-specific one.
+3. **Photos as messages:** `SNDIMG` writes `T.IMG` messages of 128 pixel bytes (body: type,
+   chunk number, chunks, bytes; 135 B each with the frame); a 64×64 grey photo is 8 of them,
+   1080 B. Ground puts them back together in order; a missing chunk or a reboot drops the
+   photo. The recorder pairs a photo's first chunk with the camera's capture of that type
+   when it stores it, as today's send did, and ground calls it *raw* if the bytes are the
+   capture's, *edited* if not, *drawn* without a capture.
+4. **The photo format and the gallery:** the PDP-11 engine already takes photos at double
+   resolution (`Unit.photoFormats`, products marked `x2`); the Gallery and Comms show them
+   from slice 5.
+5. **The default firmware includes fault protection** (`PR.ALR!PR.BAT`, stop the wheels,
+   `L.PRE`): the separate *Fault protection* template merges into it. Its line-clock handler
+   does the housekeeping every 8 ticks, also in the middle of a program (dish, array, squall
+   stow, link lamp), so the main loop only charges and runs the program. Log tags keep their
+   numbers under `L.` names: `L.BAT` 1, `L.PRE` 12, `L.RES` 13, `L.END` 14. New firmware
+   lesson *Minimal (the gate only)*. 326 B (the estimate was 300).
+6. **Lessons** keep their names, scenarios and results; the PDP-11 versions teach what the
+   machine does differently: `INC` on memory (*Count*), autoincrement over a table (*Route*),
+   index-deferred `@HEALTH(R2)` instead of a jump per system (*Field repair*), a routine that
+   falls into another (*Spiral*), `COM` over words (*Negative*), a word `MOV` from register to
+   memory (*Stamp*). *Weather station* reads only `TICKL` (it wraps after 27 sols; its *Try*
+   says so).
+
+**Sizes** (program region 1 KB less its return word; firmware region 896 B):
+
+| Code | Bytes | | Code | Bytes |
+| :--- | ---: | :--- | :--- | ---: |
+| Default firmware | 326 | | Field repair | 70 |
+| First steps | 32 | | Fetch supply crate | 70 |
+| Drive yourself | 54 | | Spiral | 68 |
+| Count with a variable | 62 | | Seismic survey | 96 |
+| Route | 55 | | Weather station | 84 |
+| Drive and scan at once | 78 | | Image: Line | 32 |
+| Explorer | 86 | | Image: Test pattern | 46 |
+| Photographer | 44 | | Image: Negative | 42 |
+| Prospector | 116 | | Image: Stamp / Plot | 42 / 52 |
+| | | | Image: Memory map | 94 |
+
+The largest lesson uses 11 % of the program region.
+
+**Cycle budget measured** (Mk-I 48 cycles a tick, 2000 ticks with the default firmware):
+
+| What | Cycles |
+| :--- | :--- |
+| Default firmware, idle (clock handler, `SLEEP` loop, heartbeat) | 24 a tick on average, 51 at peak |
+| Clock handler, most ticks / every 8th tick | 12 / about 35 |
+| A `WAIT` loop in a driver | 5–6 a tick |
+| Driving or scanning lessons (Explorer, Prospector) | 34 a tick on average |
+| `MUL16` (× 77) / `DIV16` / `DIRTO` / `PLOT` / `LOG` / `PUTMSG` (10 B) | 71 / 128 / 31 / 71 / 41 / 92 |
+| `SNDIMG`, one 64×64 photo | about 5450 (≈ 680 a chunk) |
+
+Time the CPU-heavy image lessons take from the start of the program to its end, at three
+budgets (ticks):
+
+| Lesson | 48 | 64 | 96 |
+| :--- | ---: | ---: | ---: |
+| Image: Line | 172 | 113 | 70 |
+| Image: Stamp | 178 | 121 | 77 |
+| Image: Negative | 243 | 164 | 103 |
+| Image: Plot | 315 | 212 | 131 |
+| Image: Test pattern | 572 | 391 | 236 |
+| Photographer (4 photos; the link sets the pace) | 1685 | 1676 | 1670 |
+
+At 48 the firmware's own work takes half the budget, so a computing program gets about 24
+cycles a tick, and a photo-sized loop (1 KB, four times today's) takes several hundred ticks.
+**Proposal (not built; `balance.ts` unchanged): 64 cycles a tick for Mk-I**
+(`PDP11.cyclesPerRoverCycle` 8), overclock ×1.5 / ×2 = 96 / 128: the firmware's share drops
+to about a third and programs get about 40 cycles a tick, which brings the image lessons
+close to today's few hundred ticks. Driving lessons are paced by the wheels at any budget.
+
 ## 15. Plan (slices)
 
 1. **Design** (this document and [`PDP11_IO.md`](PDP11_IO.md)): ✅ reviewed; decisions in §0.
@@ -729,6 +845,8 @@ Decisions taken while building it (owner may veto):
    the engine runs it behind a switch. Determinism and save round-trip tests. ✅ built
    (§14.4); the recorder registers (`RECBUF`) and `SNDIMG` moved to slice 4.
 4. **ROM, default firmware, lessons**: every template rewritten; measure the cycle budget.
+   ✅ built (§14.5); recorder registers and `SNDIMG`, safe mode; budget proposal 64 waits
+   for the owner.
 5. **UI**: editor language, listing, debugger (octal, `NZVC`, `PSW`), Comms dumps,
    Reference (Instructions, Modes, Flags, I/O page, ROM). The simulator's panels are the
    starting point.
@@ -742,10 +860,12 @@ Answered on 2026-11-15 (§0, decisions 12–18): cycles, program base, memory on
 program interrupt handlers, `TRAP n`, names, photo byte order. Then (owner, same day):
 
 1. **Budget:** no number yet; **start with a value from the slice 4 measurement and tune
-   it in playtests** (expected 32–64). It lives in `balance.ts`.
+   it in playtests** (expected 32–64). It lives in `balance.ts`. *Measured in slice 4
+   (§14.5): proposal 64 for Mk-I (today 48); for the owner to decide.*
 2. **Core sizes:** **start with this draft** (2 KB, boards to 4 / 8 KB) and tune prices
    and steps later.
 3. **Six-character names for the I/O page:** **DEC style approved**, a family prefix and
    a dot where it helps (`E.BLK`, `SOLHLT`); the rename table comes with slice 3.
 
-No open questions block slice 4. The slice 3 decisions (§14.4) are open to veto.
+No open questions block slice 5. The slice 3 and 4 decisions (§14.4, §14.5) are open to veto;
+the budget (64?) and the link / recorder sizes of §6.3 wait for the owner.

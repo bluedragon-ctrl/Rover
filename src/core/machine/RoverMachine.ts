@@ -14,9 +14,10 @@
 import { BUS_ERROR, Cpu, PSW_ADDRESS, assemble, type AssembleResult, type Bus, type CpuState as Pdp11State, type TrapInfo } from '../../pdp11';
 import { PDP11 } from '../balance';
 import { TX_BOOT } from '../downlink';
+import { freshParser, parseStream, type ParserState } from '../messages';
 import type { PortContext } from '../ports';
 import { ProgState } from '../types';
-import type { Unit } from '../Unit';
+import type { Capture, Unit } from '../Unit';
 import type { WorldRegistry } from '../WorldRegistry';
 import {
   CARGO_BASE,
@@ -105,6 +106,15 @@ export interface MachineSave {
   restartAfterExit: boolean;
   firmware: string;
   program: string;
+  /** v20 (slice 4): the recorder's message stream and its view of it, boot status for safe mode. */
+  rover?: {
+    rec: number[];
+    recParser: ParserState;
+    imgCaps: Array<Capture | null>;
+    bootReason: number;
+    faultBoots: number[];
+    safeMode: boolean;
+  };
 }
 
 /** The program's PSW: current and previous mode user (11). */
@@ -149,6 +159,12 @@ export class RoverMachine implements Bus {
   /** The last firmware fault, for the reboot message. */
   private fwFault = '';
   private readonly host: IoHost;
+  /**
+   * Cycle meter for measuring the budget (slice 4): cycles executed this tick and in all, and
+   * ticks that used the whole budget without sleeping. Metrics only: not saved, never read
+   * by the simulation.
+   */
+  readonly meter = { tick: 0, total: 0, ticks: 0, starved: 0, peak: 0 };
 
   constructor(
     readonly u: Unit,
@@ -282,6 +298,8 @@ export class RoverMachine implements Bus {
     this.io = freshIo();
     this.u.driveN = 0;
     this.u.link.tx.push(TX_BOOT);
+    this.u.link.rec.push(TX_BOOT); // a message being written into the recorder stays incomplete
+    parseStream(this.u.recParser, [TX_BOOT], this.u.id, 0);
     this.u.link.txLost = 0;
     this.io.tx.ready = this.u.link.txFree(PDP11.txFifoBytes) > 0;
     this.cpu.reset();
@@ -480,6 +498,9 @@ export class RoverMachine implements Bus {
    * request their interrupts, a TX FIFO with room again requests its own.
    */
   tickStart(): void {
+    const m = this.meter;
+    m.ticks++;
+    m.tick = 0;
     const io = this.io;
     io.lks |= CSR.DONE;
     if (io.lks & CSR.IE) this.cpu.interrupt(CLOCK_VECTOR, CLOCK_LEVEL);
@@ -511,6 +532,10 @@ export class RoverMachine implements Bus {
       const r = cpu.step();
       n += r.instructions;
       u.cyclesLeft -= r.cycles;
+      this.meter.total += r.cycles;
+      this.meter.tick += r.cycles;
+      if (this.meter.tick > this.meter.peak) this.meter.peak = this.meter.tick;
+      if (u.cyclesLeft <= 0 && !cpu.waiting) this.meter.starved++;
       if (this.rebootPending !== null) {
         const reason = this.rebootPending;
         this.rebootPending = null;
@@ -582,6 +607,14 @@ export class RoverMachine implements Bus {
       restartAfterExit: this.restartAfterExit,
       firmware: this.firmware?.source ?? '',
       program: this.program?.source ?? '',
+      rover: {
+        rec: [...this.u.link.rec],
+        recParser: structuredClone(this.u.recParser),
+        imgCaps: this.u.imgCaps.map((c) => (c ? structuredClone(c) : null)),
+        bootReason: this.u.bootReason,
+        faultBoots: [...this.u.faultBoots],
+        safeMode: this.u.safeMode,
+      },
     };
   }
 
@@ -597,5 +630,12 @@ export class RoverMachine implements Bus {
     this.io = JSON.parse(JSON.stringify(s.io)) as IoState;
     this.exitPending = s.exitPending ? { ...s.exitPending } : null;
     this.restartAfterExit = s.restartAfterExit;
+    const r = s.rover;
+    this.u.link.rec = [...(r?.rec ?? [])];
+    this.u.recParser = r ? structuredClone(r.recParser) : freshParser();
+    this.u.imgCaps = (r?.imgCaps ?? []).map((c) => (c ? structuredClone(c) : null));
+    this.u.bootReason = r?.bootReason ?? 0;
+    this.u.faultBoots = [...(r?.faultBoots ?? [])];
+    this.u.safeMode = r?.safeMode ?? false;
   }
 }

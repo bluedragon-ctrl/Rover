@@ -2,7 +2,7 @@ import { CHASSIS_MK1 } from './balance';
 import { CHUNK_AREA, WorldChunk } from './ChunkedWorld';
 import type { DirectorState } from './EventDirector';
 import type { ProductDesc, QueuedFrame, ReceivedFrame, ReceivedProduct, SysFrame } from './downlink';
-import { SimulationEngine, type SentRecord, type SupplyDrop } from './SimulationEngine';
+import { SimulationEngine, type PhotoAssembly, type SentRecord, type SupplyDrop } from './SimulationEngine';
 import { UPGRADE_BY_ID } from './upgrades';
 import { CpuState, ProgState, type Status } from './types';
 import type { RoverVM } from './vm/RoverVM';
@@ -13,7 +13,7 @@ import { migrateHardwareOps, migrateImageMemory } from './migrateSource';
 import type { MachineSave } from './machine/RoverMachine';
 import type { ParserState, ReceivedMessage } from './messages';
 
-export const SAVE_VERSION = 19;
+export const SAVE_VERSION = 20;
 
 interface UnitSave {
   id: number;
@@ -162,6 +162,9 @@ export interface SaveSnapshot {
   cpu?: 'pdp11';
   messages?: ReceivedMessage[];
   parsers?: Array<[unitId: number, state: ParserState]>;
+  /** v20 (M15 slice 4): the recorder's message parsers and photos being put together. */
+  recParsers?: Array<[unitId: number, state: ParserState]>;
+  photoAsm?: Array<[unitId: number, asm: PhotoAssembly]>;
 }
 
 function rle(a: Uint8Array): number[] {
@@ -228,6 +231,8 @@ export function serialize(e: SimulationEngine): SaveSnapshot {
           cpu: 'pdp11' as const,
           messages: e.messages.map((m) => ({ ...m, body: [...m.body] })),
           parsers: [...e.parsers.entries()].map(([id, p]): [number, ParserState] => [id, structuredClone(p)]),
+          recParsers: [...e.recParsers.entries()].map(([id, p]): [number, ParserState] => [id, structuredClone(p)]),
+          photoAsm: [...e.photoAsm.entries()].map(([id, a]): [number, PhotoAssembly] => [id, structuredClone(a)]),
         }
       : {}),
   };
@@ -480,6 +485,10 @@ export function migrate(raw: unknown): SaveSnapshot {
     }
     v = 19;
   }
+  if (v === 19) {
+    // v19 -> v20 (M15 slice 4): recorder messages, safe mode; all optional, empty by default.
+    v = 20;
+  }
   if (v !== SAVE_VERSION) throw new SaveError(`Unsupported save version ${s.version}.`);
   out.version = v;
   return out;
@@ -516,6 +525,8 @@ export function deserialize(raw: unknown): SimulationEngine {
   const e = new SimulationEngine({ seed: s.seed, cpu: s.cpu === 'pdp11' ? 'pdp11' : 'rover-asm' });
   e.messages = (s.messages ?? []).map((m) => ({ ...m, body: [...m.body] }));
   e.parsers = new Map((s.parsers ?? []).map(([id, p]) => [id, structuredClone(p)]));
+  e.recParsers = new Map((s.recParsers ?? []).map(([id, p]) => [id, structuredClone(p)]));
+  e.photoAsm = new Map((s.photoAsm ?? []).map(([id, a]) => [id, structuredClone(a)]));
   e.tick = s.tick;
   e.world.now = s.tick;
   e.credits = s.credits;

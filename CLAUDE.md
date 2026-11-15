@@ -55,6 +55,10 @@ npm run build      # typecheck + production bundle in dist/
   `iopage.ts`: new registers go there and become predefined symbols, six characters at
   most; bus, gate and interrupts `RoverMachine.ts`; boot ROM `rom.ts`). The engine uses it
   only with `new SimulationEngine({ cpu: 'pdp11' })` until slice 6.
+- M15 slice 4: the ROM's routines (`ROM_ROUTINES` in `src/core/machine/rom.ts`) become
+  predefined symbols; system names live in `names.ts`. Shipped PDP-11 code (default firmware,
+  lessons) is in `src/core/programs-pdp11.ts`, next to the Rover-ASM `programs.ts` until
+  slice 6; every template there must assemble and is run by `tests/pdp-programs.test.ts`.
 - Shapes are drawn only in `src/render/VectorFactory.ts` (keeps M8 visual work local).
 - New or changed visuals go into `preview.html` (`src/preview/`) first; the owner reviews
   screenshots before they replace what the game renders.
