@@ -159,6 +159,12 @@ export class RoverMachine implements Bus {
   /** The last firmware fault, for the reboot message. */
   private fwFault = '';
   private readonly host: IoHost;
+  /**
+   * Cycle meter for measuring the budget (slice 4): cycles executed this tick and in all, and
+   * ticks that used the whole budget without sleeping. Metrics only: not saved, never read
+   * by the simulation.
+   */
+  readonly meter = { tick: 0, total: 0, ticks: 0, starved: 0, peak: 0 };
 
   constructor(
     readonly u: Unit,
@@ -492,6 +498,9 @@ export class RoverMachine implements Bus {
    * request their interrupts, a TX FIFO with room again requests its own.
    */
   tickStart(): void {
+    const m = this.meter;
+    m.ticks++;
+    m.tick = 0;
     const io = this.io;
     io.lks |= CSR.DONE;
     if (io.lks & CSR.IE) this.cpu.interrupt(CLOCK_VECTOR, CLOCK_LEVEL);
@@ -523,6 +532,10 @@ export class RoverMachine implements Bus {
       const r = cpu.step();
       n += r.instructions;
       u.cyclesLeft -= r.cycles;
+      this.meter.total += r.cycles;
+      this.meter.tick += r.cycles;
+      if (this.meter.tick > this.meter.peak) this.meter.peak = this.meter.tick;
+      if (u.cyclesLeft <= 0 && !cpu.waiting) this.meter.starved++;
       if (this.rebootPending !== null) {
         const reason = this.rebootPending;
         this.rebootPending = null;
