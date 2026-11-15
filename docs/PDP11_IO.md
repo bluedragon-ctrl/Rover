@@ -1,6 +1,7 @@
 # M15 — PDP-11 core: I/O page, devices and interrupts (design draft)
 
-Status: **draft; CPU side approved** (2026-11-15). Names must shrink to six characters (§9, question 1). Not built yet (slice 3). Companion of
+Status: **draft; CPU side approved** (2026-11-15). Names shrink to six characters, DEC
+style (§9, question 1). Framed standard output to design (§3.5a). Not built yet (slice 3). Companion of
 [`PDP11_CPU.md`](PDP11_CPU.md) (instruction set, memory, call gate, traps, ROM).
 
 This document turns today's 61 ports (`src/core/ports.ts`, SPEC §5.6, M14 devices in
@@ -406,8 +407,10 @@ Reference *I/O page* tab is generated from it, as the Ports tab is today.
 1. **Names:** ~~DEC-style short names for device blocks and today's names for
    telemetry?~~ Decided 2026-11-15: **six characters at most everywhere**, no `_`
    ([`PDP11_CPU.md`](PDP11_CPU.md) §0, decision 17). Every long name in this document
-   (`SOLAR_HEALTH`, `ERR_BLOCKED`, `ALERT_ECLIPSE`, …) needs a short name before slice 3;
-   a scheme is still open (DEC used device prefixes and dots: `E.BLK`, `SOLHLT`).
+   (`SOLAR_HEALTH`, `ERR_BLOCKED`, `ALERT_ECLIPSE`, …) needs a short name before slice 3.
+   **Scheme approved (owner, 2026-11-15): DEC style, a family prefix and a dot where it
+   helps** (`E.BLK` for `ERR_BLOCKED`, `SOLHLT` for `SOLAR_HEALTH`); the full rename table
+   is written in slice 3.
 2. **`@TIMER`:** drop it and sleep on `TICKL` (this draft), or keep a per-context timer?
 3. **`DISPLAY`:** keep two hex digits (today's `@POST`), or three octal digits `000`–`377`
    to match the octal theme (a visual change: preview first)?
@@ -420,3 +423,32 @@ Reference *I/O page* tab is generated from it, as the Ports tab is today.
    program runs.
 7. **Function codes:** pre-shifted `F.` symbols (this draft) or plain numbers with the
    shift written out?
+8. **Standard output as framed messages** (owner note, 2026-11-15; decide in slice 3, see
+   §3.5a).
+
+### 3.5a Standard output: framed messages (owner note, to design in slice 3)
+
+Owner, 2026-11-15: "even the rover will need some standard output, which will probably be
+sent as a message. Maybe all outputs go out to be sent directly, with start / end codes, to
+be able to distinguish between error codes, scientific data and so on."
+
+Today the downlink carries several separate kinds of traffic (log frames with a tag and
+a value, boot frames, dumps, science products), each with its own format. The idea is
+**one output stream** the firmware and program write to, like the console terminal
+(`XCSR` / `XBUF`) in the simulator, where every message is **framed**: a start code, a
+type, the body, an end code. Ground (the Comms tab) splits the stream by type. A sketch to
+start the slice 3 discussion, not a decision:
+
+```
+SOH  type  length  body…  ETX        ; 001, a type byte, a byte count, data, 003
+     type: T.TEXT (characters, like a printf), T.ERR (an error code + where),
+           T.LOG (today's tag + value), T.SCI (a science product), T.DUMP …
+```
+
+* Pros: one device and one ROM routine (`PUTMSG`) instead of several; `.ASCIZ` text
+  output becomes possible (a `PRINT` lesson, as in the simulator's Hello example);
+  framing and bytes that get lost in a lossy downlink become a visible, teachable topic.
+* To decide: whether the CPU writes bytes and the device frames them (simple), or the
+  program writes the frame bytes itself (more to learn, more to get wrong); what happens
+  to a half-written frame at a reboot; whether it replaces the log registers of §3.5 or
+  sits beside them; cost per byte (it shares the downlink budget).

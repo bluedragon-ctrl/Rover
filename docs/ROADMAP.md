@@ -54,8 +54,11 @@ bus access confirmed; `PRGBAS` fixed per chassis; images reloaded on a hard rebo
 program interrupt handlers firmware-only in v1; `TRAP n` is a system call served by the
 firmware; **DEC six-character names** (longer is an error; the I/O page names must be
 renamed, scheme open); photos become little-endian; and a **standalone simulator page**
-built together with the library. Still open: cycle budget, core sizes, the short-name
-scheme.
+built together with the library. Then: short names DEC style (`E.BLK`, `SOLHLT`)
+approved; cycle budget and core sizes start from the draft / slice 4 measurement and are
+tuned later. Owner note for slice 3: **standard output as framed messages** (start / end
+codes, a type per message: text, error codes, science data…), sketched in
+[`PDP11_IO.md`](PDP11_IO.md) §3.5a.
 
 - [x] Slice 1: owner review of both drafts (open questions at the end of each).
 - [x] Slice 2 (in review): CPU, assembler, disassembler as the standalone library `src/pdp11/`
@@ -71,7 +74,8 @@ scheme.
       randomness / clock). Simulator page `simulator.html` (`src/simulator/`): editor
       with errors and breakpoints, registers / NZVC / PSW, memory with PC / SP, console
       with keyboard input, listing; seven example programs, each run by a test.
-- [ ] Slice 3: Rover's side: I/O page over the existing device logic, interrupts, the
+- [ ] Slice 3 (next): decide framed standard output (`PDP11_IO.md` §3.5a) and the
+      short-name table first; then Rover's side: I/O page over the existing device logic, interrupts, the
       gate (swapping two saved CPU states); engine behind a switch.
 - [ ] Slice 4: ROM, default firmware, lessons; cycle budget measured.
 - [ ] Slice 5: UI (editor, listing, debugger, Comms dumps, Reference).
@@ -858,3 +862,4 @@ window with a fixed dish?
 | 2026-11-15 | `claude/kind-meitner-6u9fuj` | Design discussion with the owner: Rover-ASM against RISC-V, MIPS, x86 and retro CPUs; decision to rewrite the CPU layer as a PDP-11-style machine (M15). Drafts `docs/PDP11_CPU.md` (ISA, MACRO-11 subset, octal, cycles per bus access, memory map, gate, traps, interrupts, `MUL16` / `DIV16`, EIS) and `docs/PDP11_IO.md` (DEC-style device registers, I/O page map, 16-bit fixes, device interrupts, port audit); then 64 KB addressable with a small core at first (Mk-I 2 KB, memory boards, boot ROM probes the size). M14 frozen. Documentation only. |
 | 2026-11-15 | `claude/kind-meitner-6u9fuj` (2) | M15 design: owner decision 11, the CPU and assembler as a standalone, reusable library `src/pdp11/` (`PDP11_CPU.md` §14: what goes where, the gate outside the CPU, interface sketch, boundary test); plan slices 2–3 updated. Documentation only. |
 | 2026-11-15 | `ccr-3e1733dc-lef7dz` | M15 owner answers (cycles per bus access, fixed `PRGBAS`, reload on reboot, firmware-only handlers, `TRAP` as system call, DEC six-character names, little-endian photos, simulator page); slice 2: standalone library `src/pdp11/` (CPU, MACRO-11 assembler, disassembler, `SimpleMachine`, CodeMirror mode, README) with 78 tests incl. the boundary test, and the standalone simulator page `simulator.html` with seven tested examples. Game unchanged. |
+| 2026-11-15 | `ccr-3e1733dc-lef7dz` (2) | M15 owner answers: DEC-style short names approved, cycle budget and core sizes start from the draft and get tuned later; owner idea of framed standard output (one stream, start / end codes, message types) recorded for slice 3 (`PDP11_IO.md` §3.5a). Documentation only. |

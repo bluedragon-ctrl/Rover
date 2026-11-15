@@ -670,11 +670,14 @@ program: "finished").
 ## 16. Open questions
 
 Answered on 2026-11-15 (§0, decisions 12–18): cycles, program base, memory on reboot,
-program interrupt handlers, `TRAP n`, names, photo byte order. Still open:
+program interrupt handlers, `TRAP n`, names, photo byte order. Then (owner, same day):
 
-1. **Budget:** cycles per tick for Mk-I, measured in slice 4 (expected 32–64).
-2. **Core sizes:** 2 KB to start, boards to 4 / 8 KB (this draft), their prices, and whether
-   a later chassis goes further (up to 32 KB fits the map).
-3. **Six-character names for the I/O page** ([`PDP11_IO.md`](PDP11_IO.md) §9): a naming
-   scheme is needed before slice 3, e.g. DEC's habit of a device prefix and a dot
-   (`E.BLK` for `ERR_BLOCKED`, `SOLHLT` for `SOLAR_HEALTH`).
+1. **Budget:** no number yet; **start with a value from the slice 4 measurement and tune
+   it in playtests** (expected 32–64). It lives in `balance.ts`.
+2. **Core sizes:** **start with this draft** (2 KB, boards to 4 / 8 KB) and tune prices
+   and steps later.
+3. **Six-character names for the I/O page:** **DEC style approved**, a family prefix and
+   a dot where it helps (`E.BLK`, `SOLHLT`); the rename table comes with slice 3.
+
+No open questions block slice 3. Slice 3 also takes up the owner's idea of **framed
+standard output** ([`PDP11_IO.md`](PDP11_IO.md) §3.5a).
