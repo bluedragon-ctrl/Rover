@@ -74,10 +74,9 @@ codes, a type per message: text, error codes, science data…), sketched in
       randomness / clock). Simulator page `simulator.html` (`src/simulator/`): editor
       with errors and breakpoints, registers / NZVC / PSW, memory with PC / SP, console
       with keyboard input, listing; seven example programs, each run by a test.
-- [ ] Slice 3 (next): framed standard output (`PDP11_IO.md` §3.5a: framing by the
-      program and incomplete messages decided; channels `TX` + recorder, types, 64 B
-      FIFO, costs proposed, awaiting owner review) and the short-name table first;
-      then Rover's side: I/O page over the existing device logic, interrupts, the
+- [ ] Slice 3 (next): ✅ framed standard output approved (`PDP11_IO.md` §3.5a, `TX`
+      device and recorder messages in §3.5 replace the log registers); ✅ six-character
+      name table (`PDP11_IO.md` §10, applied to both design documents). Then Rover's side: I/O page over the existing device logic, interrupts, the
       gate (swapping two saved CPU states); engine behind a switch.
 - [ ] Slice 4: ROM, default firmware, lessons; cycle budget measured.
 - [ ] Slice 5: UI (editor, listing, debugger, Comms dumps, Reference).
@@ -866,3 +865,4 @@ window with a fixed dish?
 | 2026-11-15 | `ccr-3e1733dc-lef7dz` | M15 owner answers (cycles per bus access, fixed `PRGBAS`, reload on reboot, firmware-only handlers, `TRAP` as system call, DEC six-character names, little-endian photos, simulator page); slice 2: standalone library `src/pdp11/` (CPU, MACRO-11 assembler, disassembler, `SimpleMachine`, CodeMirror mode, README) with 78 tests incl. the boundary test, and the standalone simulator page `simulator.html` with seven tested examples. Game unchanged. |
 | 2026-11-15 | `ccr-3e1733dc-lef7dz` (2) | M15 owner answers: DEC-style short names approved, cycle budget and core sizes start from the draft and get tuned later; owner idea of framed standard output (one stream, start / end codes, message types) recorded for slice 3 (`PDP11_IO.md` §3.5a). Documentation only. |
 | 2026-11-15 | `ccr-3e1733dc-lef7dz` (3) | Framed standard output: owner decisions (the program frames, a reboot leaves a message incomplete); proposal for the rest after the CCSDS practice (packets with a type, real-time vs store-and-forward channels): `TX` device replacing the log registers, messages into the recorder (`SNDIMG` for photos), `SOH type len body ETX`, types, 64 B FIFO, costs (`PDP11_IO.md` §3.5a). Documentation only. |
+| 2026-11-15 | `ccr-3e1733dc-lef7dz` (4) | Owner approved the output proposal (channels, format, types, 64 B FIFO, costs); `PDP11_IO.md` §3.5 rewritten as the `TX` device + recorder registers, §3.5a moved beside it; six-character name table (`PDP11_IO.md` §10: `E.` / `F.` / `T.` / `A.` / `P.` / `PR.` families, telemetry, tiles) applied to both design documents. Documentation only. |

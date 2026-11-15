@@ -118,7 +118,7 @@ label:  OPCODE  src, dst        ; comment
 | `. = . + 20` | move the location counter | – |
 
 Device register names (`BAT`, `DRVCS`, …), bit names (`GO`, `DONE`, …), status codes
-(`OK`, `ERR_BLOCKED`, …), directions and tile names are **predefined symbols**, like DEC's
+(`OK`, `E.BLK`, …), directions and tile names are **predefined symbols**, like DEC's
 system macro library. Reference lists them; [`PDP11_IO.md`](PDP11_IO.md) defines them.
 
 **Expressions** are evaluated strictly **left to right**, with `< >` for grouping, as in
@@ -338,18 +338,18 @@ RUN:    MOV  R0, @#SLICE
         RTS  PC                 ; ...and the firmware continues here when it comes back
 ```
 
-* If the program is `PROG_READY`, the CPU switches to the program's registers in the same
+* If the program is `P.RDY`, the CPU switches to the program's registers in the same
   tick, with the cycles left. It continues where it was, or from its entry point after a
   (re)start. Otherwise nothing happens and `PRGCS` shows the error.
 * **The program comes back** (the firmware continues after its `MOV #GO, @#PRGCS`) when:
 
   | Why (`PRGCS` reason field) | Program state | Notes |
   | :--- | :--- | :--- |
-  | `HALT`, or `RTS PC` from its top level | `PROG_DONE` | `PRGRES` = the program's `R0` ("exit code") |
-  | `SLICE` ran out | `PROG_READY` | time up |
-  | a `PREEMPT` condition (M13) | `PROG_READY` | `PREEMPTED` = the bits |
-  | a fault (§7.3) | `PROG_FAULT` | `PRGER` = which fault, `PRGPC` = where |
-  | `BPT` | `PROG_HALTED` | breakpoint, *Continue* resumes after it |
+  | `HALT`, or `RTS PC` from its top level | `P.DONE` | `PRGRES` = the program's `R0` ("exit code") |
+  | `SLICE` ran out | `P.RDY` | time up |
+  | a `PREMPT` condition (M13) | `P.RDY` | `PRMPTD` = the bits |
+  | a fault (§7.3) | `P.FLT` | `PRGER` = which fault, `PRGPC` = where |
+  | `BPT` | `P.HLT` | breakpoint, *Continue* resumes after it |
   | (`TRAP n` does not exit: it is a system call, served by the firmware's handler, §7.3) | | |
 
 * **`HALT` ends the program.** On a real PDP-11, `HALT` in user mode is not allowed and
@@ -366,11 +366,11 @@ Real PDP-11 trap vectors, used by both contexts:
 
 | Vector | Cause | In the firmware | In the program |
 | :--- | :--- | :--- | :--- |
-| `004` | bus error: odd address, no memory there, **protection** (write outside its region, a *firmware-only* register), **stack overflow** | vectored; ROM default: reboot (boot reason: fault) | gate exit, `PROG_FAULT` |
-| `010` | illegal or reserved instruction (also `MUL` / `DIV` without EIS) | as above | `PROG_FAULT` |
-| `014` | `BPT` (breakpoint), and the trace bit `T` (single step) | ROM default: halt and dump (today's `BRK`) | `PROG_HALTED` |
-| `020` | `IOT` | reserved | `PROG_FAULT` |
-| `030` | `EMT` | reserved for ROM services (later) | `PROG_FAULT` |
+| `004` | bus error: odd address, no memory there, **protection** (write outside its region, a *firmware-only* register), **stack overflow** | vectored; ROM default: reboot (boot reason: fault) | gate exit, `P.FLT` |
+| `010` | illegal or reserved instruction (also `MUL` / `DIV` without EIS) | as above | `P.FLT` |
+| `014` | `BPT` (breakpoint), and the trace bit `T` (single step) | ROM default: halt and dump (today's `BRK`) | `P.HLT` |
+| `020` | `IOT` | reserved | `P.FLT` |
+| `030` | `EMT` | reserved for ROM services (later) | `P.FLT` |
 | `034` | `TRAP n` | system-call handler | **system call** (decision 16): like an interrupt, the CPU switches to the firmware's registers and runs its vector-`034` handler, which finds `n` in the low byte of the `TRAP` word before the return address, serves it, and `RTI`s back into the program; the ROM default is a program fault |
 
 * **Stack overflow:** each context has a stack limit: the end of its own code and data.
@@ -589,7 +589,7 @@ page, a command-line assembler). Rover is its first user, not its owner.
 | :--- | :--- |
 | CPU: registers, `PSW`, the eight addressing modes, the instruction set (§9.3), flags, traps, interrupts, `WAIT` / `HALT` / `RESET` | the memory map (§6): core size, image memory, ROM, write protection |
 | Options: EIS on / off, cycle model (per bus access as in §4, or flat), long names and `_` | the I/O page and every device ([`PDP11_IO.md`](PDP11_IO.md)) |
-| Assembler: MACRO-11 subset (§3) → words, listing, symbol table, source line map, errors | predefined symbols (`BAT`, `DRVCS`, `ERR_BUSY`, directions, tiles) |
+| Assembler: MACRO-11 subset (§3) → words, listing, symbol table, source line map, errors | predefined symbols (`BAT`, `DRVCS`, `E.BUSY`, directions, tiles) |
 | Disassembler and the octal listing format (§3.5) | ROM source: boot, safe mode, handlers, drivers, helpers (§10) |
 | Saving and restoring CPU state (plain JSON) | the gate and the two register sets (§7), when interrupts arrive (tick starts) |
 | Optional, separate entry point: CodeMirror syntax mode | lessons, Reference, debugger, Comms, saves |
