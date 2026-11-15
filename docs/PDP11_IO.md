@@ -1,0 +1,419 @@
+# M15 — PDP-11 core: I/O page, devices and interrupts (design draft)
+
+Status: **draft for owner review** (2026-11-15). Documentation only. Companion of
+[`PDP11_CPU.md`](PDP11_CPU.md) (instruction set, memory, call gate, traps, ROM).
+
+This document turns today's 61 ports (`src/core/ports.ts`, SPEC §5.6, M14 devices in
+[`ASSEMBLER_CORE.md`](ASSEMBLER_CORE.md) §4) into **device registers** in the PDP-11's
+I/O page, using DEC's device conventions. **The device logic stays**:
+`SimulationEngine.device()`, `Unit.deviceLeft()`, timings, energy, interlocks, error
+reasons and the world. Only the face the program sees changes.
+
+Owner decisions (2026-11-15): **interrupts** (line clock every tick, device interrupts),
+not polling only; **two documents**.
+
+## 1. Principle
+
+> The CPU has no I/O instructions. A device is a few words of memory at a fixed address:
+> a **control/status register** (CSR) to start it and see how it is doing, and **data
+> registers** for its parameters and answers. Every DEC device worked this way.
+
+Today's Rover-ASM already calls this memory-mapped I/O, but gives ports names instead
+of addresses and shares one `@STATUS` among all devices. Here every register has an
+address (`MOV @#BAT, R0`), and every device reports for itself.
+
+## 2. General rules
+
+* **Word registers at even addresses.** Byte access (`MOVB`, `TSTB`, `BISB`) reaches the
+  low byte (even address) or the high byte (odd address), as on DEC hardware.
+* **Access** per register: read-only (RO), read/write (RW), write-only (WO, reads 0).
+  Writes to read-only registers or bits are ignored.
+* **Firmware only** (FW): a write from the program is a **protection fault** (trap 4 →
+  `PROG_FAULT`, [`PDP11_CPU.md`](PDP11_CPU.md) §7.3). The program may read them.
+* **No register at an address in `170000`–`177777`** → bus error (trap 4).
+* **16-bit values.** Unsigned unless marked *signed* (two's complement, −32768…32767).
+  Parameter writes are clamped to their range as today; angle registers wrap modulo 360.
+  §4 lists the values that had to change to fit.
+* **Timing:** sensor values are sampled at the start of each tick and stay put during it
+  (deterministic). Registers the CPU writes change at once (a refused start shows in
+  the CSR in the same instruction).
+* **Reboot state:** every CSR idle (`DONE` = 1, `ERR` = 0, `IE` = 0), parameter registers
+  0 unless listed. The actuators keep their physical state as today (array, dish, lights).
+
+## 3. The register map
+
+### 3.1 The device CSR
+
+Every device with work to do (drive, radar, tools, repair, camera, image) has the same
+CSR layout, after DEC's:
+
+| Bit | Name | Access | Meaning |
+| :--- | :--- | :--- | :--- |
+| 15 | `ERR` | RO | the last start was refused, or the last run ended with an error: the reason is in the device's `xxER` register |
+| 14–8 | – | RO | 0 |
+| 7 | `DONE` | RO | 1 = idle (finished, or never started); 0 = working |
+| 6 | `IE` | RW (FW) | interrupt when `DONE` becomes 1 (§5). Program writes leave it unchanged |
+| 5–4 | – | RO | 0 |
+| 3–1 | `FN` | RW | function: which tool, which repair, which camera mode, send or erase |
+| 0 | `GO` | WO | write 1: start with the current parameters |
+
+**Why bits 7 and 15.** Bit 7 is the sign bit of the low byte and bit 15 the sign bit of
+the word, so the flags test them without a mask:
+
+```
+        TSTB @#DRVCS            ; N = DONE
+        BPL  BUSY               ; still working
+        TST  @#DRVCS            ; N = ERR
+        BMI  FAILED             ; the reason is in @#DRVER
+```
+
+**One path for every outcome:**
+
+1. Write the parameter registers (they are latched: they keep their value).
+2. Write `GO` (with the function, if the device has one).
+   * **Accepted:** `DONE` and `ERR` clear; the device works.
+   * **Refused** (busy, array open, wall right ahead, low power, invalid): `DONE` stays 1,
+     `ERR` = 1, `xxER` = the reason, **in the same instruction**.
+3. Wait for `DONE`, then look at `ERR`.
+
+This replaces today's two `@STATUS` checks ("accepted?" after the start, "how did it
+end?" after `WAIT`) with one. No device can overwrite another's result, because there is
+no shared status any more.
+
+**Error registers (`xxER`)** hold today's status codes, unchanged: `OK` 0,
+`ERR_INVALID` 1, `ERR_FULL` 2, `ERR_LOW_POWER` 3, `ERR_BLOCKED` 4, `ERR_NO_TOOL` 5,
+`ERR_NO_SIGNAL` 6, `ERR_HAZARD` 7, `ERR_DEPLOYED` 8, `ERR_PREEMPTED` 9 ("stopped by a
+command"), `ERR_BUSY` 10. In octal source they are written by name (`ERR_BUSY` is `12`).
+
+**Predefined bits and functions:** `GO` = 1, `IE` = 100, `DONE` = 200, `ERR` = 100000.
+Function codes come **already shifted** into bits 3–1, so they combine with `!` (or):
+`MOV #F.TOOL2!GO, @#TOLCS`. A computed function needs a shift: `ASL R0` /
+`BIS #GO, R0`.
+
+**`MOV` versus `BIS` on a CSR:** `MOV` writes every bit; in the firmware that clears `IE`.
+`BIS #GO, @#DRVCS` sets `GO` and keeps the rest. The ROM drivers use `BIS` where they can.
+
+### 3.2 Telemetry (`176000`, read-only)
+
+Names unchanged from today, without the `@`; addresses in octal.
+
+| Address | Register | Notes |
+| :--- | :--- | :--- |
+| `176000` | `BAT` | 0–100 % |
+| `176002` | `HULL` | 0–100 |
+| `176004` | `SOLAR_HEALTH` | 0–100 |
+| `176006` | `ANTENNA_HEALTH` | 0–100 |
+| `176010` | `X` | signed (§4) |
+| `176012` | `Y` | signed |
+| `176014` | `TICKL` | ticks since world start, low word; **reading it freezes `TICKH`** (§4) |
+| `176016` | `TICKH` | high word, as frozen by the last `TICKL` read |
+| `176020` | `GROUND` | tile ID under the rover |
+| `176022` | `GROUND_HAZARD` | 0–2 |
+| `176024` | `TEMP` | °C, **signed** (nights go below zero: `BLT`, not `BLO`) |
+| `176026` | `HEATER` | 0 / 1 |
+| `176030` | `CARGO_FREE` | empty cargo slots |
+| `176032` | `SCIENCE_READY` | products waiting for the downlink |
+| `176034` | `REC_FREE` | free recorder bytes |
+| `176036` | `SENSOR_RANGE` | radar range in tiles |
+| `176040` | `ALERT` | `ALERT_NONE` / `ALERT_ECLIPSE` / `ALERT_SQUALL` |
+| `176042` | `ALERT_ETA` | ticks until it starts |
+| `176044` | `DROPS` | landed supply crates |
+| `176046` | `DROP_X` | signed |
+| `176050` | `DROP_Y` | signed |
+| `176052` | `SUN_AZIMUTH` | 0–359 |
+| `176054` | `SUN_ELEV` | degrees, **signed** (≤ 0 is night) |
+| `176056` | `SUN_LIGHT` | 0–100 |
+| `176060` | `SOLAR_DUST` | 0–100 % |
+| `176062` | `ORBIT_AZIMUTH` | 0–359 |
+| `176064` | `SIGNAL_STR` | 0–100 |
+
+### 3.3 Actuators and lights (`176200`)
+
+| Address | Register | Access | Notes |
+| :--- | :--- | :--- | :--- |
+| `176200` | `HEADING` | RW | write turns in place (5 energy, wraps mod 4) |
+| `176202` | `HEADLIGHT` | RW | 0 / 1 |
+| `176204` | `SOLAR_OPEN` | RW | 0 stow, 1 deploy |
+| `176206` | `SOLAR_ANGLE` | RW | write: target; read: current |
+| `176210` | `ANTENNA_ANGLE` | RW | write: target; read: current |
+| `176212` | `IND1` | RW | lamp, `OFF`…`AMBER` (0–4) |
+| `176214` | `IND2` | RW | |
+| `176216` | `IND3` | RW | |
+| `177570` | `DISPLAY` | RW | was `@POST`, at the PDP-11's real **console display register** address: the lights on the front panel |
+
+### 3.4 Devices (`176400`, eight words each)
+
+Each device starts at a multiple of `20` (octal): `+0` CSR, `+2` error register, then
+parameters and answers.
+
+| Device | Address | Registers (`+2`, `+4`, …) | `FN` (bits 3–1) | Was |
+| :--- | :--- | :--- | :--- | :--- |
+| **Drive** | `176400` `DRVCS` | `DRVER`, `DRVDIR` direction (RW), `DRVCNT` tiles (RW) | – | `@DRIVE`, `@DRIVE_N` |
+| **Radar** | `176420` `RADCS` | `RADER`, `RADDIR` (RW), `RADHIT` (RO), `RADDST` (RO) | – | `@RADAR`, `@RADAR_HIT`, `@RADAR_DIST` |
+| **Tools** | `176440` `TOLCS` | `TOLER`, `TOLARG` direction or slot (RW), `TOLLFT` ticks left (RO), `SEITYP` (RO), `SEIDST` (RO) | hardpoint `F.TOOL0`…`F.TOOL3` | `@TOOL`, `@TOOL_ARG`, `@SEISMIC_*` |
+| **Repair** | `176460` `REPCS` | `REPER`, `REPSLT` cargo slot (RW), `REPLFT` (RO) | system `F.HULL`, `F.SOLAR`, `F.ANT` | `@REPAIR`, `@REPAIR_SYS` |
+| **Camera** | `176500` `CAMCS` | `CAMER`, `CAMDIR` (RW), `CAMLFT` (RO) | mode `F.MODE1`…`F.MODE5` | `@CAM`, `@CAM_MODE` |
+| **Image** | `176520` `IMGCS` | `IMGER`, `IMGTYP` photo type, 0 = last mode (RW), `IMGLFT` (RO) | `F.SEND`, `F.ERASE` | `@SEND`, `@ERASE` |
+
+* **Drive count, DEC style:** `DRVCNT` counts **down** as tiles are driven (like a disk
+  controller's word count). Read: tiles left. Written while driving: changes the tiles
+  left; **0 stops at the end of the current tile** and the drive ends with
+  `ERR_PREEMPTED`. It reads 0 after a completed drive, so set it before every start
+  (`GO` with `DRVCNT` = 0 is `ERR_INVALID`). Today's "latched, 1 after a reboot" goes.
+* **Interlocks** unchanged: drive, tools, repair and camera share the chassis (one at a
+  time, the others refuse with `ERR_BUSY`); `F.SEND` / `F.ERASE` are refused while the
+  camera exposes; the radar runs alongside anything.
+* Image send and erase become **one device with two functions** (they never ran at once).
+
+### 3.5 Log (`176540`)
+
+The downlink log keeps its frames (tag 0–14, optional value) and its lossy FIFO.
+
+| Address | Register | Access | Notes |
+| :--- | :--- | :--- | :--- |
+| `176540` | `LOGCS` | RO / `IE` FW | bit 7 `READY`: the FIFO has room for a tag + value frame; bit 6 `IE`: interrupt when room comes back |
+| `176542` | `LOGVAL` | RW | value for the next frame (latched) |
+| `176544` | `LOGT` | WO | write a tag: queue a frame **without** a value |
+| `176546` | `LOGTV` | WO | write a tag: queue a frame **with** `LOGVAL` |
+| `176550` | `LOG_FREE` | RO | free FIFO bytes |
+| `176552` | `LOG_LOST` | RW | frames dropped since boot (saturates at 255; write to set) |
+
+`LOG` stops being an instruction (M14 kept it as one); `MOV R2, @#LOGVAL` /
+`MOV #T.POS, @#LOGTV` is the same frame, and the ROM routine `LOG` takes the tag in `R0`
+and the value in `R1`.
+
+### 3.6 Cargo (`176600`, bytes, read-only)
+
+`CARGO` = `176600`; one tile ID per slot, a byte each (8 slots reserved, 4 on Mk-I).
+Read with index mode:
+
+```
+        MOVB CARGO(R1), R0      ; item in slot R1 (MOVB sign-extends; tile IDs are < 200)
+```
+
+### 3.7 Program control and watchdog (`177000`, firmware writes)
+
+The gate and the M10 / M13 machinery ([`PDP11_CPU.md`](PDP11_CPU.md) §7).
+
+| Address | Register | Access | Notes |
+| :--- | :--- | :--- | :--- |
+| `177000` | `PRGCS` | FW | write `GO`: **the gate**, run the program. Read: bits 3–1 `WHY` the last call ended (0 none, 1 done, 2 time up, 3 preempted, 4 fault, 5 `BPT`, 6 `TRAP`); bit 15 `ERR`: the gate was refused (the program is not `PROG_READY`) |
+| `177002` | `PRGER` | RO | fault code (odd address, no memory, protection, stack overflow, illegal instruction) or the `TRAP` number |
+| `177004` | `PRGST` | FW | program state, M10 values (`PROG_NONE`…`PROG_HALTED`); write `PROG_NONE` to acknowledge, `PROG_READY` to restart |
+| `177006` | `PRGRES` | RO | the program's `R0` when it ended (was `@PROG_RESULT`) |
+| `177010` | `PRGPC` | RO | the program's `PC` when it last came back |
+| `177012` | `SLICE` | FW | ticks the next run may last, 0 = no limit; read in the program: ticks left |
+| `177014` | `PREEMPT` | FW | `PRE_ALERT` 1, `PRE_DAMAGE` 2, `PRE_LOW_BAT` 4 |
+| `177016` | `PREEMPTED` | RO | the bits that ended the last run |
+| `177020` | `BAT_ALARM` | FW | 0–100 % |
+| `177022` | `WDT` | FW | watchdog, M13 rules (write n > 0 to arm / kick; read: ticks left) |
+
+### 3.8 CPU and clock (real PDP-11 addresses)
+
+| Address | Register | Access | Notes |
+| :--- | :--- | :--- | :--- |
+| `177546` | `LKS` | FW | **line clock** (DEC KW11-L): bit 7 set at every tick (write 0 to clear), bit 6 `IE`; vector `100`. The boot ROM sets `IE` |
+| `177774` | `STKLIM` | FW | the firmware's stack limit |
+| `177776` | `PSW` | FW (read: anyone) | processor status: mode, priority, `T`, `N Z V C` |
+
+## 4. Making every value fit 16 bits
+
+| Value | Today | Now |
+| :--- | :--- | :--- |
+| `TICK` | grows without limit; one word wraps after 65536 ticks (about 27 sols) | two words, `TICKL` / `TICKH`. Reading `TICKL` freezes `TICKH`, so the pair always matches: the classic "read a two-word counter" lesson. Waits and timeouts use `TICKL` alone with wrap-safe arithmetic (§6) |
+| `@TIMER` (one per slot, up to 1,000,000) | a device | **gone.** `SLEEP` counts ticks on `TICKL` (§6); one call sleeps up to 32767 ticks, longer sleeps loop. A banked per-context timer was the alternative (open question 2) |
+| `X`, `Y`, `DROP_X`, `DROP_Y` | 32-bit, the world is unbounded | **signed 16-bit**, −32768…32767; beyond that they wrap. At 3–6 ticks per tile that is months of driving |
+| `TEMP`, `SUN_ELEV` | negative values | signed; the lesson is `BLT` (signed) versus `BLO` (unsigned) |
+| `DRVCNT`, `SLICE`, `WDT` | up to 30000 | fit as they are |
+| everything else | percentages, angles, IDs, 0 / 1 | fit as they are |
+
+## 5. Interrupts from devices
+
+CPU side (priority, entry, `RTI`, `WAIT`, the program's time): [`PDP11_CPU.md`](PDP11_CPU.md) §8.
+
+* **A request** is raised when a device's `DONE` becomes 1 (a run ended, or a start was
+  refused) while its `IE` is 1, or when `IE` is set while `DONE` is already 1 (as DEC
+  devices did). It is cleared when the CPU takes it, or by the next write of `GO`. One
+  request per event: a handler doesn't loop forever on a device that stays `DONE`.
+* **Levels:** devices at 4, the line clock at 6.
+* **Who handles them:** the firmware, through the vectors at `000000`. `IE` is a
+  firmware-only bit, so a program can't switch on interrupts it can't handle, and can't
+  switch off the firmware's. The boot ROM fills every vector with a handler that just
+  returns.
+* **When:** at the start of a tick, as devices finish between ticks.
+
+| Vector | Source | v1 |
+| :--- | :--- | :--- |
+| `004`–`034` | CPU traps ([`PDP11_CPU.md`](PDP11_CPU.md) §7.3) | yes |
+| `024` | power fail: battery below `BAT_ALARM` (the real PDP-11 power-fail trap) | later (open question 6) |
+| `100` | line clock, every tick | yes |
+| `104` | reserved (the real KW11-P programmable clock; `SLICE` is the gate in v1) | – |
+| `120` | drive | yes |
+| `124` | radar | yes |
+| `130` | tools | yes |
+| `134` | repair | yes |
+| `140` | camera | yes |
+| `144` | image | yes |
+| `150` | log `READY` | yes |
+
+Each vector is two words: the handler's address and its `PSW` (usually its priority:
+`200` for level 4, `300` for 6, `340` for "nothing else while I run").
+
+## 6. ROM drivers
+
+Arguments in `R0`, `R1`; result in `R0`; `R0` and `R1` scratch
+([`PDP11_CPU.md`](PDP11_CPU.md) §10). Every driver follows the §3.1 path.
+
+```
+; STEP: drive R1 tiles in direction R0. Returns R0 = OK or why not (Z set if OK).
+STEP:   MOV  R1, @#DRVCNT       ; how far
+        MOV  R0, @#DRVDIR       ; which way
+        BIS  #GO, @#DRVCS       ; start (BIS keeps IE); refused: DONE + ERR at once
+1$:     TSTB @#DRVCS            ; DONE?
+        BMI  2$                 ; yes
+        WAIT                    ; no: sleep until the next interrupt (next tick at the latest)
+        BR   1$
+2$:     MOV  @#DRVER, R0        ; OK (0) or why not
+        RTS  PC
+```
+
+```
+; SLEEP: wait R0 ticks (up to 32767). Changes R1.
+SLEEP:  MOV  @#TICKL, R1        ; now...
+        ADD  R0, R1             ; ...+ R0 = wake-up time (may wrap past 177777: fine)
+1$:     WAIT
+        CMP  @#TICKL, R1        ; now − wake-up time...
+        BMI  1$                 ; ...still negative: not yet
+        RTS  PC
+```
+
+`SLEEP` tests `BMI` (the sign of the difference), not `BLT`: that stays right when the
+counter wraps, a real-world technique worth a Reference note. `SCAN`, `ACT`, `USE`, `SNAP`,
+`SEND` and `ERASE` follow `STEP`'s pattern; `LOG` is two `MOV`s (§3.5); `RUN` is in
+[`PDP11_CPU.md`](PDP11_CPU.md) §7.2.
+
+**Cost of waiting:** a `WAIT` loop costs 5–6 cycles per tick plus the clock's handler
+(about 7), against today's free `WAIT @port`. With 32–64 cycles per tick that leaves
+room, and the difference is a lesson: sleeping is cheap, not free.
+
+## 7. Examples
+
+### 7.1 *Drive yourself* (the M14 lesson, ported)
+
+```
+DIR = %1                        ; R1 holds the direction
+
+START:  CLR  DIR                ; NORTH
+1$:     MOV  #3, @#DRVCNT       ; how far
+        MOV  DIR, @#DRVDIR      ; which way
+        MOV  #GO, @#DRVCS       ; start
+2$:     TSTB @#DRVCS            ; DONE (bit 7)?
+        BMI  3$
+        WAIT                    ; sleep until the next tick
+        BR   2$
+3$:     TST  @#DRVCS            ; ERR (bit 15)?
+        BMI  STUCK              ; why: @#DRVER
+        INC  DIR
+        CMP  DIR, #4
+        BLT  1$
+        MOV  #1, R0             ; result 1: square done
+        RTS  PC                 ; "return from main" ends the program
+STUCK:  CLR  R0                 ; result 0: stuck
+        RTS  PC
+```
+
+26 words, 52 B. Reference → ROM's `STEP` shows the same steps.
+
+### 7.2 Scan while driving
+
+```
+        MOV  #10., @#DRVCNT
+        MOV  #EAST, @#DRVDIR
+        MOV  #GO, @#DRVCS       ; start the drive and don't wait for it
+1$:     MOV  #EAST, @#RADDIR
+        MOV  #GO, @#RADCS       ; one sweep; the radar runs alongside the drive
+2$:     WAIT
+        TSTB @#RADCS
+        BPL  2$                 ; sweep not finished
+        CMP  @#RADHIT, #IRON_ORE
+        BNE  3$
+        INC  R2                 ; seen one
+3$:     TSTB @#DRVCS            ; drive still going?
+        BPL  1$                 ; yes: sweep again
+```
+
+### 7.3 A firmware interrupt handler
+
+Light lamp 3 when a drive ends (green) or fails (red), without polling:
+
+```
+        MOV  #DRVINT, @#120     ; drive vector: the handler's address...
+        MOV  #200, @#122        ; ...and its PSW: priority 4
+        BIS  #IE, @#DRVCS       ; interrupt when DONE becomes 1
+        ...
+DRVINT: MOV  #GREEN, @#IND3
+        TST  @#DRVCS            ; ERR?
+        BPL  1$
+        MOV  #RED, @#IND3
+1$:     RTI
+```
+
+It also fires while the program drives: the CPU switches to the firmware for the
+handler and `RTI` switches back.
+
+### 7.4 Reading the tick counter
+
+```
+        MOV  @#TICKL, R0        ; reading the low word freezes the high word...
+        MOV  @#TICKH, R1        ; ...so R1:R0 is one consistent 32-bit value
+```
+
+## 8. Audit: every port today → the I/O page
+
+| Today | Now | Address | Access |
+| :--- | :--- | :--- | :--- |
+| `@BAT` `@HULL` `@SOLAR_HEALTH` `@ANTENNA_HEALTH` | same names | `176000`–`176006` | RO |
+| `@X` `@Y` | same, signed | `176010`, `176012` | RO |
+| `@TICK` | `TICKL`, `TICKH` | `176014`, `176016` | RO |
+| `@GROUND` `@GROUND_HAZARD` `@TEMP` `@HEATER` | same | `176020`–`176026` | RO |
+| `@CARGO_FREE` `@SCIENCE_READY` `@REC_FREE` `@SENSOR_RANGE` | same | `176030`–`176036` | RO |
+| `@ALERT` `@ALERT_ETA` `@DROPS` `@DROP_X` `@DROP_Y` | same | `176040`–`176050` | RO |
+| `@SUN_AZIMUTH` `@SUN_ELEV` `@SUN_LIGHT` `@SOLAR_DUST` | same | `176052`–`176060` | RO |
+| `@ORBIT_AZIMUTH` `@SIGNAL_STR` | same | `176062`, `176064` | RO |
+| `@HEADING` `@HEADLIGHT` `@SOLAR_OPEN` `@SOLAR_ANGLE` `@ANTENNA_ANGLE` | same | `176200`–`176210` | RW |
+| `@IND1` `@IND2` `@IND3` | same | `176212`–`176216` | RW |
+| `@POST` | `DISPLAY` | `177570` | RW |
+| `@STATUS` | **gone**: per device `xxER` + `ERR` bit; `DIV16` returns `C`; the gate reports in `PRGCS` | – | – |
+| `@TIMER` | **gone**: `SLEEP` on `TICKL` | – | – |
+| `@DRIVE` `@DRIVE_N` | `DRVCS` + `DRVDIR`, `DRVCNT` (+ `DRVER`) | `176400`–`176406` | RW |
+| `@RADAR` `@RADAR_HIT` `@RADAR_DIST` | `RADCS` + `RADDIR`, `RADHIT`, `RADDST` (+ `RADER`) | `176420`–`176430` | RW / RO |
+| `@TOOL` `@TOOL_ARG` | `TOLCS` (`FN` = hardpoint), `TOLARG`, `TOLLFT` (+ `TOLER`) | `176440`–`176446` | RW |
+| `@SEISMIC_TYPE` `@SEISMIC_DIST` | `SEITYP`, `SEIDST` (in the tools block) | `176450`, `176452` | RO |
+| `@REPAIR` `@REPAIR_SYS` | `REPCS` (`FN` = system), `REPSLT`, `REPLFT` (+ `REPER`) | `176460`–`176466` | RW |
+| `@CAM` `@CAM_MODE` | `CAMCS` (`FN` = mode), `CAMDIR`, `CAMLFT` (+ `CAMER`) | `176500`–`176506` | RW |
+| `@SEND` `@ERASE` | `IMGCS` (`FN` = send / erase), `IMGTYP`, `IMGLFT` (+ `IMGER`) | `176520`–`176526` | RW |
+| `LOG` (instruction) `@LOG_FREE` `@LOG_LOST` | `LOGCS`, `LOGVAL`, `LOGT`, `LOGTV`, `LOG_FREE`, `LOG_LOST` | `176540`–`176552` | mixed |
+| cargo (`[CARGO+n]`) | `CARGO` bytes | `176600`–`176607` | RO |
+| `@PROG_STATE` `@PROG_RESULT` | `PRGST`, `PRGRES` (+ `PRGCS`, `PRGER`, `PRGPC`) | `177000`–`177010` | FW / RO |
+| `@SLICE` `@PREEMPT` `@PREEMPTED` `@BAT_ALARM` `@WDT` | same names | `177012`–`177022` | FW / RO |
+| – | `LKS` line clock, `STKLIM`, `PSW` | `177546`, `177774`, `177776` | FW |
+
+`src/core/ports.ts` becomes this table (address, access, bits, description), and the
+Reference *I/O page* tab is generated from it, as the Ports tab is today.
+
+## 9. Open questions
+
+1. **Names:** DEC-style short names for device blocks (`DRVCS`, this draft) and today's
+   names for telemetry, or one style everywhere?
+2. **`@TIMER`:** drop it and sleep on `TICKL` (this draft), or keep a per-context timer?
+3. **`DISPLAY`:** keep two hex digits (today's `@POST`), or three octal digits `000`–`377`
+   to match the octal theme (a visual change: preview first)?
+4. **Lamps:** three registers (this draft), or one register with three 3-bit fields (a
+   `BIC` / `BIS` lesson)?
+5. **Camera:** fixed image window at `100000` (this draft), or the camera writes wherever
+   a bus-address register points (real DMA, like DEC's disk controllers; maybe an upgrade)?
+6. **More firmware interrupts:** power fail (`024`) for `PRE_LOW_BAT`, and interrupts
+   for alerts and damage, to let the firmware react while it runs, not only between
+   program runs.
+7. **Function codes:** pre-shifted `F.` symbols (this draft) or plain numbers with the
+   shift written out?
