@@ -836,6 +836,34 @@ overclock ×1.5 / ×2 = 96 / 128. Measured again at 64: the idle firmware takes 
 tick (38 %), driving lessons 36, so programs get about 40 cycles a tick and the image lessons
 take 113–391 ticks. Driving lessons are paced by the wheels at any budget.
 
+### 14.6 Slice 5 as built: the UI (owner may veto)
+
+Files: `src/ui/toolchain.ts` (what the Code tab, Comms and the debugger need from either core:
+language, build, templates, addresses, listing; `RoverBuilds` caches the code on the rover),
+`src/ui/ReferencePdp11.ts`, PDP-11 branches in `CodeWorkspace`, `DebuggerPanel`, `comms.ts`,
+`CommsPanel`, `InspectPanel`, `GalleryPanel`; `RoverMachine.stackWords`, `peek`, `ioSnapshot`;
+dump frames in `downlink.ts`. Tests: `tests/pdp-dumps.test.ts`, `tests/pdp-ui.test.ts`.
+
+Decisions taken while building it:
+
+1. **How to play it before slice 6:** *Admin → New PDP-11 world* (or `?cpu=pdp11`) starts a
+   world with the PDP-11 core and the default firmware; the autosave keeps its computer
+   (`?cpu=` only picks which autosave to resume). The plain URL stays Rover-ASM.
+2. **Register dump** (wire kinds 5 firmware / 7 program, 22 B on air): state (1 B, as in
+   Rover-ASM dumps), `PSW`, `R0`–`R5`, `SP`, `PC`; **stack dump** (6 / 8): `SP`, a count and up to
+   8 words from `SP` towards the stack's base (the firmware's at `PRGBAS`, the program's at the
+   top of core). Words low byte first, as in memory. The old kinds 1–4 stay for Rover-ASM.
+3. **Breakpoints report themselves** as `BRK` did: `BPT` in the program (`P.HLT`) and a firmware
+   `HALT` / `BPT` (the ROM's handler halts) queue a register dump of that context.
+4. **Comms names log tags** from the `L.` symbols each slot defines (`L.BAT = 1`), with the lines
+   that use them as links. Photo chunks that arrived whole are not listed (the SCI row and the
+   Gallery show the photo); broken or incomplete messages always show their bytes.
+5. **The debugger never touches the bus:** `peek` reads memory directly and `ioSnapshot`
+   computes every register on a copy of the device state (reading `TICKL` latches `TICKH`).
+6. **Reference** is generated where a table exists (instruction set, I/O page, ROM routines
+   from the comments in the ROM source, symbols, dump formats); the instruction descriptions
+   and flags are a table in `ReferencePdp11.ts` that a test checks against the instruction set.
+
 ## 15. Plan (slices)
 
 1. **Design** (this document and [`PDP11_IO.md`](PDP11_IO.md)): ✅ reviewed; decisions in §0.
@@ -852,7 +880,7 @@ take 113–391 ticks. Driving lessons are paced by the wheels at any budget.
    for the owner.
 5. **UI**: editor language, listing, debugger (octal, `NZVC`, `PSW`), Comms dumps,
    Reference (Instructions, Modes, Flags, I/O page, ROM). The simulator's panels are the
-   starting point.
+   starting point. ✅ built (§14.6), in review.
 6. **Switch over**: delete Rover-ASM (`Compiler.ts`, `RoverVM.ts`, `isa.ts`,
    `migrateSource.ts`, the old ROM), reset saves, little-endian photos, rewrite SPEC §5
    and CLAUDE.md.

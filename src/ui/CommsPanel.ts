@@ -7,7 +7,7 @@ import { MsgType, type ReceivedMessage } from '../core/messages';
 import { PDP11 } from '../core/balance';
 import type { Slot } from '../core/vm/Compiler';
 import { hint } from './hint';
-import { productSize } from './GalleryPanel';
+import { productSize } from '../core/imaging';
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 

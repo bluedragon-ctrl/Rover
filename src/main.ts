@@ -12,6 +12,7 @@ import { DebuggerPanel } from './ui/DebuggerPanel';
 import { CodeWorkspace } from './ui/CodeWorkspace';
 import { RoverBuilds, toolchain } from './ui/toolchain';
 import { renderReference } from './ui/ReferencePanel';
+import { renderReference11 } from './ui/ReferencePdp11';
 import { PerfHud } from './ui/PerfHud';
 import { CompassHud } from './ui/CompassHud';
 import { GoalsPanel } from './ui/GoalsPanel';
@@ -92,7 +93,8 @@ engine.events.on('GOAL_COMPLETED', (g) => {
   toasts.appendChild(t);
   setTimeout(() => t.remove(), 5000);
 });
-renderReference($('#reference'), engine.registry);
+if (engine.pdp11) renderReference11($('#reference'), engine.registry);
+else renderReference($('#reference'), engine.registry);
 
 // Code tab: Program / Firmware slots and the machine-code listing (M10; ?listing=0 hides it).
 const code = new CodeWorkspace({

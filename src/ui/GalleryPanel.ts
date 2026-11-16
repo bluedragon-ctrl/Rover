@@ -1,13 +1,13 @@
-import { headerLevel, hex, isPhoto, Level, LEVEL_NAMES, PRODUCT_NAMES, productFrameBytes, ProductType, type ReceivedProduct } from '../core/downlink';
+import { headerLevel, hex, isPhoto, Level, LEVEL_NAMES, PRODUCT_NAMES, ProductType, type ReceivedProduct } from '../core/downlink';
 
 const LEVEL_TIPS: Record<number, string> = {
   [Level.RAW]: 'raw: sent as the camera took it',
   [Level.EDITED]: 'edited: changed with STB after the SNAP',
   [Level.DRAWN]: 'drawn: no camera picture behind it (no credits)',
 };
-import { bandNm, productFrame, SPECTRUM_BANDS } from '../core/imaging';
+import { bandNm, productFrame, productSize, SPECTRUM_BANDS } from '../core/imaging';
 import { BALANCE } from '../core/balance';
-import { decodePhoto, PHOTO_FORMATS, PHOTO_FORMATS_2X, photoBytes } from '../core/photos';
+import { decodePhoto, PHOTO_FORMATS, PHOTO_FORMATS_2X } from '../core/photos';
 import type { SimulationEngine } from '../core/SimulationEngine';
 
 /** Bar colour for a wavelength: visible bands roughly in their colour, near-IR grey. */
@@ -39,8 +39,6 @@ export function spectrumSvg(payload: number[], received: number): string {
 
 const PHOTO_PX = 128;
 
-/** Bytes of a product's frame: M15 photos (`x2`) are at double resolution (PDP11_CPU.md §6.3). */
-export const productSize = (g: Pick<ReceivedProduct, 'type' | 'x2'>): number => (g.x2 && isPhoto(g.type) ? 2 + photoBytes(g.type, PHOTO_FORMATS_2X) : productFrameBytes(g.type));
 const formatsOf = (g: Pick<ReceivedProduct, 'x2'>) => (g.x2 ? PHOTO_FORMATS_2X : PHOTO_FORMATS);
 
 const productId = (g: ReceivedProduct): string => `${g.unitId}:${g.tick}:${g.seq}`;

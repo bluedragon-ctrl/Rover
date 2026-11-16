@@ -10,6 +10,7 @@ import { IO_REGISTERS } from '../core/machine/iopage';
 import { ROM_EXPORTS } from '../core/machine/rom';
 import { STACK11_WORDS } from '../core/downlink';
 import { oct6, type RoverBuilds } from './toolchain';
+import { romRoutineAt } from './comms';
 
 const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!);
 
@@ -98,7 +99,7 @@ export class DebuggerPanel {
     const line = this.builds?.lineAt(u, slot, pc) ?? 0;
     const inRom = pc >= 0o160000 && pc < 0o170000;
     const dis = disassemble((a) => m.peek(a) ?? 0, pc, { nameOf: (a) => PDP_NAMES.get(a) });
-    const where = inRom ? `ROM ${[...PDP_NAMES].filter(([a]) => a <= pc && a >= 0o160000).sort((x, y) => y[0] - x[0])[0]?.[1] ?? ''}` : line ? `L${line}` : '';
+    const where = inRom ? `ROM ${romRoutineAt(pc)}` : line ? `L${line}` : '';
     const reg = (i: number) => {
       const name = i === 6 ? 'SP' : i === 7 ? 'PC' : `R${i}`;
       return `<div class="kv" title="${signed(r[i])} (signed decimal), ${r[i]} unsigned"><span>${name}</span><b>${oct6(r[i])}</b></div>`;

@@ -11,6 +11,8 @@ import type { CompileResult, Slot } from '../core/vm/Compiler';
 import { formatAddr } from '../core/vm/isa';
 import { IMG_CHUNK, MSG_TYPE_NAMES, MsgType, SOH, ETX, type ReceivedMessage } from '../core/messages';
 import { ERROR_NAMES } from '../core/machine/names';
+import { ROM_EXPORTS } from '../core/machine/rom';
+import { PDP11 } from '../core/balance';
 import { oct6, toolchain, type SlotBuild } from './toolchain';
 
 export type LogDictionary = CompileResult['logTags'];
@@ -63,6 +65,13 @@ export function pdpDictionary(b: SlotBuild): SlotDictionary {
     }
   }
   return { tags, regs: {}, lineAt: b.lineAt, pdp: true };
+}
+
+const ROM_SORTED = Object.entries(ROM_EXPORTS).sort((a, b) => b[1] - a[1]);
+/** M15: the ROM routine an address lies in (`STEP`), or '' outside the ROM's routines. */
+export function romRoutineAt(addr: number): string {
+  if (addr < PDP11.romBase || addr >= PDP11.ioBase) return '';
+  return ROM_SORTED.find(([, a]) => a <= addr)?.[0] ?? '';
 }
 
 /** An address as its slot's dictionary writes it: `fw:0x02A` or, M15, `002052`. */
@@ -395,7 +404,13 @@ export function frameFields(b: readonly number[], d: Dictionaries): FrameField[]
             bytes: take(6 + i * 2, 2),
             name,
             value: running ? addrValue(v, slot, d) : `${oct6(v)} (not running)`,
-            note: !running ? 'means nothing while the program is not running' : bptLine ? `the instruction after the BPT on line ${bptLine}` : 'address of the instruction it runs next',
+            note: !running
+              ? 'means nothing while the program is not running'
+              : bptLine
+                ? `the instruction after the BPT on line ${bptLine}`
+                : v >= PDP11.romBase && v < PDP11.ioBase
+                  ? `in the ROM${romRoutineAt(v) ? `, routine ${romRoutineAt(v)}` : ''} (called from your code: Dump stack shows the return address)`
+                  : 'address of the instruction it runs next',
             goto: running && line ? { slot, line } : undefined,
           });
         } else out.push({ bytes: take(6 + i * 2, 2), name, value: oct6(v), note: `${((v ^ 0x8000) - 0x8000)}.${i === 6 ? ' · the stack pointer (Dump stack shows the words)' : ''}` });

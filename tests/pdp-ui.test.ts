@@ -77,3 +77,80 @@ describe('PDP-11 toolchain for the Code tab', () => {
     expect(oct6(-1)).toBe('177777');
   });
 });
+
+describe('Comms on the PDP-11 core', () => {
+  it('names log tags from the L. symbols and finds the lines that use them', async () => {
+    const { pdpDictionary } = await import('../src/ui/comms');
+    const { u, tc } = setup();
+    const src = 'L.X = 5   ; tag\nSTART:  MOV #L.X, R0\n        JSR PC, LOG\n        HALT';
+    const d = pdpDictionary(tc.build(u, src, 'program'));
+    expect(d.tags[5]).toEqual({ names: ['L.X'], lines: [2] });
+    expect(d.pdp).toBe(true);
+  });
+
+  it('describes framed messages and explains their bytes', async () => {
+    const { describeMessage, messageFields, pdpDictionary, emptyDictionary } = await import('../src/ui/comms');
+    const { MsgType } = await import('../src/core/messages');
+    const { u, tc } = setup();
+    const d = { firmware: pdpDictionary(tc.build(u, PDP_DEFAULT_FIRMWARE, 'firmware')), program: { ...emptyDictionary(), pdp: true } };
+    const log = { unitId: 1, tick: 3, type: MsgType.LOG, body: [1, 0xff, 0xff], status: 'ok' as const };
+    expect(describeMessage(log, d)).toBe('L.BAT = -1');
+    const f = messageFields(log, d);
+    expect(f.map((x) => x.name)).toEqual(['SOH', 'type', 'length', 'tag', 'value', 'ETX']);
+    expect(f.flatMap((x) => x.bytes)).toEqual([1, MsgType.LOG, 3, 1, 0xff, 0xff, 3]);
+    expect(f[3].goto?.slot).toBe('firmware');
+    expect(describeMessage({ ...log, type: MsgType.TEXT, body: [...'HI'].map((c) => c.charCodeAt(0)) }, d)).toBe('“HI”');
+    expect(describeMessage({ ...log, type: MsgType.ERR, body: [4, 0o10, 0o4] }, d)).toBe('error E.BLK at 002010');
+    expect(describeMessage({ ...log, type: 0o100, body: [1, 2] }, d)).toBe('type 100: 01 02');
+    const broken = messageFields({ ...log, status: 'broken' }, d);
+    expect(broken.at(-1)?.name).toBe('broken');
+  });
+
+  it('explains PDP-11 dumps byte by byte; BPT dumps count as sent by a breakpoint', async () => {
+    const { frameFields, describeFrame, sentByBrk, pdpDictionary, emptyDictionary, romRoutineAt } = await import('../src/ui/comms');
+    const { encodeCpu11Dump, encodeStack11Dump } = await import('../src/core/downlink');
+    const { ROM_EXPORTS } = await import('../src/core/machine/rom');
+    const { ProgState } = await import('../src/core/types');
+    const { u, tc } = setup();
+    const d = { firmware: { ...emptyDictionary(), pdp: true }, program: pdpDictionary(tc.build(u, PDP_FIRST_STEPS, 'program')) };
+    const bytes = encodeCpu11Dump({ state: ProgState.PROG_HALTED, psw: 0o170004, r: [1, 2, 3, 4, 5, 6, 0o3774, 0o2002] }, true);
+    const fields = frameFields(bytes, d);
+    expect(fields.flatMap((x) => x.bytes)).toEqual(bytes);
+    expect(fields.find((x) => x.name === 'PSW')?.value).toBe('170004 nZvc');
+    expect(fields.find((x) => x.name === 'PC')?.note).toMatch(/after the BPT on line 16/);
+    const frame = { unitId: 1, tick: 9, bytes, gap: 0, taken: 8 };
+    expect(sentByBrk(frame, [])).toBe(true);
+    expect(describeFrame(frame, d)).toMatch(/^PROGRAM DUMP \(snapshot t8\): PC 002002 \(L17\) · PROG_HALTED · PSW 170004 nZvc · R0=000001/);
+    const st = encodeStack11Dump(0o1774, [7, 0o2014]);
+    expect(frameFields(st, d).flatMap((x) => x.bytes)).toEqual(st);
+    expect(romRoutineAt(ROM_EXPORTS.STEP + 2)).toBe('STEP');
+    expect(romRoutineAt(0o2000)).toBe('');
+  });
+});
+
+describe('Reference for the PDP-11 core', () => {
+  it('documents every instruction of the set and every ROM routine', async () => {
+    const { INSTR_DOC, romDocs } = await import('../src/ui/ReferencePdp11');
+    const { INSTRUCTIONS } = await import('../src/pdp11');
+    const { ROM_ROUTINES } = await import('../src/core/machine/rom');
+    for (const i of INSTRUCTIONS) {
+      const base = i.byte ? i.name.slice(0, -1) : i.name;
+      expect(INSTR_DOC[base], i.name).toBeDefined();
+      expect(INSTR_DOC[base].flags, i.name).toMatch(/^[-*01]{4}$/);
+    }
+    const docs = romDocs();
+    for (const n of ROM_ROUTINES) expect(docs[n], n).toMatch(/\w/);
+    expect(docs.STEP).toMatch(/^drive R1 tiles in direction R0/);
+  });
+});
+
+describe('double-resolution photos in the Gallery', () => {
+  it('a delivered PDP-11 photo frame has all its bytes (not cut to the 1x size)', async () => {
+    const { productFrame, productSize } = await import('../src/core/imaging');
+    const { PHOTO_FORMATS_2X, photoBytes } = await import('../src/core/photos');
+    const g = { type: 1, subject: 0, x: 0, y: 0, lit: true, seq: 0, tick: 5, credits: 0, x2: true as const };
+    expect(productSize(g)).toBe(2 + photoBytes(1, PHOTO_FORMATS_2X));
+    expect(productFrame(7, g).length).toBe(productSize(g));
+    expect(productSize({ type: 1 })).toBe(2 + 256);
+  });
+});

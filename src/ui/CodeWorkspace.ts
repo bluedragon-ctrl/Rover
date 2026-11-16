@@ -355,7 +355,7 @@ export class CodeWorkspace {
     const status = res.ok ? '' : ` · <span class="bad">not assembled (${res.errors.length} error${res.errors.length > 1 ? 's' : ''})</span>`;
     const top = el.querySelector('.lst-body')?.scrollTop ?? 0;
     el.innerHTML = `<div class="lst-head"><b>Listing · ${name}</b><span>${range} · ${n} B${status}</span></div>
-      <div class="lst-cols"><span class="a">address</span><span class="h">words (octal)</span><span class="s">source</span></div>
+      <div class="lst-cols"><span class="a">addr</span><span class="h">words (octal)</span><span class="s">source</span></div>
       <div class="lst-body">${rows.join('') || '<div class="dim">No instructions.</div>'}</div>
       <div class="lst-foot">${this.totalsHtml()}</div>`;
     el.querySelector('.lst-body')!.scrollTop = top;

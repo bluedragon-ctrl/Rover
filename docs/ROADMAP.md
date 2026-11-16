@@ -25,7 +25,7 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | M11 | User interface review (after M10) | 🚧 Comms tab, Code tab dump box, Reference → Radio, Mission events: default since 2026-11-13 (save v13); `BRK` reports itself |
 | M12 | Image memory: `SNAP` → `LDB` / `STB` → `SEND` (SPEC §3.8.7, guide [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md)) | ✅ done (bit instructions; image memory in the core, save v14; templates, Reference → Image, Gallery labels + hex view, `SNAP` warning; goal *Darkroom* + first-edit bonus per camera mode, save v15) |
 | **M14** | **Assembler core**: hardware through device ports + `WAIT`, ROM library, RAM / `VAR` / addressing modes / `DATA`, program called like a subroutine (design [`ASSEMBLER_CORE.md`](ASSEMBLER_CORE.md)) | 🚧 design approved; slices 2 (memory model, save v17) and 3 (devices, `WAIT`, ROM, `CALL PROGRAM`, save v18) done; slice 4 (lessons, Reference *CPU* / *Devices* / *Memory map*) in review; **frozen** (2026-11-15): the boot ROM with safe mode moves into M15's ROM |
-| **M15** | **PDP-11 core**: Rover-ASM replaced by a PDP-11-style 16-bit CPU and a MACRO-11 subset (octal, eight addressing modes, flags, traps, interrupts), devices as DEC-style registers in the I/O page; saves reset (design [`PDP11_CPU.md`](PDP11_CPU.md), [`PDP11_IO.md`](PDP11_IO.md)) | 🚧 design approved (owner answers 2026-11-15); slices 2 (standalone library `src/pdp11/` + simulator page `simulator.html`) and 3 (Rover's bus, I/O page, gate, interrupts, `TX` output, save v19) done; slice 4 done: ROM drivers and helpers, recorder registers + `SNDIMG`, safe mode, default firmware and every lesson in MACRO-11, cycle budget measured and set to 64, link and recorder ×2, save v20; all behind the engine switch `cpu: 'pdp11'`, the game is unchanged |
+| **M15** | **PDP-11 core**: Rover-ASM replaced by a PDP-11-style 16-bit CPU and a MACRO-11 subset (octal, eight addressing modes, flags, traps, interrupts), devices as DEC-style registers in the I/O page; saves reset (design [`PDP11_CPU.md`](PDP11_CPU.md), [`PDP11_IO.md`](PDP11_IO.md)) | 🚧 design approved (owner answers 2026-11-15); slices 2 (standalone library `src/pdp11/` + simulator page `simulator.html`) and 3 (Rover's bus, I/O page, gate, interrupts, `TX` output, save v19) done; slice 4 done: ROM drivers and helpers, recorder registers + `SNDIMG`, safe mode, default firmware and every lesson in MACRO-11, cycle budget measured and set to 64, link and recorder ×2, save v20; slice 5 (UI) in review: a PDP-11 world from **Admin → New PDP-11 world** or `?cpu=pdp11`, the default game is unchanged |
 | M13 | Realism pass 1: watchdog `@WDT`, thermal model + array dust, fault protection `@PREEMPT` (SPEC §3.3.4, §3.9.2, §3.9.5) | 🚧 core, default firmware, *Fault protection* template, Reference, save v16 done; in review (balance numbers to playtest) |
 
 ## M15 — PDP-11 core (in progress)
@@ -121,7 +121,26 @@ codes, a type per message: text, error codes, science data…), sketched in
   - [x] Owner decisions after review (2026-11-15): budget **Mk-I 64** (`PDP11.cyclesPerRoverCycle`
         8; overclock 96 / 128); link and recorder ×2 on the PDP-11 core (`PDP11.linkScale`,
         `recorderScale`: Mk-I 4 B/tick, 2 KB; upgrades 6 B/tick, 4 / 8 KB).
-- [ ] Slice 5: UI (editor, listing, debugger, Comms dumps, Reference).
+- [x] Slice 5 (in review): UI for the PDP-11 core (`PDP11_CPU.md` §14.6). A world with the PDP-11
+      core starts from **Admin → New PDP-11 world** (or `?cpu=pdp11`); saves remember their computer.
+      The default game stays Rover-ASM until slice 6.
+  - [x] Code tab through `src/ui/toolchain.ts` (one interface, both cores): MACRO-11 highlighting,
+        assembler errors and warnings in the editor, the PDP-11 templates, the two core regions
+        instead of the flash bar, the octal MACRO-11 listing, MACRO-11 hints and warnings.
+  - [x] Admin debugger: `R0`–`PC` in octal (decimal on hover), `PSW` with priority, mode and
+        `T N Z V C`, the next instruction disassembled (ROM routine named), the stack, the I/O
+        page, cycles this tick; the current line in the editor for both contexts. Reads go
+        through `RoverMachine.peek` / `ioSnapshot` (no side effects; `TICKL` would latch `TICKH`).
+  - [x] Dumps of the PDP-11 core: register dump (kinds 5 / 7: state, `PSW`, `R0`–`PC`) and stack
+        dump (6 / 8: `SP` and up to 8 words), words low byte first; `BPT` and a firmware `HALT`
+        send one by themselves. Comms and the Code tab's dump box decode them byte by byte.
+  - [x] Comms shows the framed messages (`T.LOG` named from the `L.` symbols with source links,
+        `T.TEXT`, `T.ERR`, the player's own types, broken / incomplete ones with their bytes);
+        photo chunks show as the photo in SCI. Link box: TX FIFO, recorder, `TXLOST`.
+  - [x] Gallery: photos at double resolution (`productFrame` no longer cuts them to the 1× size).
+  - [x] Reference for the PDP-11 core: Basics, Instructions (every one with flags, a test checks),
+        Modes, Flags, I/O page, ROM (from the ROM source's comments), Symbols, Radio.
+  - [x] 21 new tests (`pdp-dumps.test.ts`, `pdp-ui.test.ts`).
 - [ ] Slice 6: switch over, delete Rover-ASM, reset saves, rewrite SPEC §5 and CLAUDE.md.
 
 ## M14 — Assembler core (in progress)
@@ -917,3 +936,4 @@ window with a fixed dish?
 | 2026-11-16 | `claude/amazing-heisenberg-0hfxsi` (3) | PDP-11 assembler closer to MACRO-11: implicit `.WORD` (an expression where the instruction goes; syntactic rule so typos like `MOVV R0, R1` stay "unknown instruction"), instruction names as values (`MOV #NOP, X`), `warnings` in the result (value cut to 16 bits, symbol named like an instruction) shown in the simulator; `CLC!SEC` stays an error (deliberate deviation). Macros / conditionals / `.PSECT` deferred. 7 new tests. Game unchanged. |
 | 2026-11-16 | `claude/amazing-heisenberg-0hfxsi` (4) | PDP-11 library README rewritten as a complete reference for people and AI agents: which layer to use, conventions, full API tables (assembler options/result, CPU members, stop reasons, trap causes, `Device` contract), host recipes, pitfalls, contributor map; every code block run by `tests/pdp11/readme-examples.test.ts`, which also fails if a README block is untested. Documentation and tests only. |
 | 2026-11-16 | `claude/amazing-heisenberg-0hfxsi` (5) | Salvaged from the abandoned PR 40 (package move not taken: `PDP11_CPU.md` §14.3 keeps a folder until a second project needs it): MACRO-11 compatibility section (same / different / not supported) with its claim tests (`macro11.test.ts`), cycle table (corrected: `CLR`/`SXT` write only, `TRAP` 5) and instruction set table in the README, hosting advice, `src/pdp11/AGENTS.md` (+ `CLAUDE.md` importing it) as contributor rules; cycle examples tested. Documentation and tests only. |
+| 2026-11-16 | `ccr-1e5e736c-64ollq` | M15 slice 5: UI for the PDP-11 core behind Admin → New PDP-11 world / `?cpu=pdp11`: Code tab through `ui/toolchain.ts` (MACRO-11 editor with warnings, templates, core regions, octal listing), admin debugger (octal registers, PSW / NZVC, disassembly, stack, I/O page via side-effect-free `peek` / `ioSnapshot`), PDP-11 register and stack dumps (kinds 5–8; `BPT` / `HALT` report themselves) decoded in Comms and the dump box, framed TX / recorder messages in Comms, double-resolution photos in the Gallery, Reference (Instructions, Modes, Flags, I/O page, ROM, Symbols, Radio); 21 new tests. Rover-ASM game unchanged. |
