@@ -59,7 +59,10 @@ export class SimpleMachine implements Bus {
 
   read(addr: number, byte: boolean): number {
     if (addr < this.ram.length) {
-      return byte ? this.ram[addr] : this.ram[addr] | (this.ram[addr + 1] << 8);
+      if (byte) return this.ram[addr];
+      // The CPU traps odd word addresses itself; a host reading one gets the even word.
+      const a = addr & 0xfffe;
+      return this.ram[a] | ((this.ram[a + 1] ?? 0) << 8);
     }
     const reg = addr & 0xfffe;
     let v: number;
@@ -80,12 +83,17 @@ export class SimpleMachine implements Bus {
 
   write(addr: number, value: number, byte: boolean): boolean {
     if (addr < this.ram.length) {
-      this.ram[addr] = value & 0xff;
-      if (!byte) this.ram[addr + 1] = (value >> 8) & 0xff;
+      if (byte) { this.ram[addr] = value & 0xff; return true; }
+      const a = addr & 0xfffe;
+      this.ram[a] = value & 0xff;
+      if (a + 1 < this.ram.length) this.ram[a + 1] = (value >> 8) & 0xff;
       return true;
     }
     const reg = addr & 0xfffe;
-    if (byte && (addr & 1)) value = 0; // writes to the high byte of these registers do nothing
+    if (byte && (addr & 1)) {
+      // The high byte of these registers takes no writes (and must not clear the low byte).
+      return reg === DEV.RCSR || reg === DEV.RBUF || reg === DEV.XCSR || reg === DEV.XBUF || reg === DEV.LKS;
+    }
     switch (reg) {
       case DEV.RCSR:
         this.rcsr = (this.rcsr & ~CSR.IE) | (value & CSR.IE);
@@ -173,8 +181,10 @@ export class SimpleMachine implements Bus {
           this.advance(spent);
           return { ...r, cycles: used + spent, instructions };
         }
-        // Asleep: time passes until the next tick (or the budget).
-        spent = Math.max(spent, Math.min(this.untilTick, maxCycles - used));
+        // Asleep: time passes until the next clock interrupt, or (only the keyboard can
+        // wake it, and nothing types during a run) to the end of the budget.
+        const until = this.lks & CSR.IE ? this.untilTick : Infinity;
+        spent = Math.max(spent, Math.min(until, maxCycles - used));
       }
       this.advance(spent);
       used += spent;

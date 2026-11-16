@@ -62,7 +62,8 @@ a.listing;                    // MACRO-11 style listing
 Syntax: `label: OP src, dst ; comment`, `NAME = expr`, `NAME = %3`, `. = . + 10`,
 local labels `1$` between two ordinary labels. Numbers are **octal**; `10.` is decimal;
 `^D ^O ^B`; `'A`, `"AB`. Expressions run left to right; `< >` groups; `+ - * / & !`,
-unary `-`, `^C`. Directives: `.WORD .BYTE .ASCII .ASCIZ .BLKW .BLKB .EVEN .ODD .END`
+unary `-`, `^C`. Flag operations combine with `!` as the disassembler writes them
+(`CLC!CLV` = 000243; clears and sets not mixed). Directives: `.WORD .BYTE .ASCII .ASCIZ .BLKW .BLKB .EVEN .ODD .END`
 (`.TITLE` and friends are ignored). Names: `dec` (default) = 1–6 characters of letters,
 digits, `.`, `$`; `long` = any length, `_` allowed. Not included: macros, `.PSECT`,
 linking, conditional assembly.

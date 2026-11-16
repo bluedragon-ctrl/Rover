@@ -24,6 +24,7 @@ export const macro11 = StreamLanguage.define<{ op: boolean; text: boolean }>({
       return 'string';
     }
     if (stream.match(/^([A-Za-z0-9.$_]+)\s*::?(?!=)/)) return 'labelName';
+    if (stream.match(/^[0-9]+\$(?![A-Za-z0-9.$_])/)) return 'labelName'; // local label reference: 1$
     if (stream.match(/^'./) || stream.match(/^"../)) return 'string';
     if (stream.match(/^\^[DOB][0-9]+/i) || stream.match(/^[0-9]+\.?(?![A-Za-z0-9$_])/)) return 'number';
     if (stream.match(/^%[0-7]/)) return 'variableName';

@@ -192,6 +192,12 @@ class Assembler {
         return true;
       }
 
+      // Combined flag operations, as the disassembler writes them: CLC!CLV, SEN!SEZ.
+      const cc = /^([A-Za-z]+(?:\s*!\s*[A-Za-z]+)+)\s*(.*)$/.exec(rest);
+      if (cc) {
+        this.instruction(this.flagCombination(cc[1], pos), cc[2], pos + rest.length - cc[2].length);
+        return true;
+      }
       const om = /^([A-Za-z.][A-Za-z0-9.$_]*)\s*(.*)$/.exec(rest);
       if (!om) throw new AsmFail(`can't read "${rest}"`, pos);
       const name = om[1].toUpperCase();
@@ -375,6 +381,23 @@ class Assembler {
 
   // ------------------------------------------------------------------ instructions
 
+  /** `CLC!CLV` → 000243. Only flag operations, and clears and sets not mixed. */
+  private flagCombination(text: string, col: number): OpInfo {
+    let opcode = 0o000240;
+    let set: boolean | null = null;
+    for (const part of text.split('!').map((p) => p.trim().toUpperCase())) {
+      const op = BY_NAME.get(part);
+      if (!op || op.format !== 'none' || op.opcode <= 0o000240 || op.opcode >= 0o000300 || op.opcode === 0o000260) {
+        throw new AsmFail(`only flag operations (CLC, SEV, …) combine with !, not ${part}`, col);
+      }
+      const s = (op.opcode & 0o20) !== 0;
+      if (set !== null && s !== set) throw new AsmFail('clear (CLx) and set (SEx) flag operations cannot be combined', col);
+      set = s;
+      opcode |= op.opcode;
+    }
+    return { name: text.replace(/\s+/g, '').toUpperCase(), opcode, format: 'none' };
+  }
+
   private instruction(op: OpInfo, args: string, col: number): void {
     if (this.lc & 1) throw new AsmFail('an instruction at an odd address (add .EVEN before it)', col);
     const parts = args.trim() === '' ? [] : splitArgs(args, col);
@@ -441,7 +464,7 @@ class Assembler {
           const diff = here + 2 - t.value;
           if (diff & 1) throw new AsmFail('SOB target at an odd address', parts[1].column);
           off = diff / 2;
-          if (off < 0 || off > 63) throw new AsmFail(`SOB only jumps backwards, at most 63 words (here ${-off})`, parts[1].column);
+          if (off < 1 || off > 63) throw new AsmFail(`SOB only jumps backwards, at most 63 words (here ${-off})`, parts[1].column);
         }
         words[0] |= (reg << 6) | off;
         break;
