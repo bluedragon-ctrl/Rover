@@ -176,6 +176,22 @@ WAITK:  TSTB @#177560       ; RCSR bit 7: a key?
     expect(m.cpu.r[7]).toBe(0o1006); // past the EMT
   });
 
+  it('cycle examples in the README', () => {
+    const cycles = (src: string) => {
+      const a = must(assemble(`T: ${src}\n HALT\nCOUNT: .WORD 0\nX: RTS PC`));
+      const m = new SimpleMachine();
+      m.boot(a);
+      Object.assign(m.cpu.r, { 1: 0o2000, 2: 0o2100, 6: 0o3000 });
+      return m.step().cycles;
+    };
+    const table: Array<[string, number]> = [
+      ['MOV R1, R2', 1], ['MOV #5, R0', 2], ['CLR (R1)', 2], ['MOVB (R1)+, (R2)+', 3],
+      ['MOV @2(R1), R0', 4], ['INC @#COUNT', 4], ['BR .+2', 1], ['SOB R1, T', 1], ['WAIT', 1], ['HALT', 1],
+      ['JSR PC, X', 3], ['RTS PC', 2], ['RTI', 3], ['TRAP 1', 5], ['TST (R1)', 2], ['SXT (R1)', 2],
+    ];
+    for (const [src, n] of table) expect(cycles(src), src).toBe(n);
+  });
+
   it('every README code block is in this file', () => {
     const norm = (s: string) => s.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('import ')).join('\n');
     const body = norm(here);
