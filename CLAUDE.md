@@ -68,6 +68,8 @@ npm run build      # typecheck + production bundle in dist/
   screenshots before they replace what the game renders.
 - Shipped code (`src/core/programs.ts`: default firmware, firmware templates, lessons) must
   assemble, fit its region and run to its expected result: `tests/blue11-programs.test.ts`.
+  Every instruction in shipped code and in the simulator examples has a comment saying what
+  it does (players learn from them line by line; a test checks).
 - Photos are packed little-endian (the first pixel in a byte's low bits; `src/core/photos.ts`).
 
 - **New simulation state must be saved:** add it to `src/core/SaveManager.ts`. The

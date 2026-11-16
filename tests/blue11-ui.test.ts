@@ -114,10 +114,10 @@ describe('Comms', () => {
     const fields = frameFields(bytes, d);
     expect(fields.flatMap((x) => x.bytes)).toEqual(bytes);
     expect(fields.find((x) => x.name === 'PSW')?.value).toBe('170004 nZvc');
-    expect(fields.find((x) => x.name === 'PC')?.note).toMatch(/after the BPT on line 16/);
+    expect(fields.find((x) => x.name === 'PC')?.note).toMatch(/after the BPT on line 18/);
     const frame = { unitId: 1, tick: 9, bytes, gap: 0, taken: 8 };
     expect(sentByBreakpoint(frame, [])).toBe(true);
-    expect(describeFrame(frame, d)).toMatch(/^PROGRAM DUMP \(snapshot t8\): PC 002002 \(L17\) · PROG_HALTED · PSW 170004 nZvc · R0=000001/);
+    expect(describeFrame(frame, d)).toMatch(/^PROGRAM DUMP \(snapshot t8\): PC 002002 \(L19\) · PROG_HALTED · PSW 170004 nZvc · R0=000001/);
     const st = encodeStack11Dump(0o1774, [7, 0o2014]);
     expect(frameFields(st, d).flatMap((x) => x.bytes)).toEqual(st);
     expect(romRoutineAt(ROM_EXPORTS.STEP + 2)).toBe('STEP');
