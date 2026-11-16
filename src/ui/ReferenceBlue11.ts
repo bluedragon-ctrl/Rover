@@ -117,58 +117,101 @@ const SECTIONS = [
   ['radio', 'Radio'],
 ] as const;
 
+/** A first program, line by line (the Basics tab; a test runs it). */
+export const FIRST_PROGRAM = `START:  MOV  #NORTH, R0 ; which way to drive
+        MOV  #3, R1     ; how many tiles
+        JSR  PC, STEP   ; ROM: drive, wait till done
+        BNE  STUCK      ; R0 not OK? something
+                        ;   stopped us: skip
+        MOV  #1, R0     ; result 1: it worked
+STUCK:  HALT            ; the end. The result is
+                        ;   R0: 1, or the error code`;
+
 function basicsHtml(): string {
   const rows = (r: [string, string][]) => `<table>${r.map(([a, b]) => `<tr><td><code>${a}</code></td><td class="small">${b}</td></tr>`).join('')}</table>`;
   return `
-    <p class="small">The rover's computer is the <b>Blue-11</b>, a 16-bit CPU, programmed in <b>Blue-11 assembly</b>. Words are 16
-    bits, stored low byte first; addresses are byte addresses, words sit at even ones. <b>Numbers are octal</b>.</p>
+    <p class="small">The rover's computer is the <b>Blue-11</b>, a 16-bit CPU. You program it in <b>Blue-11 assembly</b>: one
+    simple instruction per line, such as "copy this number into that register" or "jump if it was zero". The rover runs two
+    pieces of code: the <b>firmware</b>, which keeps it alive, and your <b>program</b>, the mission you write in the Code tab.</p>
+    <p class="small dim">This tab covers the basics. Then: Instructions (every command), Modes (how to write operands), Flags
+    (making decisions), I/O page (sensors and motors), ROM (ready-made routines), and Tools, Image, Symbols and Radio.</p>
+    <h4>Your first program</h4>
+<pre class="small">${esc(FIRST_PROGRAM)}</pre>
+    <p class="small dim">Drives 3 tiles north and ends with result 1, or, if something is in the way, with the error code
+    (Symbols tab). The default firmware turns lamp 1 blue when the program ends and shows its result on the display on the
+    back of the rover. Text after <code>;</code> is a comment for people: the computer ignores it.</p>
+    <h4>Numbers are octal</h4>
+    <p class="small">Blue-11 numbers are written in <b>octal</b> (base 8: only the digits 0–7) unless you add a dot. Octal is used
+    because each digit is exactly three bits, which makes bit patterns and machine code easy to read. To count: 0 … 7, then
+    10 (eight), 11 (nine), 12 (ten) …</p>
+    ${rows([
+      ['7', 'seven: the same in octal and decimal'],
+      ['10', 'eight (1 × 8 + 0). The commonest mistake: <code>#10</code> is not ten'],
+      ['12 · 12.', 'ten in octal · twelve: a dot after a number makes it decimal'],
+      ['20 · 100', 'sixteen · sixty-four'],
+      ['177777', 'the biggest 16-bit value: 65535, or −1 when read as signed (Flags tab)'],
+    ])}
     <h4>Writing code</h4>
     ${rows([
-      ['LABEL:  OP  src, dst  ; note', 'a line: label, instruction, operands (source first), comment'],
-      ['20 · 20. · ^B10100 · \'A', 'octal 20 (= 16), decimal 20, binary, a character code'],
-      ['NAME = 5 · DIR = %1', 'a constant; a register symbol (DIR means R1)'],
-      ['1$:', 'local label: valid up to the next ordinary label, so routines can each have a 1$'],
-      ['.WORD 1, 2 · .BYTE 7', 'data words / bytes'],
-      ['.ASCII /HI/ · .ASCIZ /HI/', 'characters (.ASCIZ adds a 0 byte)'],
-      ['.BLKW 4 · .BLKB 10', 'reserve 4 words / 8 bytes (zeros)'],
-      ['.EVEN · . = . + 20', 'align to a word; move the location counter'],
-      ['2+3*4 · 2+&lt;3*4&gt;', 'expressions go left to right (20.); &lt; &gt; group (14.). Also & (and), ! (or)'],
-      ['NAME (six characters)', 'names have at most six letters, digits, . and $ (DEC style)'],
+      ['LABEL:  OP  src, dst  ; note', 'a line: an optional label (a name for this place), the instruction, its operands (source first, then destination), an optional comment'],
+      ['20 · 20. · ^B10100 · \'A', 'numbers: octal 20 (sixteen), decimal 20, binary, the code of the character A'],
+      ['NAME = 5', 'a constant: NAME means 5 from now on'],
+      ['DIR = %1', 'a new name for a register: DIR means R1'],
+      ['1$:', 'a local label: it only counts up to the next ordinary label, so every routine can have its own 1$, 2$…'],
+      ['.WORD 1, 2 · .BYTE 7', 'put numbers into memory: whole words / single bytes'],
+      ['.ASCII /HI/ · .ASCIZ /HI/', 'put text into memory, one byte per character (.ASCIZ adds a 0 byte at the end)'],
+      ['.BLKW 4 · .BLKB 10', 'reserve room filled with zeros: 4 words / 8 bytes'],
+      ['.EVEN · . = . + 20', 'move to an even address (needed before words); skip 20 (sixteen) bytes. "." means "here"'],
+      ['2+3*4 · 2+&lt;3*4&gt;', 'arithmetic is worked out strictly left to right: 2+3*4 is 24 (twenty). Use &lt; &gt; as brackets: 16 (fourteen). Also & (and), ! (or)'],
+      ['NAME (six characters)', 'names have at most six letters, digits, . and $; upper and lower case are the same. Names the system already uses (STEP, BAT…) are taken'],
     ])}
-    <h4>Registers</h4>
+    <h4>Registers: the CPU's own eight words</h4>
+    <p class="small">Registers are tiny, very fast storage places inside the CPU. Most work happens in them: load a value, change
+    it, store it back.</p>
     ${rows([
-      ['R0 … R5', 'general registers. ROM routines take arguments in R0, R1 (R2) and return in R0 with the flags set'],
-      ['SP (R6)', 'the stack pointer: the stack grows down; JSR pushes the return address'],
-      ['PC (R7)', 'the program counter: the address of the next instruction'],
-      ['PSW', `status word at ${oct6(0o177776)}: priority (bits 7–5), T (4), N Z V C (3–0); see Flags`],
+      ['R0 … R5', 'general registers for your values. ROM routines take their inputs in R0, R1 (some also R2) and answer in R0; they keep R2–R5, so keep your own values there'],
+      ['SP (R6)', 'the stack pointer: the stack is a pile of words for saving things; it grows down in memory. JSR puts the return address on it'],
+      ['PC (R7)', 'the program counter: the address of the next instruction. Jumps and branches change it'],
+      ['PSW', `the status word (at ${oct6(0o177776)}): the flags N Z V C and more, see the Flags tab`],
     ])}
-    <h4>Memory map</h4>
+    <h4>Words, bytes and addresses</h4>
+    <p class="small">Memory is a long row of <b>bytes</b> (8 bits each), numbered from 0: a byte's number is its <b>address</b>.
+    A <b>word</b> is 16 bits, two bytes side by side, and always starts at an even address, so the next word is 2 further on.
+    The low byte comes first (at the lower address), the high byte after it.</p>
+    <h4>Memory map: what is where</h4>
     ${rows([
-      ['000000–000177', 'trap and interrupt vectors (the boot ROM fills them)'],
-      [`${o(BLUE11.firmwareBase)}–${o(BLUE11.programBase - 1)}`, `the firmware: code, data, its stack below ${o(BLUE11.programBase)} (PRGBAS)`],
-      [`${o(BLUE11.programBase)}–${o(BLUE11.coreBytes - 1)}`, 'the program: code, data, its stack from the top of core down (Mk-I core 2 KB)'],
-      [`${o(BLUE11.imageBase)}–`, 'image memory (IMGBAS): the photo the camera took'],
-      [`${o(BLUE11.romBase)}–167777`, 'the ROM: boot, handlers, drivers, helpers (read and execute only)'],
-      [`${o(BLUE11.ioBase)}–177777`, 'device registers: the I/O page'],
+      ['000000–000177', 'vectors: where the CPU looks up what to do when something happens (a trap or an interrupt). The boot ROM fills them'],
+      [`${o(BLUE11.firmwareBase)}–${o(BLUE11.programBase - 1)}`, `the firmware: its code, data and stack`],
+      [`${o(BLUE11.programBase)}–${o(BLUE11.coreBytes - 1)}`, `your program (PRGBAS): code and data from the bottom, its stack from the top down. Mk-I has 2 KB of memory in all`],
+      [`${o(BLUE11.imageBase)}–`, 'image memory (IMGBAS): the photo the camera took (Image tab)'],
+      [`${o(BLUE11.romBase)}–167777`, 'the ROM: built-in code to start the rover and routines you can call (ROM tab). It can be read and run, not changed'],
+      [`${o(BLUE11.ioBase)}–177777`, 'the I/O page: the rover\'s sensors, motors and radio (I/O page tab)'],
     ])}
     <h4>Firmware, program and the gate</h4>
-    <p class="small">The <b>firmware</b> keeps the rover alive and gives the <b>program</b> time slices: it writes <code>GO</code> to
-    <code>PRGCS</code> (the ROM's <code>RUN</code> does it for you). The program runs in user mode with its own registers until
-    <code>HALT</code> (result in <code>R0</code> → <code>PRGRES</code>), <code>RTS PC</code>, the end of its slice, a preemption or a
-    fault; then the firmware continues after its gate write and reads why in <code>PRGST</code> / <code>PRGER</code>. A program can't
-    write firmware-only registers or memory outside its region (that is a fault).</p>
+    <p class="small">The <b>firmware</b> is in charge: it keeps the rover alive (battery, watchdog, emergencies) and gives the
+    <b>program</b> turns to run. It starts a turn by writing <code>GO</code> to <code>PRGCS</code>, the <b>gate</b> (the ROM's
+    <code>RUN</code> does it for you). The program then runs with its own registers until one of these: it ends with
+    <code>HALT</code> (its result in <code>R0</code>) or <code>RTS PC</code>, its time is up, an emergency stops it, or it
+    crashes. Then the firmware carries on and can read what happened in <code>PRGST</code> and <code>PRGER</code>.</p>
+    <p class="small dim">The program is kept apart for safety: it cannot write the firmware's memory or its registers (marked FW
+    in the I/O page tab). Trying is a crash of the program, never of the rover.</p>
     <h4>Time</h4>
-    <p class="small">The CPU gets ${CHASSIS_MK1.cyclesPerTick} cycles per tick (Mk-I; the overclock upgrades give more). Every bus access costs one cycle: each
-    instruction word, each extra word (<code>#n</code>, an address, an index), each operand read and write. <code>MOV R1, R2</code> = 1,
-    <code>MOV #5, R0</code> = 2, <code>INC @#COUNT</code> = 4, <code>JSR PC, X</code> = 3. <code>WAIT</code> sleeps until an interrupt
-    (the line clock interrupts every tick at vector ${o(CLOCK_VECTOR, 3)} when <code>LKS</code> has <code>IE</code>).</p>
-    <h4>Traps</h4>
+    <p class="small">The world moves in <b>ticks</b>. In each tick the CPU has ${CHASSIS_MK1.cyclesPerTick} <b>cycles</b> (Mk-I;
+    the overclock upgrades give more). Every time the CPU touches memory costs one cycle: reading the instruction itself, every
+    extra word (<code>#n</code>, an address), every value it reads or writes. So <code>MOV R1, R2</code> costs 1,
+    <code>MOV #5, R0</code> 2, <code>INC @#COUNT</code> 4 and <code>JSR PC, X</code> 3.</p>
+    <p class="small dim">Waiting is cheap: <code>WAIT</code> sleeps until something wakes the CPU, such as the line clock, which
+    interrupts once a tick (vector ${o(CLOCK_VECTOR, 3)}, when <code>LKS</code> has <code>IE</code>). The ROM routines wait like this.</p>
+    <h4>Traps: when something goes wrong</h4>
+    <p class="small">When an instruction cannot be done, the CPU stops what it was doing and jumps to a handler for that kind of
+    problem, through a <b>vector</b> (an address listed at the start of memory). In your program that means it has crashed:
+    the firmware sees why in <code>PRGER</code>. In the firmware, the ROM's handler restarts the rover.</p>
     ${rows([
-      ['004', 'bus error: odd address, nothing there, protection, stack overflow → program fault; firmware: reboot'],
-      ['010', 'illegal instruction (also MUL / DIV without EIS)'],
-      ['014', 'BPT and the trace bit: halt and dump'],
-      ['034', 'TRAP n: a system call the firmware serves'],
-      [`${o(CLOCK_VECTOR, 3)} · ${DEVICE_BLOCKS.map((b) => o(b.vector, 3)).join(' ')} · ${o(TX_VECTOR, 3)}`, `interrupts: line clock (level 6); ${DEVICE_BLOCKS.map((b) => b.title.toLowerCase()).join(', ')} (level 4); TX room`],
+      ['004', 'bus error: a word at an odd address, an address with nothing there, memory you may not touch, or a stack that grew too far'],
+      ['010', 'illegal instruction: something that is not an instruction (also MUL / DIV without the EIS upgrade)'],
+      ['014', 'breakpoint: BPT or single-stepping. It stops and sends the registers to Comms'],
+      ['034', 'TRAP n: not a problem but a request, a system call the firmware answers'],
+      [`${o(CLOCK_VECTOR, 3)} · ${DEVICE_BLOCKS.map((b) => o(b.vector, 3)).join(' ')} · ${o(TX_VECTOR, 3)}`, `interrupts (firmware): the clock; ${DEVICE_BLOCKS.map((b) => b.title.toLowerCase()).join(', ')} finished; room in the radio queue`],
     ])}`;
 }
 

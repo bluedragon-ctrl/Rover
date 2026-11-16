@@ -533,7 +533,7 @@ const SYSTEM: IoRegister[] = [
     addr: 0o177570,
     name: 'DISP',
     access: 'RW',
-    description: 'The two-digit number display on the back of the rover: write 0–255 to show it',
+    description: 'The two-digit display on the back of the rover: write 0–255 (377) and it shows it in hexadecimal, 00–FF',
     read: (h) => h.u.post,
     write: (h, v) => (h.u.post = v & 0xff),
   },

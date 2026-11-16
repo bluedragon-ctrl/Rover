@@ -227,6 +227,26 @@ describe('Reference', () => {
     expect(text && String.fromCharCode(...text.body)).toBe('HI');
   });
 
+  it('the Basics tab\'s first program drives 3 north (result 1) or stops at a rock (E.BLK), shown on the display', async () => {
+    const { FIRST_PROGRAM } = await import('../src/ui/ReferenceBlue11');
+    const { DEFAULT_FIRMWARE } = await import('../src/core/programs');
+    const { flat, factory, run } = await import('./helpers/rover');
+    const { Layer, LightColor, ProgState, Status } = await import('../src/core/types');
+    const { T } = await import('../src/core/WorldRegistry');
+    for (const rock of [false, true]) {
+      const e = new SimulationEngine({ seed: 5 });
+      const u = e.spawnUnit('t', 0, 0);
+      flat(e);
+      if (rock) e.world.setTile(0, 2, Layer.OBSTACLE, T.CLIFF_WALL);
+      expect(e.upload(u, DEFAULT_FIRMWARE, factory).errors).toEqual([]);
+      expect(e.uploadProgram(u, FIRST_PROGRAM, factory).errors).toEqual([]);
+      run(e, 2);
+      for (let i = 0; i < 300 && u.progState !== ProgState.PROG_NONE; i++) run(e, 1);
+      expect(u.progState).toBe(ProgState.PROG_NONE);
+      expect([u.y, u.progResult, u.post, u.indicators[0]]).toEqual(rock ? [1, Status.ERR_BLOCKED, Status.ERR_BLOCKED, LightColor.BLUE] : [3, 1, 1, LightColor.BLUE]);
+    }
+  });
+
   it('every Modes and Flags example assembles', async () => {
     const { MODE_DOC, PC_MODE_DOC, MODE_PATTERNS, FLAG_DOC } = await import('../src/ui/ReferenceBlue11');
     const { assemble } = await import('../src/blue11');
