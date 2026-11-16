@@ -594,7 +594,9 @@ condition brings control back, as an operating system runs a task.
 * **Code tab**: a **Program** (default) / **Firmware** (advanced) switch, each slot with its
   own editor (Blue-11 assembly highlighting, assembler errors and warnings) and templates,
   *Upload program* or *Upload firmware & reboot*, a core bar `firmware 326 / 896 · program
-  32 / 1022 B · core 2 KB` (the edited slot counts its draft), the octal listing pane, and
+  32 / 1022 B · core 2 KB` (the edited slot counts its draft), the code's range and size in
+  core, a **Listing** checkbox (off by default) that shows each line's address and words in
+  octal in a column left of the code, and
   warnings when the firmware has no gate or code takes photos it never sends. New rovers
   ship the default firmware and no program (the Program slot shows *First steps* as an
   unsent draft).
@@ -603,7 +605,7 @@ condition brings control back, as an operating system runs a task.
   like the firmware writing `P.RDY`; rejected without a program.
 * **Dump box and Comms [M11]:** the Code tab's *Dump program / firmware state* box shows the
   newest dump of each kind as a card (registers in octal, hover for decimal; the PC as a link
-  to its line; marked ◆ in the listing) and waiting requests with an estimate. The **Comms**
+  to its line; marked ◆ in the editor's margin) and waiting requests with an estimate. The **Comms**
   tab is one timeline of both directions (▲ uploads and requests, ▼ messages, dumps, system
   frames, science) with a *Radio link* box (signal, TX FIFO, recorder, `TXLOST`); dumps and,
   with *Decode bytes*, every message are explained byte by byte. **Reference → Radio**
@@ -857,7 +859,8 @@ in `R2`, kept), the answer in `R0` with the flags set from it. **They may change
 ### 5.10 Code size
 
 Code is measured in bytes of its image, the region of core it occupies (§5.7); the Code tab
-shows both regions and a listing (address and words in octal, as the assembler writes it).
+shows both regions and, with *Listing* checked, each line's address and words in octal (as
+the assembler writes them).
 Uploads cost energy per byte (§3.3, §3.9.3).
 
 ## 6. Milestones

@@ -706,6 +706,15 @@ what the top bar shows, discoverability for beginners. Proposals with screenshot
       comments for state / `@STATUS`, source links (Comms → Code tab), waiting estimate,
       foldable dump box, rejected sends in Comms, and **`BRK` sends a register dump by
       itself** (SPEC §3.8.4, rules change approved). Tests in `tests/comms.test.ts`.
+- [x] **Listing column instead of the listing pane** (owner, 2026-11-16: the pane under the
+      editor repeated the source and the totals and squeezed the editor). A **☐ Listing**
+      checkbox in the Code tab toolbar (off by default, remembered in `localStorage`
+      `rover.listing`; `?listing=0` removes it) shows the address and octal words in an
+      editor gutter left of the code (`EditorPanel.showListing` / `setListing`, grouped by
+      `listingByLine` in `src/ui/toolchain.ts`; more than three words end in `…+n`, all on
+      hover; click → line). The ◆ dump mark is a margin marker and line tint, visible with the
+      listing off; the range and size (`002000–002037 · 32 B`) moved to the state line; the
+      duplicate totals footer is gone. Awaiting owner review (`preview.html?editor=1`).
 - [ ] Open suggestions: a teaching goal ("dump your program's registers"); tab bar too wide
       (merge Goals + Upgrades into a *Mission* tab?).
 - [ ] Phase 2 (rules decision for the owner): mission control knows the rover only from what
@@ -963,3 +972,4 @@ window with a fixed dish?
 | 2026-11-16 | `ccr-1e5e736c-64ollq` | M15 slice 5: UI for the PDP-11 core behind Admin → New PDP-11 world / `?cpu=pdp11`: Code tab through `ui/toolchain.ts` (MACRO-11 editor with warnings, templates, core regions, octal listing), admin debugger (octal registers, PSW / NZVC, disassembly, stack, I/O page via side-effect-free `peek` / `ioSnapshot`), PDP-11 register and stack dumps (kinds 5–8; `BPT` / `HALT` report themselves) decoded in Comms and the dump box, framed TX / recorder messages in Comms, double-resolution photos in the Gallery, Reference (Instructions, Modes, Flags, I/O page, ROM, Symbols, Radio); 21 new tests. Rover-ASM game unchanged. |
 | 2026-11-16 | `m15-slice6-blue11` | M15 slice 6, M15 complete: the Blue-11 is the only core (`cpu` option, URL and Admin switch gone; `CpuStatus` on the unit); Rover-ASM deleted (compiler, VM, ISA, migrations, M14 ROM and templates, `ports.ts`, editor language, listing, Reference, UI branches, dump kinds 1–4); balance folded into the chassis (64 cycles, 2 KB recorder, 4 B/tick), upgrades `CPU_96`/`CPU_128`, `REC_4K`/`REC_8K`, `LINK_6` (flash/RAM/register/trace upgrades removed); save v21 with `OldSaveError` and a plain message for older saves; little-endian photos (ROM `PLOT`); Reference Tools and Image tabs rewritten; owner rename to **Blue-11** / Blue-11 assembly (`src/blue11/`, `BLUE11_*.md`, simulator page, all player-visible text); SPEC v2.0 (§2–§3.9, §5 rewritten), CLAUDE.md rewritten; game-rule tests ported to Blue-11 code (`tests/helpers/rover.ts`), 382 tests. |
 | 2026-11-16 | `roadmap-upgrades-deferred` | Owner decision: memory boards and EIS (the designed Blue-11 upgrades) wait until the rover works and has been playtested; ROADMAP backlog, SPEC §3.7 / §5.4, `BLUE11_CPU.md` §14.7. Docs only. |
+| 2026-11-16 | `claude/cool-bardeen-72hwxi` | M11: the Code tab's listing pane under the editor replaced by a listing column in the editor (address + octal words left of the code), behind a *Listing* checkbox, off by default and remembered; ◆ dump mark in the editor margin (shown without the listing); range and size in the state line; duplicate source and totals removed. UI and docs only. |

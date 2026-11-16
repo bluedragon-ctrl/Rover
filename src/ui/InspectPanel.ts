@@ -29,7 +29,7 @@ const HELP = (slot: Slot) => `You cannot see inside the rover directly: you can 
   <br><br><b>▲ Dump registers</b> sends a small request <b>up</b> to the rover. The moment it arrives, the rover copies
   the ${slot}'s registers (<code>R0</code>–<code>R5</code>, <code>SP</code>, <code>PC</code>: the instruction it runs next) and the
   <code>PSW</code> (priority, mode, the flags <code>N Z V C</code>) and sends them <b>down</b>, ahead of your messages, in octal.
-  The next instruction is marked ◆ in the listing.
+  The next instruction is marked ◆ beside its line in the editor.
   <br><b>▲ Dump stack</b> does the same for the words on the ${slot}'s stack, from <code>SP</code> up (at most eight):
   saved registers and the return addresses of <code>JSR</code>s.
   <br><br>A dump is only the ${slot}'s CPU, not the whole rover (battery, position… are I/O registers: read them in code and send them).
