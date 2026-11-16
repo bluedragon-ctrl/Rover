@@ -166,7 +166,8 @@ firmware installed for free.
   or not fully stowed.
 * **Status lamps [M8]:** the rover's status lights: three lamps on the cabin roof,
   `IND1`, `IND2`, `IND3` (left to right), each takes a light colour (`OFF`, `RED`, `GREEN`,
-  `BLUE`, `AMBER`, 0–4; larger values clamp to 4). A purely visual channel for the player:
+  `BLUE`, `AMBER`, 0–4; larger values clamp to 4, and the registers are unsigned, so
+  writing −5 (177773) gives `AMBER`: confirmed by the owner, 2026-11-16). A purely visual channel for the player:
   free, no gameplay effect. They are physical and survive reboots; they go dark while the
   rover is powered off. The default firmware uses lamp 1 = the program (green running, blue
   done, red fault), lamp 2 = power (amber charging), lamp 3 = uplink (blue while the dish is
