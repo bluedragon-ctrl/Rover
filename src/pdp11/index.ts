@@ -13,5 +13,7 @@ export { disassemble } from './disassembler';
 export type { Disassembled, DisassembleOptions } from './disassembler';
 export { INSTRUCTIONS, BY_NAME, decodeOp, octal } from './isa';
 export type { Format, OpInfo } from './isa';
+export { DeviceMachine, DL11, KW11L } from './devices';
+export type { Device, DeviceMachineOptions, DL11Options } from './devices';
 export { SimpleMachine, DEV, CSR } from './machine';
 export type { MachineOptions } from './machine';

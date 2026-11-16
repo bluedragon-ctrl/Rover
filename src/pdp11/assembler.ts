@@ -25,6 +25,12 @@ export interface AssembleOptions {
    * `long`: any length, and `_` allowed.
    */
   names?: NameStyle;
+  /**
+   * Accept `^X` hexadecimal numbers (`^XFF`). Not MACRO-11 (which has only `^D` `^O` `^B`),
+   * so off by default; for projects that want an easier mode. The disassembler and the
+   * listing stay octal.
+   */
+  hex?: boolean;
 }
 
 export interface AsmError {
@@ -547,7 +553,7 @@ class Assembler {
   // ------------------------------------------------------------------ expressions
 
   private expr(text: string, column: number): Value {
-    const p = new ExprParser(text, column, (name, col) => this.lookup(name, col));
+    const p = new ExprParser(text, column, (name, col) => this.lookup(name, col), this.opts.hex ?? false);
     const v = p.parse();
     if (v.undef && this.pass === 2) throw new AsmFail(`undefined symbol ${p.undefName}`, p.undefCol);
     return v;
@@ -669,6 +675,7 @@ class ExprParser {
     private readonly s: string,
     private readonly col: number,
     private readonly lookup: (name: string, column: number) => number | null,
+    private readonly hex: boolean,
   ) {}
 
   parse(): Value {
@@ -738,6 +745,13 @@ class ExprParser {
       const k = (s[this.i + 1] ?? '').toUpperCase();
       this.i += 2;
       if (k === 'C') return ~this.term() & 0xffff;
+      if (k === 'X') {
+        if (!this.hex) throw new AsmFail('^X (hexadecimal) is not MACRO-11; it needs the hex option', at);
+        const h = /^[0-9A-Fa-f]+/.exec(s.slice(this.i));
+        if (!h) throw new AsmFail('^X needs hexadecimal digits', at);
+        this.i += h[0].length;
+        return parseInt(h[0], 16);
+      }
       const radix = k === 'D' ? 10 : k === 'O' ? 8 : k === 'B' ? 2 : 0;
       if (!radix) throw new AsmFail(`unknown ^${k} (use ^D, ^O, ^B or ^C)`, at);
       const m = /^[0-9]+/.exec(s.slice(this.i));

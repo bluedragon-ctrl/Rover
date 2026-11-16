@@ -32,6 +32,7 @@ const r = cpu.run(1000);      // { reason, cycles, instructions, trap? }
 | `interrupt(vector, level)` / `cancelInterrupt(vector)` | request / withdraw; taken between instructions when `level` > PSW priority |
 | `onTrap = (t) => 'vector' \| 'stop'` | decide per trap; `stop` makes `run` return reason `trap` (faults leave the PC at the instruction) |
 | `onModeChange = (mode, old) => …` | PSW bits 15–14 changed |
+| `onInstruction = (pc, opcode) => …` | every instruction once fetched, before it runs (profiling, coverage maps); not for a fetch that faults |
 | `stackLimit` | a push through SP below it traps to 4 (`cause: 'stack-limit'`) |
 | `save()` / `load(state)` / `reset()` | plain JSON state |
 | `r`, `psw`, `n z v c`, `priority`, `waiting`, `halted` | state |
@@ -65,7 +66,8 @@ local labels `1$` between two ordinary labels. Numbers are **octal**; `10.` is d
 unary `-`, `^C`. Flag operations combine with `!` as the disassembler writes them
 (`CLC!CLV` = 000243; clears and sets not mixed). Directives: `.WORD .BYTE .ASCII .ASCIZ .BLKW .BLKB .EVEN .ODD .END`
 (`.TITLE` and friends are ignored). Names: `dec` (default) = 1–6 characters of letters,
-digits, `.`, `$`; `long` = any length, `_` allowed. Not included: macros, `.PSECT`,
+digits, `.`, `$`; `long` = any length, `_` allowed. Option `hex: true` adds `^X`
+hexadecimal (`^XFF`); it is not MACRO-11, so it is off by default (an error without it). Not included: macros, `.PSECT`,
 linking, conditional assembly.
 
 ## Disassembler
@@ -73,9 +75,40 @@ linking, conditional assembly.
 `disassemble(readWord, address, { nameOf })` → `{ address, words, text }`. Branch and
 PC-relative targets are shown as absolute addresses, or names from `nameOf`.
 
+## DeviceMachine and devices
+
+`DeviceMachine` is a `Bus` with RAM from 0 (option `memory`, default 56 KB), the CPU
+(`CpuOptions`), and memory-mapped devices added with `add(device)` (overlaps with RAM, the
+PSW or another device throw). `boot(asm)`, `run(cycles, breakpoints?)`, `step()`, `cycles`,
+`instructions`. Time is CPU cycles, so runs are deterministic.
+
+```ts
+class Thruster implements Device {
+  readonly base = 0o170000; readonly size = 2;
+  power = 0;
+  read() { return this.power; }                       // word at an even offset
+  write(off: number, v: number, byte: boolean) {      // a byte write to an odd offset is the high byte
+    if (!byte) this.power = v;
+    return true;
+  }
+}
+const m = new DeviceMachine({ eis: true }).add(new Thruster());
+```
+
+`Device`: `base`, `size`, `read(offset)` (a word, or `BUS_ERROR`; byte reads take half of
+it, as on the Unibus), `write(offset, value, byte)` (false = bus error), and optionally
+`attach(cpu)` (to request interrupts), `reset(powerUp)` (`RESET` instruction: false; boot:
+true), `advance(cycles)`, `nextEvent()` (cycles until it changes by itself: the CPU stops
+there so polling programs see it on time), `wakeIn()` / `canWake()` (for `WAIT`: a
+sleeping CPU skips ahead to the next interrupt, or the run stops if nothing can wake it).
+
+DEC devices included: `DL11` serial line (option `base`, default the console `177560`;
+`vector` 60 and +4; `type(ch)`, `output`, `onOutput`) and `KW11L` line clock (`177546`,
+vector 100, a tick every `cycles`).
+
 ## SimpleMachine
 
-RAM from 0 (default 56 KB), a DL11 console (`177560`–`177566`, vectors 60/64) and a KW11-L
-line clock (`177546`, vector 100) that ticks every `clockCycles` CPU cycles: deterministic.
-`boot(asm)`, `run(cycles)`, `step()`, `type(ch)`, `output`. Used by the tests and the
+A `DeviceMachine` with a DL11 console (`177560`–`177566`, vectors 60/64) and a KW11-L
+line clock (`177546`, vector 100) that ticks every `clockCycles` CPU cycles (`console`,
+`clock`; `type(ch)`, `output`, `onOutput` from the console). Used by the tests and the
 standalone simulator page (`simulator.html`, `src/simulator/`).

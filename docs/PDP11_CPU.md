@@ -678,14 +678,16 @@ cpu.step();                           // one instruction (debugger)
 cpu.interrupt(vector, level);         // the host decides when (Rover: at tick start)
 cpu.onTrap = (t) => 'vector' | 'stop';   // Rover: program-mode faults leave through the gate
 cpu.onModeChange = (mode, old) => …;  // PSW bits 15–14 changed (RTI, trap, PSW write)
+cpu.onInstruction = (pc, opcode) => …; // each instruction once fetched (profiling, coverage)
 cpu.stackLimit = 0o1000;              // a push below it traps to 4
 cpu.save() / cpu.load(state);         // plain JSON; swapping the two register sets
 
-assemble(source, { origin, symbols, names: 'dec' });
+assemble(source, { origin, symbols, names: 'dec', hex: false });   // hex: opt-in ^X, not MACRO-11
 // → { ok, errors[{line, column, message}], origin, bytes, start, symbols, labels,
 //     lines, lineAt (address → line), listing, listingRows }
 disassemble(readWord, address, { nameOf });   // → { address, words, text }
-new SimpleMachine({ memory, clockCycles, eis });   // RAM + DL11 console + KW11-L clock
+new DeviceMachine({ memory, eis }).add(device);    // RAM + CPU + memory-mapped Device objects
+new SimpleMachine({ memory, clockCycles, eis });   // a DeviceMachine with DL11 console + KW11-L clock
 ```
 
 The PSW answers on the bus at `177776` inside the CPU, as on every PDP-11. `HALT` stops
