@@ -135,7 +135,7 @@ input[type=checkbox] { width: auto; }
 .seg.small button { padding: 2px 8px; }
 .sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 2px; }
 
-.code-ws { display: flex; flex-direction: column; gap: 6px; flex: 1 1 58%; min-height: 0; }
+.code-ws { display: flex; flex-direction: column; gap: 6px; flex: 1 1 58%; min-height: 0; overflow-y: auto; }
 .cw-head { display: flex; align-items: center; gap: 6px 12px; flex-wrap: wrap; }
 .cw-flash { flex: 1 1 250px; min-width: 0; white-space: nowrap; display: flex; flex-direction: column; gap: 3px; align-items: flex-end; font-family: var(--mono); font-size: 11px; color: var(--dim); }
 .flashbar { width: 100%; height: 6px; background: #1a2230; border-radius: 3px; display: flex; overflow: hidden; }
