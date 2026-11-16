@@ -1,121 +1,384 @@
-# `src/pdp11/` — a PDP-11 compatible CPU, assembler and disassembler
+# `src/pdp11/` — PDP-11 CPU, MACRO-11 assembler, disassembler, devices
 
-A small, self-contained library: the PDP-11/40 instruction set (EIS optional), a MACRO-11
-subset assembler, a disassembler, and a minimal reference machine. Rover is its first
-user, not its owner. Design: [`docs/PDP11_CPU.md`](../../docs/PDP11_CPU.md) §14.
+A self-contained TypeScript library: the PDP-11/40 instruction set (EIS optional), a
+MACRO-11 subset assembler, a disassembler, a bus with pluggable memory-mapped devices,
+and DEC's console and line clock. No dependencies. Rover is its first user, not its owner.
+Design rationale: [`docs/PDP11_CPU.md`](../../docs/PDP11_CPU.md) §14.
 
-**Rules:** nothing here imports from outside this folder (`tests/pdp11/boundary.test.ts`
-enforces it); deterministic and integer-only (no DOM, no randomness, no wall-clock time);
-errors are values, never exceptions thrown at the host. `index.ts` is the only entry
-point; `codemirror.ts` is a separate, optional one (syntax highlighting).
+Every code block in this file is run by `tests/pdp11/readme-examples.test.ts`, and that
+test fails if a block here isn't in it. If you change an example, change both.
 
-## CPU
+## Contents
+
+1. [Which layer to use](#which-layer-to-use)
+2. [Conventions](#conventions) (read this first: octal, 16 bits, bytes, cycles)
+3. [Quick start](#quick-start)
+4. [Assembler](#assembler)
+5. [CPU](#cpu)
+6. [DeviceMachine and devices](#devicemachine-and-devices)
+7. [SimpleMachine](#simplemachine)
+8. [Host recipes](#host-recipes): keyboard, coverage, system calls, breakpoints, snapshots, disassembly
+9. [Disassembler, ISA tables, CodeMirror](#disassembler-isa-tables-codemirror)
+10. [Pitfalls](#pitfalls)
+11. [Working on the library](#working-on-the-library)
+
+## Which layer to use
+
+| You want | Use |
+| :--- | :--- |
+| Run a program with a console (print, keyboard) and a clock | `SimpleMachine` |
+| Your own memory-mapped hardware (sensors, motors, displays) | `DeviceMachine` + your `Device` classes (+ `DL11` / `KW11L` if wanted) |
+| Your own memory map, protection, or timing model (as Rover's `src/core/machine/` does) | `Cpu` with your own `Bus` |
+| Turn source into bytes, a listing, line numbers | `assemble` |
+| Show machine code as text | `disassemble` |
+| Syntax highlighting in CodeMirror 6 | `src/pdp11/codemirror.ts` (separate entry point) |
+
+Import everything from `src/pdp11/index.ts` (the only entry point); `codemirror.ts` is a
+second, optional one.
+
+## Conventions
+
+- **Octal everywhere, as on the PDP-11.** Addresses, opcodes and register values in
+  docs, messages, listings and disassembly are octal. In TypeScript write `0o177564`;
+  `octal(n)` formats six digits. In assembler source, numbers are octal unless they end in
+  `.` (`10.` = ten).
+- **Words are 16-bit unsigned numbers** (0–0xFFFF) in registers, the PSW and bus values;
+  bytes are 0–0xFF. Signed meaning comes from the instruction (`n`, `v` flags).
+- **Addresses are byte addresses**, little-endian words at even addresses. A word access at
+  an odd address traps to 4.
+- **The memory map:** RAM from 0 (56 KB by default, to `157777`); the I/O page
+  `160000`–`177777` holds device registers; the CPU answers at `177776` (the PSW) itself.
+  Vectors live in low memory: two words each (new PC, new PSW) at the vector address.
+- **Time is CPU cycles**, never wall-clock. Same program + same inputs at the same cycle
+  ⇒ the same run, bit for bit.
+- **Bus errors are `BUS_ERROR` (-1)**: any negative `read` result, or `write` returning
+  false, makes the CPU trap to 4.
+- **Errors in the program are values; mistakes by the host throw.** `assemble` never
+  throws (it returns `errors`); the CPU reports traps and stops as `RunResult`s.
+  `DeviceMachine.add` (overlap, bad address) and `new KW11L(0)` throw `Error`. An exception
+  thrown by your own `Bus` or `Device` code passes through `run`.
+- **Determinism rules for contributors:** no DOM, no `Math.random`, no `Date`, no imports
+  from outside this folder (`tests/pdp11/boundary.test.ts` enforces the last).
+
+## Quick start
 
 ```ts
-import { Cpu, BUS_ERROR, type Bus } from './pdp11';
-
-const mem = new Uint8Array(0o160000);
-const bus: Bus = {
-  read: (a, byte) => (a >= mem.length ? BUS_ERROR : byte ? mem[a] : mem[a] | (mem[a + 1] << 8)),
-  write: (a, v, byte) => { if (a >= mem.length) return false; mem[a] = v; if (!byte) mem[a + 1] = v >> 8; return true; },
-};
-const cpu = new Cpu(bus, { eis: false, cycles: 'per-bus-access' });
-cpu.r[7] = 0o1000;            // PC
-cpu.r[6] = 0o1000;            // SP
-const r = cpu.run(1000);      // { reason, cycles, instructions, trap? }
+    const asm = assemble(`
+        MOV #MSG, R1
+1$:     MOVB (R1)+, R0      ; next character
+        BEQ 2$              ; 0: done
+3$:     TSTB @#177564       ; XCSR bit 7: transmitter ready?
+        BPL 3$
+        MOVB R0, @#177566   ; XBUF: print it
+        BR 1$
+2$:     HALT
+MSG:    .ASCIZ /HELLO/
+`);
+    if (!asm.ok) throw new Error(asm.errors.map((e) => `${e.line}:${e.column} ${e.message}`).join('\n'));
+    const m = new SimpleMachine();
+    m.boot(asm);                 // clear RAM, load, PC = start, SP = origin
+    const r = m.run(10_000);     // { reason: 'halt', cycles, instructions }
+    console.assert(m.output === 'HELLO' && r.reason === 'halt');
 ```
-
-| | |
-| :--- | :--- |
-| `run(maxCycles, breakpoints?, resume = true)` | runs until the budget, `WAIT`, `HALT`, a stopped trap, a double fault or a breakpoint; may overshoot the budget by one instruction |
-| `step()` | one instruction, or the pending interrupt |
-| `interrupt(vector, level)` / `cancelInterrupt(vector)` | request / withdraw; taken between instructions when `level` > PSW priority |
-| `onTrap = (t) => 'vector' \| 'stop'` | decide per trap; `stop` makes `run` return reason `trap` (faults leave the PC at the instruction) |
-| `onModeChange = (mode, old) => …` | PSW bits 15–14 changed |
-| `onInstruction = (pc, opcode) => …` | every instruction once fetched, before it runs (profiling, coverage maps); not for a fetch that faults |
-| `stackLimit` | a push through SP below it traps to 4 (`cause: 'stack-limit'`) |
-| `save()` / `load(state)` / `reset()` | plain JSON state |
-| `r`, `psw`, `n z v c`, `priority`, `waiting`, `halted` | state |
-
-Options: `eis` (MUL, DIV, ASH, ASHC), `cycles` (below), `protectModes`: the PDP-11/45 rules
-for the non-kernel modes (PSW bits 15–14 ≠ 0): a write to the PSW's address traps to 4,
-`RTI` / `RTT` can't lower the mode bits or change the priority, `RESET` does nothing.
-
-Cycle model `per-bus-access`: every memory read or write costs 1 (instruction words
-included); `MUL` +4, `DIV` +8, `ASH`/`ASHC` +1 internal. `flat`: 1 per instruction.
-
-Behaviour follows the real machine: odd word addresses trap to 4; `MOVB` to a register sign-extends; byte autoincrement on SP/PC steps
-by 2; the PSW answers at `177776` (writes can't set T); `RTI` with T set traps at once,
-`RTT` delays it one instruction; `RESET` calls `bus.reset()`. `JMP`/`JSR` to a register
-traps to 10 (models differed here; 10 is the illegal-instruction vector). Not included: `MARK`,
-`SPL`, `MFPI`/`MTPI`, `MFPS`/`MTPS`, floating point, memory management.
 
 ## Assembler
 
+`assemble(source: string, options?: AssembleOptions): AssembleResult`
+
+| Option | Default | Meaning |
+| :--- | :--- | :--- |
+| `origin` | `0o1000` | where the location counter starts |
+| `symbols` | none | predefined symbols, `Record<string, number>` or `Map` (device registers, constants); a label of the same name is an error, `NAME = expr` overrides it |
+| `names` | `'dec'` | `'dec'`: 1–6 characters of letters, digits, `.`, `$` (longer is an error, not cut). `'long'`: any length, `_` allowed |
+| `hex` | `false` | accept `^X` hexadecimal (`^XFF`). Not MACRO-11, so off by default; without it `^X` is an error |
+
+| Result field | |
+| :--- | :--- |
+| `ok` | `errors.length === 0`. Don't load the image unless `ok` |
+| `errors`, `warnings` | `{ line, column, message }[]`, 1-based, sorted; at most one error per line. Warnings don't affect `ok` |
+| `origin`, `bytes` | lowest address written and the bytes from there (`Uint8Array`, gaps zero) |
+| `start` | `.END expr`, else the first instruction, else `origin` |
+| `symbols` | `Map<NAME, value>` of every symbol and label (upper case; local labels and registers excluded) |
+| `labels` | `Set<NAME>`: which of `symbols` are labels |
+| `lines` | `{ line, address, bytes, code }[]`, the source lines in order with what each produced (`code` = an instruction) |
+| `lineAt` | `Map<address, line>` for instructions: highlight the current line in a debugger |
+| `listing`, `listingRows` | MACRO-11 style listing as text, and row by row with source lines |
+
+**Syntax.** `label: OP src, dst ; comment`. Names are case-insensitive. `NAME = expr`
+(a symbol), `NAME = %3` (a register alias), `. = . + 10` (move the location counter).
+Local labels (`1$`, `2$`, …) are scoped between two ordinary labels. Numbers: octal, `10.`
+decimal, `^D ^O ^B` radix prefixes, `'A` one character, `"AB` two (low byte first).
+Expressions are evaluated strictly left to right (no precedence; `< >` groups) with
+`+ - * / & !` (`!` is OR) and unary `-`, `^C` (complement). Addressing modes: `R`, `(R)`,
+`(R)+`, `-(R)`, `X(R)`, `@`-forms of each, `#n`, `@#addr`, and a bare `addr` (PC-relative).
+Registers `R0`–`R7`, `SP`, `PC`.
+
+**Directives:** `.WORD .BYTE .ASCII .ASCIZ .BLKW .BLKB .EVEN .ODD .END` (`.TITLE` and
+other listing directives are ignored). Not supported: macros, conditional assembly,
+`.PSECT`, linking.
+
+**MACRO-11 behaviours that surprise newcomers (all supported):**
+- An expression where the instruction goes is an implicit `.WORD`: `TABLE: CMD1, CMD2`,
+  `1234`. But an instruction name first on a line is always the instruction, and a name
+  followed by operands (`MOVV R0, R1`) is "unknown instruction", not data.
+- Instruction names are symbols whose value is their opcode: `MOV #NOP, PATCH` stores
+  000240. A user symbol with the same name wins, with a warning.
+- Flag operations combine with `!`: `CLC!CLV` = 000243 (the disassembler writes them this
+  way). **Deliberate difference:** mixing clears and sets (`CLC!SEV`) is an error; MACRO-11
+  would quietly turn it into a set.
+- `SOB` only jumps backwards (1–63 words); branches reach −128…+127 words.
+
+**Warnings** today: a value cut to 16 bits in `NAME = expr`; a symbol named like an
+instruction.
+
+## CPU
+
+`new Cpu(bus: Bus, options?: CpuOptions)`. Usually you get one from a machine (`m.cpu`).
+
 ```ts
-const a = assemble(source, { origin: 0o1000, symbols: { XCSR: 0o177564 }, names: 'dec' });
-if (!a.ok) a.errors;          // [{ line, column, message }]
-a.warnings;                   // same shape; assembled anyway (ok stays true)
-a.bytes; a.origin; a.start;   // the image
-a.lineAt.get(pc);             // source line of an instruction
-a.listing;                    // MACRO-11 style listing
+const mem = new Uint8Array(0o160000);              // 56 KB of RAM, nothing else
+const bus: Bus = {
+  read: (a, byte) => (a >= mem.length ? BUS_ERROR : byte ? mem[a] : mem[a] | (mem[a + 1] << 8)),
+  write: (a, v, byte) => {
+    if (a >= mem.length) return false;               // bus error (trap to 4)
+    mem[a] = v & 0xff;
+    if (!byte) mem[a + 1] = v >> 8;
+    return true;
+  },
+};
+const cpu = new Cpu(bus, { eis: true });
+mem.set(must(assemble(' MOV #3, R0\n MUL #5, R0\n HALT')).bytes, 0o1000);
+cpu.r[7] = 0o1000;                                 // PC
+cpu.r[6] = 0o1000;                                 // SP (the stack grows down)
+const r = cpu.run(1000);                           // { reason: 'halt', … }; R1 = 15.
 ```
 
-Syntax: `label: OP src, dst ; comment`, `NAME = expr`, `NAME = %3`, `. = . + 10`,
-local labels `1$` between two ordinary labels. Numbers are **octal**; `10.` is decimal;
-`^D ^O ^B`; `'A`, `"AB`. Expressions run left to right; `< >` groups; `+ - * / & !`,
-unary `-`, `^C`. Flag operations combine with `!` as the disassembler writes them
-(`CLC!CLV` = 000243; clears and sets not mixed, unlike MACRO-11, which would quietly make
-it a set). As in MACRO-11, instruction names are symbols with their opcode as value
-(`MOV #NOP, X`; a user symbol of the same name wins, with a warning), and an expression
-where the instruction goes is an implicit `.WORD` (`TABLE: CMD1, CMD2`, `1234`). An
-instruction name first on a line is always the instruction, and a name followed by
-operands is an unknown instruction (`MOVV R0, R1`), not data. Warnings: a value cut to
-16 bits in `=`, a symbol named like an instruction. Directives: `.WORD .BYTE .ASCII .ASCIZ .BLKW .BLKB .EVEN .ODD .END`
-(`.TITLE` and friends are ignored). Names: `dec` (default) = 1–6 characters of letters,
-digits, `.`, `$`; `long` = any length, `_` allowed. Option `hex: true` adds `^X`
-hexadecimal (`^XFF`); it is not MACRO-11, so it is off by default (an error without it). Not included: macros, `.PSECT`,
-linking, conditional assembly.
+`Bus`: `read(addr, byte)` (a word at an even address or a byte; negative = bus error),
+`write(addr, value, byte)` (false = bus error), optional `reset()` (the `RESET` instruction).
 
-## Disassembler
+| Option | Default | |
+| :--- | :--- | :--- |
+| `eis` | `false` | `MUL`, `DIV`, `ASH`, `ASHC`; without it they trap to 10 |
+| `cycles` | `'per-bus-access'` | every bus read or write costs 1 cycle (instruction fetches included), `MUL` +4, `DIV` +8, `ASH`/`ASHC` +1. `'flat'`: 1 per instruction |
+| `protectModes` | `false` | PDP-11/45 rules when PSW bits 15–14 ≠ 0: a write to the PSW address traps to 4, `RTI`/`RTT` can't lower the mode bits or change the priority, `RESET` does nothing |
 
-`disassemble(readWord, address, { nameOf })` → `{ address, words, text }`. Branch and
-PC-relative targets are shown as absolute addresses, or names from `nameOf`.
+| Member | |
+| :--- | :--- |
+| `run(maxCycles, breakpoints?, resume = true): RunResult` | runs until a stop (below). May overshoot `maxCycles` by one instruction. `breakpoints`: stop *before* an instruction at one of these addresses; with `resume`, a breakpoint at the current PC is passed first so "continue" works |
+| `step(): RunResult` | one instruction, or the pending interrupt. A normal step reports reason `'budget'` |
+| `interrupt(vector, level)` | request an interrupt; taken between instructions once `level` > PSW priority (bits 7–5). One-shot: removed when taken; a new request for the same vector replaces the old one |
+| `cancelInterrupt(vector)` | withdraw a pending request |
+| `onTrap: (t: TrapInfo) => 'vector' \| 'stop'` | called before every trap *and interrupt*. `'stop'`: `run` returns reason `'trap'` and the host handles it. A fault leaves the PC at the faulting instruction; `EMT`/`TRAP`/`BPT`/`IOT` leave it after |
+| `onInstruction: (pc, opcode) => void` | every instruction once fetched, before it runs. Not called for a fetch that faults or for interrupts |
+| `onModeChange: (mode, old) => void` | PSW bits 15–14 changed (trap, `RTI`, PSW write) |
+| `stackLimit` | a push through SP below this address traps to 4 before writing (cause `'stack-limit'`); 0 = off |
+| `r` | `number[8]`; `r[6]` = SP, `r[7]` = PC. Writable |
+| `psw`, `n` `z` `v` `c`, `priority`, `mode` | status word (writable) and read-only views of it |
+| `waiting`, `halted` | asleep in `WAIT`; stopped by `HALT` / double fault (`run` does nothing until you clear it) |
+| `save(): CpuState` / `load(state)` / `reset()` | registers, PSW, flags, stack limit and pending interrupts as plain JSON. Not memory, not devices |
+
+`RunResult`: `{ reason, cycles, instructions, trap? }`, `cycles` and `instructions` for
+this call only.
+
+| `reason` | Meaning | To continue |
+| :--- | :--- | :--- |
+| `'budget'` | `maxCycles` used up | `run` again |
+| `'wait'` | `WAIT` executed, nothing pending | request an interrupt (or let a device), then `run` |
+| `'halt'` | `HALT` | set `cpu.halted = false` (and PC) if you want to go on |
+| `'trap'` | `onTrap` returned `'stop'`; `trap` says which | handle it, then `run` |
+| `'double-fault'` | a trap's own stack push failed; the CPU halted | reset |
+| `'breakpoint'` | PC reached a breakpoint | `run` again (passes it) |
+
+`TrapInfo`: `{ vector, cause, pc, detail? }`. `cause`: `'odd-address' 'bus-error'
+'stack-limit'` (vector 4, `detail` = the address), `'illegal'` (10: unknown opcode, EIS
+off, `JMP`/`JSR` to a register), `'bpt' 'trace'` (14), `'iot'` (20), `'emt' 'trap'` (30 /
+34, `detail` = the number), `'interrupt'`. (`'reserved'` is in the type but not produced.)
+Constants: `VEC` (trap vectors), `PSW` (bit masks), `PSW_ADDRESS` (`177776`).
+
+**Behaviour matches the real machine:** `MOVB` to a register sign-extends; byte
+autoincrement/decrement on SP or PC steps by 2; writes to the PSW can't set T; `RTI`
+with T set traps at once, `RTT` one instruction later; `RESET` calls `bus.reset()`;
+`JSR PC, @(SP)+` pops the target before pushing (11/40 order). Not implemented: `MARK`,
+`SPL`, `MFPI`/`MTPI`, `MFPS`/`MTPS`, floating point, memory management.
 
 ## DeviceMachine and devices
 
-`DeviceMachine` is a `Bus` with RAM from 0 (option `memory`, default 56 KB), the CPU
-(`CpuOptions`), and memory-mapped devices added with `add(device)` (overlaps with RAM, the
-PSW or another device throw). `boot(asm)`, `run(cycles, breakpoints?)`, `step()`, `cycles`,
-`instructions`. Time is CPU cycles, so runs are deterministic.
+`new DeviceMachine(options?)`: RAM from 0 (`memory`, bytes, default `0o160000`), a CPU
+(the other options are `CpuOptions`), and devices. It is the CPU's `Bus`.
+
+| Member | |
+| :--- | :--- |
+| `add(device): this` | plug in; throws on overlap with RAM, the PSW or another device, or an odd base/size. Calls `device.attach(cpu)` |
+| `boot(asm)` | clear RAM, `cpu.reset()`, every `device.reset(true)`, copy `asm.bytes` to `asm.origin`, PC = `asm.start`, SP = `asm.origin` (or `1000` if the origin is below `400`), counters to 0 |
+| `run(maxCycles, breakpoints?): RunResult` | like `Cpu.run`, keeping devices in step (see below) |
+| `step(): RunResult` | one instruction, devices advanced by its cycles |
+| `read(addr, byte)` / `write(addr, value, byte)` | the bus, for the host too. Reading a device register has its side effects (e.g. RBUF clears DONE) |
+| `reset()` | the `RESET` instruction: every `device.reset(false)` |
+| `cpu`, `ram` (`Uint8Array`), `cycles`, `instructions` | totals since `boot` (writable) |
+
+**`Device` interface.** Offsets are relative to `base`.
+
+| Member | Required | |
+| :--- | :--- | :--- |
+| `base`, `size` | yes | first bus address and size in bytes, both even, inside the I/O page in practice |
+| `read(offset)` | yes | the word at an even offset, or `BUS_ERROR` for a hole. Byte reads get the same call and the bus takes the half (Unibus style), so read side effects happen for byte reads too |
+| `write(offset, value, byte)` | yes | a word, or one byte (`value` 0–255; an odd offset is the high byte). Return false for "nothing here" (trap to 4). Real DEC registers ignore writes to their high byte: do the same unless you mean otherwise |
+| `attach(cpu)` | no | keep the CPU to call `cpu.interrupt(vector, level)` |
+| `reset(powerUp)` | no | `false`: the `RESET` instruction; `true`: power-up at `boot` |
+| `advance(cycles)` | no | time passed; may be many cycles at once (a long `WAIT`) |
+| `nextEvent()` | no | cycles until the device changes by itself (flag set, interrupt). `run` stops the CPU there so polling programs see it on time. Infinity = never |
+| `wakeIn()`, `canWake()` | no | for `WAIT`: cycles until this device interrupts by itself, and whether it can interrupt at all (interrupts enabled; perhaps waiting for host input). A sleeping CPU skips ahead to the soonest `wakeIn`; if no device `canWake`, `run` returns `'wait'` at once |
 
 ```ts
-class Thruster implements Device {
-  readonly base = 0o170000; readonly size = 2;
-  power = 0;
-  read() { return this.power; }                       // word at an even offset
-  write(off: number, v: number, byte: boolean) {      // a byte write to an odd offset is the high byte
-    if (!byte) this.power = v;
-    return true;
-  }
-}
-const m = new DeviceMachine({ eis: true }).add(new Thruster());
+    /** A range finder at 170000: CSR (bit 0 GO, bit 6 IE, bit 7 DONE) and a result word. */
+    class RangeFinder implements Device {
+      readonly base = 0o170000;
+      readonly size = 4;                       // 170000 CSR, 170002 distance
+      distance = 0o42;
+      private cpu!: Cpu;
+      private csr = 0;
+      private left = Infinity;                 // cycles until the measurement is done
+
+      attach(cpu: Cpu) { this.cpu = cpu; }
+      read(offset: number) { return offset === 0 ? this.csr : this.distance; }
+      write(offset: number, value: number, byte: boolean) {
+        if (offset !== 0 || byte) return true;  // the result is read-only; byte writes ignored
+        this.csr = value & 0o100;               // keep IE, clear DONE
+        if (value & 1) this.left = 200;         // GO: done in 200 cycles
+        return true;
+      }
+      reset() { this.csr = 0; this.left = Infinity; }
+      advance(cycles: number) {
+        if ((this.left -= cycles) > 0) return;
+        this.left = Infinity;
+        this.csr |= 0o200;                                     // DONE
+        if (this.csr & 0o100) this.cpu.interrupt(0o300, 4);    // one request; taken once
+      }
+      nextEvent() { return this.left; }                        // when DONE will change
+      wakeIn() { return this.csr & 0o100 ? this.left : Infinity; }
+      canWake() { return (this.csr & 0o100) !== 0 && this.left !== Infinity; }
+    }
+
+    const m = new DeviceMachine().add(new RangeFinder());
+    const asm = assemble(`
+RFCSR = 170000
+RFDST = 170002
+        MOV #DONE, @#300    ; vector 300: new PC …
+        MOV #340, @#302     ; … and new PSW (priority 7 while in the handler)
+        MOV #101, @#RFCSR   ; IE + GO
+        WAIT                ; sleep until the interrupt
+        HALT
+DONE:   MOV @#RFDST, R0
+        RTI
+`);
+    m.boot(asm);
+    const r = m.run(10_000);    // reason 'halt', R0 = 42 (octal), m.cycles ≈ 200 + a few
 ```
 
-`Device`: `base`, `size`, `read(offset)` (a word, or `BUS_ERROR`; byte reads take half of
-it, as on the Unibus), `write(offset, value, byte)` (false = bus error), and optionally
-`attach(cpu)` (to request interrupts), `reset(powerUp)` (`RESET` instruction: false; boot:
-true), `advance(cycles)`, `nextEvent()` (cycles until it changes by itself: the CPU stops
-there so polling programs see it on time), `wakeIn()` / `canWake()` (for `WAIT`: a
-sleeping CPU skips ahead to the next interrupt, or the run stops if nothing can wake it).
-
-DEC devices included: `DL11` serial line (option `base`, default the console `177560`;
-`vector` 60 and +4; `type(ch)`, `output`, `onOutput`) and `KW11L` line clock (`177546`,
-vector 100, a tick every `cycles`).
+**Included DEC devices.** `new DL11({ base?, vector?, level? })`: serial line, default
+the console at `177560` (RCSR, RBUF, XCSR, XBUF), vectors 60 (receive) and 64 (transmit),
+level 4. `type(ch)` queues input, `output` collects what the program sent, `onOutput(ch)`
+is called per character; the transmitter is always ready. `new KW11L(cycles = 1000)`:
+line clock LKS at `177546`, vector 100, level 6; sets DONE every `cycles` CPU cycles and
+interrupts if IE. CSR bits: `CSR.DONE` (200), `CSR.IE` (100).
 
 ## SimpleMachine
 
-A `DeviceMachine` with a DL11 console (`177560`–`177566`, vectors 60/64) and a KW11-L
-line clock (`177546`, vector 100) that ticks every `clockCycles` CPU cycles (`console`,
-`clock`; `type(ch)`, `output`, `onOutput` from the console). Used by the tests and the
-standalone simulator page (`simulator.html`, `src/simulator/`).
+`new SimpleMachine({ memory?, clockCycles = 1000, ...CpuOptions })`: a `DeviceMachine`
+with a `DL11` console (`console`) and a `KW11L` clock (`clock`). Adds `type(ch)`,
+`output`, `input`, `onOutput` (all from the console) and `clockCycles`. `DEV` has the
+register addresses and vectors (`DEV.XBUF`, `DEV.VEC_CLOCK`, …). The standalone
+simulator page (`simulator.html`, `src/simulator/`) is built on it. You can `add` more
+devices.
+
+## Host recipes
+
+With `m` a `SimpleMachine` booted from a program that waits for a key, reads it into R0
+and calls `EMT 7`:
+
+```ts
+// Keyboard: queue characters; the program reads them from RBUF one by one.
+m.type('A');
+
+// Coverage / profiling: one counter per word address.
+const hits = new Uint32Array(0x8000);
+m.cpu.onInstruction = (pc) => { hits[pc >> 1]++; };
+
+// Host-side system calls: stop on EMT, do the work, continue.
+m.cpu.onTrap = (t) => (t.cause === 'emt' ? 'stop' : 'vector');
+let r = m.run(10_000);
+if (r.reason === 'trap' && r.trap?.cause === 'emt') {
+  const number = r.trap.detail;            // 7; the PC is already past the EMT
+  m.cpu.r[0] = number! + 1;                // the "result"
+  r = m.run(10_000);                       // continues with the HALT
+}
+
+// Breakpoints: stop before the instruction at an address; run again to continue.
+m.boot(asm);
+m.type('B');
+const bp = new Set([asm.symbols.get('WAITK')!]);
+r = m.run(10_000, bp);                     // reason 'breakpoint', PC = WAITK
+
+// Snapshot and restore (CPU + RAM; device state is the devices' own business).
+const snap = { cpu: m.cpu.save(), ram: m.ram.slice(), cycles: m.cycles };
+m.run(10_000);
+m.cpu.load(snap.cpu); m.ram.set(snap.ram); m.cycles = snap.cycles;
+
+// Disassembly with label names. Reads through m.read: device registers have side effects.
+const names = new Map([...asm.labels].map((l) => [asm.symbols.get(l)!, l]));
+const lines: string[] = [];
+for (let a = asm.origin; a < asm.origin + asm.bytes.length;) {
+  const d = disassemble((x) => m.read(x, false), a, { nameOf: (x) => names.get(x) });
+  lines.push(`${octal(d.address)}  ${d.text}`);
+  a += d.words.length * 2;
+}
+```
+
+## Disassembler, ISA tables, CodeMirror
+
+- `disassemble(readWord: (addr) => number, address, { nameOf? }): { address, words, text }`
+  decodes one instruction (1–3 words). Branch and PC-relative targets are absolute
+  addresses or `nameOf(addr)`. Unknown words come out as `.WORD 000007`, combined flag
+  operations as `CLC!CLV`. Without `nameOf`, the text assembles back to the same words
+  (at the same address). Data is decoded
+  as instructions too: the disassembler can't tell them apart.
+- `INSTRUCTIONS: readonly OpInfo[]`, `BY_NAME: Map<NAME, OpInfo>`, `decodeOp(word):
+  OpInfo | null`. `OpInfo`: `{ name, opcode, format, byte?, eis? }`; `format` is one of
+  `double single branch jsr rts sob regsrc xor trap none`.
+- `octal(n, digits = 6)`: `octal(0o1000)` → `'001000'`.
+- CodeMirror 6 (needs `@codemirror/language` and `@lezer/highlight`):
+  `import { macro11, macro11Highlight } from './pdp11/codemirror'`, then
+  `extensions: [macro11, macro11Highlight]`. It highlights labels (incl. `1$`),
+  mnemonics, directives, registers, numbers, strings and comments.
+
+## Pitfalls
+
+- **Set the vector before enabling an interrupt.** Setting IE on a device that is already
+  ready (an idle DL11 transmitter, for example) requests the interrupt at once; with an
+  empty vector the CPU jumps to address 0 with PSW 0. Write the handler address and PSW
+  to `vector` / `vector+2` first, or raise the priority (`MOV #340, @#177776`).
+- **Interrupt requests are one-shot.** A device must request again for its next event.
+- **The CPU starts at priority 0** after `boot`: every requested interrupt is taken.
+- **`boot` sets SP to the program's origin:** the stack grows down from there. A program
+  at `1000` has 512 bytes of stack above the vectors.
+- **Host reads have side effects** on device registers (RBUF). Read RAM through `m.ram`
+  if you only want to look.
+- **`cpu.save()` is only the CPU.** For a snapshot also copy `ram`, `cycles`, and your
+  devices' state.
+- **`run` may overshoot its budget by one instruction** (and a `WAIT` sleep ends at the
+  budget). Compare `RunResult.cycles`, don't assume it equals `maxCycles`.
+- **Octal literals:** in TypeScript `1000` is decimal; write `0o1000`.
+- **Local labels need an ordinary label boundary:** `1$` defined after `LOOP:` is a
+  different label from `1$` before it.
+
+## Working on the library
+
+| Change | Where | Tests |
+| :--- | :--- | :--- |
+| An instruction | `isa.ts` (name, opcode, format), `cpu.ts` (`exec`), `disassembler.ts` if a new format | `tests/pdp11/cpu.test.ts`; the table test in `assembler.test.ts` assembles and disassembles every entry |
+| Assembler syntax, directives, warnings | `assembler.ts` | `assembler.test.ts`, `macro11-compat.test.ts` |
+| A bus or device feature | `devices.ts`; `machine.ts` for `SimpleMachine` | `devices.test.ts`, `review-fixes.test.ts` |
+| Docs / examples | this file and `readme-examples.test.ts` together | `readme-examples.test.ts` |
+
+Keep the library free of game code. Rover's memory map, I/O page, ROM and gate live in
+`src/core/machine/`. `npm test` must stay green, including `boundary.test.ts`.
