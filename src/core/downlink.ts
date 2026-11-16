@@ -364,7 +364,9 @@ export class Downlink {
 /** Dump frame header: kind 1 (sized frame), tag 15 (system). Followed by dump kind, length, payload. */
 export const DUMP_HEADER = 0x80 | (SYSTEM_TAG << 3);
 /** Kinds 1/2: firmware context; 3/4: program context, same layouts (M10, SPEC §3.9.3). */
-export const DumpKind = { CPU: 1, STACKS: 2, PROG_CPU: 3, PROG_STACKS: 4 } as const;
+export const DumpKind = { CPU: 1, STACKS: 2, PROG_CPU: 3, PROG_STACKS: 4, CPU11: 5, STACK11: 6, PROG_CPU11: 7, PROG_STACK11: 8 } as const;
+/** M15 dumps: the most stack words a PDP-11 stack dump carries. */
+export const STACK11_WORDS = 8;
 /** State byte of a program dump: @PROG_STATE. */
 export const PROG_STATE_NAMES: readonly string[] = ['PROG_NONE', 'PROG_READY', 'PROG_RUNNING', 'PROG_DONE', 'PROG_FAULT', 'PROG_HALTED'];
 /** CPU state byte in a dump. */
@@ -411,17 +413,57 @@ export function encodeStackDump(ds: readonly number[], cs: readonly number[], ki
   return dumpFrame(kind, p);
 }
 
+/**
+ * M15 PDP-11 register dump (kinds 5 / 7): state 1 B, PSW 2 B, R0–R7 2 B each. Words are
+ * low byte first, as they sit in PDP-11 memory. The state byte is as in kinds 1 / 3.
+ */
+export function encodeCpu11Dump(d: { state: string | number; psw: number; r: ArrayLike<number> }, prog = false): number[] {
+  const code = typeof d.state === 'number' ? d.state : CPU_STATE_CODES.indexOf(d.state);
+  const p = [code < 0 ? 255 : code, ...le(d.psw)];
+  for (let i = 0; i < 8; i++) p.push(...le(d.r[i] ?? 0));
+  return dumpFrame(prog ? DumpKind.PROG_CPU11 : DumpKind.CPU11, p);
+}
+
+/**
+ * M15 PDP-11 stack dump (kinds 6 / 8): SP 2 B, count 1 B, then that many words from SP up
+ * (the top of the stack first, at most {@link STACK11_WORDS}), low byte first.
+ */
+export function encodeStack11Dump(sp: number, words: readonly number[], prog = false): number[] {
+  const p = [...le(sp), words.length & 255];
+  for (const w of words) p.push(...le(w));
+  return dumpFrame(prog ? DumpKind.PROG_STACK11 : DumpKind.STACK11, p);
+}
+
+const le = (v: number): number[] => [v & 0xff, (v >> 8) & 0xff];
+const rdLe = (b: readonly number[], at: number): number => (b[at] ?? 0) | ((b[at + 1] ?? 0) << 8);
+
 export type DumpSlot = 'firmware' | 'program';
 /** `kind` is the layout (1 CPU, 2 stacks); `slot` tells firmware (kinds 1/2) from program (3/4). */
 export type DecodedDump =
   | { kind: 1; slot: DumpSlot; ip: number; status: number; state: string; regs: number[]; dsDepth: number; csDepth: number }
-  | { kind: 2; slot: DumpSlot; dataStack: number[]; callStack: number[] };
+  | { kind: 2; slot: DumpSlot; dataStack: number[]; callStack: number[] }
+  /** M15: PDP-11 registers (wire kinds 5 / 7) and stack (6 / 8). */
+  | { kind: 3; slot: DumpSlot; state: string; psw: number; r: number[] }
+  | { kind: 4; slot: DumpSlot; sp: number; words: number[] };
 
 /** Decode a dump frame as received, or null if it is not one. */
 export function decodeDump(b: readonly number[]): DecodedDump | null {
   if (b[0] !== DUMP_HEADER) return null;
   const end = 3 + (b[2] ?? 0);
-  const slot: DumpSlot = b[1] === DumpKind.PROG_CPU || b[1] === DumpKind.PROG_STACKS ? 'program' : 'firmware';
+  const k = b[1];
+  const slot: DumpSlot = k === DumpKind.PROG_CPU || k === DumpKind.PROG_STACKS || k === DumpKind.PROG_CPU11 || k === DumpKind.PROG_STACK11 ? 'program' : 'firmware';
+  if (k === DumpKind.CPU11 || k === DumpKind.PROG_CPU11) {
+    const names = slot === 'program' ? PROG_STATE_NAMES : CPU_STATE_CODES;
+    const r: number[] = [];
+    for (let i = 0; i < 8; i++) r.push(rdLe(b, 6 + i * 2));
+    return { kind: 3, slot, state: names[b[3] ?? 255] ?? '?', psw: rdLe(b, 4), r };
+  }
+  if (k === DumpKind.STACK11 || k === DumpKind.PROG_STACK11) {
+    const n = b[5] ?? 0;
+    const words: number[] = [];
+    for (let i = 0; i < n; i++) words.push(rdLe(b, 6 + i * 2));
+    return { kind: 4, slot, sp: rdLe(b, 3), words };
+  }
   if (b[1] === DumpKind.CPU || b[1] === DumpKind.PROG_CPU) {
     const regs: number[] = [];
     for (let at = 7; at + 4 <= end - 2; at += 4) regs.push(rd(b, at, 4, true));

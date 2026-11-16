@@ -1,11 +1,11 @@
-import { FIRMWARE_TEMPLATES, PROGRAM_TEMPLATES } from '../core/programs';
 import type { SimulationEngine, UplinkCommand } from '../core/SimulationEngine';
 import type { Unit } from '../core/Unit';
-import { runsProgram, snapsWithoutSend, type CompileResult, type Slot } from '../core/vm/Compiler';
+import type { Slot } from '../core/vm/Compiler';
 import { formatAddr } from '../core/vm/isa';
 import { EditorPanel } from './EditorPanel';
 import { InspectPanel, type SnapMark } from './InspectPanel';
 import { buildListing, chunk, LISTING_BYTES_PER_ROW } from './listing';
+import { pdpListing, pdpRegions, toolchain, type SlotBuild, type Toolchain } from './toolchain';
 
 export interface CodeWorkspaceOptions {
   el: HTMLElement;
@@ -25,9 +25,9 @@ export interface CodeWorkspaceOptions {
 }
 
 interface SlotUi {
-  editor: EditorPanel;
+  editor: EditorPanel<SlotBuild>;
   host: HTMLElement;
-  result: CompileResult | null;
+  result: SlotBuild | null;
   source: string;
 }
 
@@ -44,6 +44,12 @@ const SLOT_TEXT: Record<Slot, string> = {
   firmware:
     'Advanced: keeps the rover alive (sun, dish, squalls, battery) and decides when the program runs with <code>RUN</code>. Uploading costs more and reboots the CPU.',
 };
+const PDP_SLOT_TEXT: Record<Slot, string> = {
+  program:
+    'Your task: drive, mine, photograph, in MACRO-11. The firmware runs it in time slices (<code>JSR PC, RUN</code>); finish with <code>HALT</code> (the result in <code>R0</code>). Uploading is cheap and does not reboot.',
+  firmware:
+    'Advanced: keeps the rover alive (sun, dish, squalls, battery) and runs the program through the gate (<code>PRGCS</code>, or the ROM\'s <code>RUN</code>). Uploading costs more and reboots the CPU.',
+};
 
 /**
  * Code tab (M10, SPEC §3.9): two sources, one flash. The Program slot is the default;
@@ -58,8 +64,11 @@ export class CodeWorkspace {
   private execLine: Record<Slot, number> = { firmware: 0, program: 0 };
   private snapMark: Record<Slot, SnapMark | null> = { firmware: null, program: null };
   private inspect: InspectPanel | null = null;
+  /** M15: Rover-ASM or the PDP-11 core, whichever the engine has. */
+  readonly tc: Toolchain;
 
   constructor(private opts: CodeWorkspaceOptions) {
+    this.tc = toolchain(opts.engine);
     const { el } = opts;
     el.classList.add('code-ws');
     el.innerHTML = `
@@ -93,10 +102,11 @@ export class CodeWorkspace {
     const make = (slot: Slot, initial: string): SlotUi => {
       const host = this.q<HTMLElement>(`[data-ed="${slot}"]`);
       const ui: SlotUi = { host, result: null, source: initial, editor: null! };
-      ui.editor = new EditorPanel({
+      ui.editor = new EditorPanel<SlotBuild>({
         parent: host,
         initial,
-        compile: (src) => opts.engine.compileFor(opts.rover(), src, slot),
+        language: this.tc.language,
+        compile: (src) => this.tc.build(opts.rover(), src, slot),
         onUpload: () => this.upload(),
         onChange: (src, res) => {
           ui.source = src;
@@ -123,7 +133,7 @@ export class CodeWorkspace {
     });
     const sel = this.q<HTMLSelectElement>('#cw-template');
     sel.addEventListener('change', () => {
-      const t = (this.slot === 'program' ? PROGRAM_TEMPLATES : FIRMWARE_TEMPLATES)[sel.value];
+      const t = this.tc.templates(this.slot)[sel.value];
       if (t !== undefined) this.current.editor.setSource(t);
       sel.value = '';
     });
@@ -167,12 +177,12 @@ export class CodeWorkspace {
     this.opts.el.querySelectorAll<HTMLButtonElement>('#cw-slots button').forEach((b) => b.classList.toggle('active', b.dataset.slot === slot));
     for (const s of ['program', 'firmware'] as Slot[]) this.slots[s].host.hidden = s !== slot;
     this.current.editor.refresh();
-    this.q('#cw-hint').innerHTML = SLOT_TEXT[slot];
+    this.q('#cw-hint').innerHTML = (this.tc.pdp ? PDP_SLOT_TEXT : SLOT_TEXT)[slot];
     this.q('#cw-upload').textContent = slot === 'program' ? 'Upload program' : 'Upload firmware & reboot';
     const sel = this.q<HTMLSelectElement>('#cw-template');
     sel.innerHTML = '';
     sel.add(new Option(slot === 'program' ? 'Programs…' : 'Firmware…', ''));
-    for (const name of Object.keys(slot === 'program' ? PROGRAM_TEMPLATES : FIRMWARE_TEMPLATES)) sel.add(new Option(name, name));
+    for (const name of Object.keys(this.tc.templates(slot))) sel.add(new Option(name, name));
     sel.title = slot === 'program' ? 'Load a program template into the editor' : 'Load a firmware into the editor (the all-in-one examples do not run a program)';
     this.opts.el.classList.toggle('slot-firmware', slot === 'firmware');
     this.inspect?.setSlot(slot);
@@ -186,14 +196,19 @@ export class CodeWorkspace {
     const u = rover();
     const src = this.current.editor.source;
     const res = this.slot === 'program' ? engine.uploadProgram(u, src) : engine.upload(u, src);
-    if (!res.program) log('error', `Upload rejected: ${res.errors.length} compile error(s). First: line ${res.errors[0].line}: ${res.errors[0].message}`);
-    else if (res.rejected) log('error', `Upload failed: ${res.rejected} Align the dish with @ANTENNA_ANGLE, or charge first.`);
+    const dish = this.tc.pdp ? 'Align the dish (ANTANG)' : 'Align the dish with @ANTENNA_ANGLE';
+    if (res.errors.length) log('error', `Upload rejected: ${res.errors.length} ${this.tc.pdp ? 'assembly' : 'compile'} error(s). First: line ${res.errors[0].line}: ${res.errors[0].message}`);
+    else if (res.rejected) log('error', `Upload failed: ${res.rejected} ${dish}, or charge first.`);
     this.refresh();
   }
 
   private sizes(): { fw: number; prog: number; cap: number } {
     const u = this.opts.rover();
-    const draft = this.current.result?.flashUsed ?? 0;
+    const draft = this.current.result?.bytes ?? 0;
+    if (this.tc.pdp) {
+      const r = pdpRegions(u);
+      return { fw: this.slot === 'firmware' ? draft : u.firmwareBytes, prog: this.slot === 'program' ? draft : u.programBytes, cap: r.fw + r.prog };
+    }
     return {
       fw: this.slot === 'firmware' ? draft : u.firmwareBytes,
       prog: this.slot === 'program' ? draft : u.programBytes,
@@ -204,8 +219,14 @@ export class CodeWorkspace {
   private totalsHtml(): string {
     const s = this.sizes();
     const u = this.opts.rover();
+    if (this.tc.pdp) {
+      // M15: two regions of core, not one shared flash (PDP11_CPU.md §6).
+      const r = pdpRegions(u);
+      const kb = (u.machine?.coreBytes ?? 0) / 1024;
+      return `<span class="fwc">firmware ${s.fw} / ${r.fw}</span> · <span class="progc">program ${s.prog} / ${r.prog}</span> B · core ${kb} KB`;
+    }
     // M14: RAM taken by VARs, the edited slot counting its draft (shared RAM, like the flash).
-    const draftRam = this.current.result?.ramUsed ?? 0;
+    const draftRam = this.current.result?.rasm?.ramUsed ?? 0;
     const fwRam = this.slot === 'firmware' ? draftRam : u.firmwareRam.high - u.firmwareRam.low;
     const progRam = this.slot === 'program' ? draftRam : u.programRam.high - u.programRam.low;
     const ram = fwRam || progRam ? ` · RAM ${fwRam} + ${progRam} = ${fwRam + progRam} / ${u.chassis.ramBytes} B` : '';
@@ -218,12 +239,16 @@ export class CodeWorkspace {
     const ui = this.current;
     const res = ui.result;
     const s = this.sizes();
-    const over = s.fw + s.prog > s.cap;
+    const regions = this.tc.pdp ? pdpRegions(u) : null;
+    const over = regions ? s.fw > regions.fw || s.prog > regions.prog : s.fw + s.prog > s.cap;
     const bar = this.q('#cw-flash');
     bar.classList.toggle('over', over);
     const pct = (n: number) => `${Math.min(100, (n * 100) / s.cap)}%`;
     this.q<HTMLElement>('.flashbar .fw').style.width = pct(s.fw);
     this.q<HTMLElement>('.flashbar .prog').style.width = pct(Math.max(0, Math.min(s.prog, s.cap - s.fw)));
+    bar.title = regions
+      ? 'Core: the firmware region (000200–001777) and the program region (002000 up to the program\'s stack at the top of core). The slot you edit counts its draft, the other slot what is on the rover.'
+      : 'Flash: firmware and program share it. The slot you edit counts its draft, the other slot what is on the rover.';
     this.q('#cw-flash-text').innerHTML = this.totalsHtml();
 
     const onRover = this.slot === 'program' ? u.programSource : u.sourceCode;
@@ -241,13 +266,20 @@ export class CodeWorkspace {
 
     const warn = this.q('#cw-warn');
     const msgs: string[] = [];
-    if (this.slot === 'firmware' && res?.program && !runsProgram(res))
-      msgs.push('This firmware has no <code>CALL RUN</code> (or <code>CALL PROGRAM</code>): it never runs the program. Fine for an all-in-one firmware; load <i>Default firmware</i> to use the Program slot.');
-    if (this.slot === 'program' && !runsProgram(this.opts.engine.compileFor(u, u.sourceCode, 'firmware')))
-      msgs.push('The firmware on the rover has no <code>CALL RUN</code>, so no program runs. Switch to <b>Firmware</b> and upload <i>Default firmware</i> (or add <code>CALL RUN</code>).');
-    const other = this.slot === 'program' ? this.opts.engine.compileFor(u, u.sourceCode, 'firmware') : u.programSource ? this.opts.engine.compileFor(u, u.programSource, 'program') : null;
-    if (snapsWithoutSend(res, other))
-      msgs.push('This code takes photos (<code>CALL SNAP</code>) but never sends them: a photo stays in image memory until <code>CALL SEND</code> records it for the downlink (Reference → Image).');
+    const tc = this.tc;
+    const run = tc.pdp ? '<code>JSR PC, RUN</code> (or a write to <code>PRGCS</code>)' : '<code>CALL RUN</code> (or <code>CALL PROGRAM</code>)';
+    if (this.slot === 'firmware' && res?.ok && !tc.runsProgram(res))
+      msgs.push(`This firmware has no ${run}: it never runs the program. Fine for an all-in-one firmware; load <i>Default firmware</i> to use the Program slot.`);
+    const fwOnRover = tc.build(u, u.sourceCode, 'firmware');
+    if (this.slot === 'program' && !tc.runsProgram(fwOnRover))
+      msgs.push(`The firmware on the rover has no ${run}, so no program runs. Switch to <b>Firmware</b> and upload <i>Default firmware</i>.`);
+    const other = this.slot === 'program' ? fwOnRover : u.programSource ? tc.build(u, u.programSource, 'program') : null;
+    if (tc.snapsWithoutSend(res, other))
+      msgs.push(
+        tc.pdp
+          ? 'This code takes photos (<code>JSR PC, SNAP</code>) but never sends them: a photo stays in image memory until <code>JSR PC, SNDIMG</code> records it for the downlink (Reference → Image).'
+          : 'This code takes photos (<code>CALL SNAP</code>) but never sends them: a photo stays in image memory until <code>CALL SEND</code> records it for the downlink (Reference → Image).',
+      );
     warn.hidden = !msgs.length;
     warn.innerHTML = msgs.map((m) => `⚠ ${m}`).join('<br>');
     this.renderListing();
@@ -257,7 +289,7 @@ export class CodeWorkspace {
   updateCost(): void {
     const { engine, rover } = this.opts;
     const u = rover();
-    const bytes = this.current.result?.flashUsed ?? 0;
+    const bytes = this.current.result?.bytes ?? 0;
     const el = this.q('#cw-cost');
     const cost = this.slot === 'program' ? engine.programUploadCost(u, bytes) : engine.uploadCost(u, bytes);
     const sig = engine.signalOf(u);
@@ -280,7 +312,8 @@ export class CodeWorkspace {
     const el = this.listingEl;
     const res = this.current.result;
     if (!el || !res) return;
-    const l = buildListing(this.current.editor.source, res, this.slot);
+    if (res.pdp) return this.renderPdpListing(el, res);
+    const l = buildListing(this.current.editor.source, res.rasm!, this.slot);
     const rows: string[] = [];
     for (const r of l.rows) {
       const cls = `lst-row ${r.kind}${r.error ? ' err' : ''}`;
@@ -301,6 +334,28 @@ export class CodeWorkspace {
     const top = el.querySelector('.lst-body')?.scrollTop ?? 0;
     el.innerHTML = `<div class="lst-head"><b>Listing · ${name}</b><span>${range} · ${l.bytes} B${status}</span></div>
       <div class="lst-cols"><span class="a">address</span><span class="h">machine code</span><span class="s">source</span></div>
+      <div class="lst-body">${rows.join('') || '<div class="dim">No instructions.</div>'}</div>
+      <div class="lst-foot">${this.totalsHtml()}</div>`;
+    el.querySelector('.lst-body')!.scrollTop = top;
+    this.highlightRows(false);
+  }
+
+  /** M15: the MACRO-11 listing (address and words in octal, as the assembler writes it). */
+  private renderPdpListing(el: HTMLElement, res: SlotBuild): void {
+    el.classList.add('pdp');
+    const rows = pdpListing(res).map((r) => {
+      const cls = `lst-row ${r.kind}${r.error ? ' err' : ''}`;
+      const title = r.error ? ` title="${esc(r.error)}"` : '';
+      return `<div class="${cls}" data-line="${r.line}"${title}><span class="a">${r.addr}</span><span class="h">${r.code.join(' ')}</span><span class="s">${esc(r.source)}</span></div>`;
+    });
+    const asm = res.pdp!.asm;
+    const n = asm.bytes.length;
+    const name = this.slot === 'program' ? 'PROGRAM' : 'FIRMWARE';
+    const range = n ? `${this.tc.addr(asm.origin, this.slot)}–${this.tc.addr(asm.origin + n - 1, this.slot)}` : 'empty';
+    const status = res.ok ? '' : ` · <span class="bad">not assembled (${res.errors.length} error${res.errors.length > 1 ? 's' : ''})</span>`;
+    const top = el.querySelector('.lst-body')?.scrollTop ?? 0;
+    el.innerHTML = `<div class="lst-head"><b>Listing · ${name}</b><span>${range} · ${n} B${status}</span></div>
+      <div class="lst-cols"><span class="a">address</span><span class="h">words (octal)</span><span class="s">source</span></div>
       <div class="lst-body">${rows.join('') || '<div class="dim">No instructions.</div>'}</div>
       <div class="lst-foot">${this.totalsHtml()}</div>`;
     el.querySelector('.lst-body')!.scrollTop = top;

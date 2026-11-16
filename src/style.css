@@ -261,3 +261,11 @@ button.link { border: none; background: none; padding: 0; color: var(--info); te
 #comms-list .row.rejected .txt { color: var(--dim); }
 #comms-list .row.rejected .dir { color: var(--bad); }
 #comms-list .src .link { color: #5d7a9a; }
+
+/* M15 slice 5: the PDP-11 core in the Code tab and the debugger */
+.pdp .lst-cols, .pdp .lst-row { grid-template-columns: 6ch 20ch minmax(0, 1fr); }
+.dbg-next { margin: 4px 0; padding: 2px 6px; background: #0f1520; border-left: 3px solid var(--accent); }
+.dbg-psw { margin-top: 4px; font-family: var(--mono); }
+.dbg-psw .flags { display: inline-flex; gap: 2px; }
+.flag { display: inline-block; width: 1.6ch; text-align: center; border: 1px solid var(--line); border-radius: 2px; color: #4a5a70; }
+.flag.on { color: #0b0f17; background: var(--accent); border-color: var(--accent); font-weight: 600; }
