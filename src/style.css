@@ -279,4 +279,7 @@ button.link { border: none; background: none; padding: 0; color: var(--info); te
 #reference.ref11 .ref-pane[data-ref=instr] td:nth-child(4) { width: 52px; }
 #reference.ref11 .ref-pane[data-ref=basics] td:first-child { width: 150px; }
 #reference.ref11 table.keycol td:first-child { width: 96px; }
+#reference.ref11 .ref-pane[data-ref=consts] td:first-child { width: 64px; } #reference.ref11 .ref-pane[data-ref=consts] td:nth-child(2) { width: 40px; } #reference.ref11 .ref-pane[data-ref=consts] td:nth-child(3) { width: auto; }
+#reference.ref11 .ref-pane[data-ref=radio] td:first-child { width: 110px; } #reference.ref11 .ref-pane[data-ref=radio] td:nth-child(2).dim { width: 32px; }
+#reference.ref11 .ref-pane[data-ref=tools] td:first-child { width: 96px; }
 #reference.ref11 .ref-pane pre:not(.rom-src) { margin: 4px 0; overflow-x: auto; }

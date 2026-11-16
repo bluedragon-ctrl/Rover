@@ -189,6 +189,44 @@ describe('Reference', () => {
     expect(reg(u, 0)).toBe(T.IRON_ORE);
   });
 
+  it('every predefined system name has a meaning in the Symbols tab', async () => {
+    const { symbolDocs } = await import('../src/ui/ReferenceBlue11');
+    const { systemSymbols } = await import('../src/core/machine/names');
+    const { IO_REGISTERS } = await import('../src/core/machine/iopage');
+    const io = new Set(IO_REGISTERS.map((r) => r.name));
+    const docs = symbolDocs();
+    const missing = Object.keys(systemSymbols()).filter((k) => !io.has(k) && !(docs[k] ?? '').match(/\w/));
+    expect(missing).toEqual([]);
+  });
+
+  it('the Tools, Image and Radio step-by-step examples work on a rover', async () => {
+    const { TOOL_EXAMPLE, READ_PIXEL_EXAMPLE } = await import('../src/ui/ReferencePanel');
+    const { RADIO_EXAMPLE } = await import('../src/ui/ReferenceBlue11');
+    const { rover, run, reg, HANG } = await import('./helpers/rover');
+    const { Layer, Status } = await import('../src/core/types');
+    const { T } = await import('../src/core/WorldRegistry');
+    const { MsgType } = await import('../src/core/messages');
+    const fail = `\nFAILED: MOV #-1, R0${HANG.replace(/9\$/g, '8$')}`;
+    // Drill the ore to the east.
+    const t = rover(`START:${TOOL_EXAMPLE.slice(5)}${HANG}${fail}`, { flat: true, setup: (e) => e.world.setTile(1, 0, Layer.OBSTACLE, T.IRON_ORE) });
+    run(t.e, 40);
+    expect(reg(t.u, 0)).toBe(Status.OK);
+    expect(t.u.cargo).toContain(T.IRON_ORE);
+    // Read back pixels PLOT drew: (10, 3) light grey next to a white (11, 3).
+    const plot = (x: number, g: number) => `MOV #${x}., R0\n MOV #3, R1\n MOV #${g}, R2\n JSR PC, PLOT\n`;
+    const read = READ_PIXEL_EXAMPLE.split('\n').slice(1).join('\n');
+    for (const [x, g] of [[10, 2], [11, 3], [12, 0]]) {
+      const p = rover(`START: JSR PC, ERASE\n ${plot(10, 2)} ${plot(11, 3)} MOV #${x}., R0\n MOV #3, R1\n${read}${HANG}`);
+      run(p.e, 60);
+      expect(reg(p.u, 2), `pixel ${x}`).toBe(g);
+    }
+    // Send "HI" home.
+    const r = rover(`START:${RADIO_EXAMPLE.slice(5).replace('      ...\n', `${HANG}\nFULL: HALT\n`)}`);
+    run(r.e, 30, true);
+    const text = r.e.messages.find((m) => m.type === MsgType.TEXT && m.status === 'ok');
+    expect(text && String.fromCharCode(...text.body)).toBe('HI');
+  });
+
   it('every Modes and Flags example assembles', async () => {
     const { MODE_DOC, PC_MODE_DOC, MODE_PATTERNS, FLAG_DOC } = await import('../src/ui/ReferenceBlue11');
     const { assemble } = await import('../src/blue11');

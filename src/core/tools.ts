@@ -44,7 +44,7 @@ export const TOOLS: Record<ToolId, ToolDef> = {
     arg: 'dir',
     ticks: 8,
     energy: 600,
-    description: 'Breaks the ore vein next to the rover in <dir> and stores the ore in cargo.',
+    description: 'Drills out the ore vein on the tile next to the rover in direction R0 and puts the ore in the first empty cargo slot.',
     target: (u, d) => (validDir(d) ? adjacent(u, d) : null),
     check(e, u, dir) {
       if (!validDir(dir)) return Status.ERR_INVALID;
@@ -69,7 +69,7 @@ export const TOOLS: Record<ToolId, ToolDef> = {
     arg: 'dir',
     ticks: 2,
     energy: 100,
-    description: 'Picks up the surface item next to the rover in <dir> into cargo.',
+    description: 'Picks up the item lying on the tile next to the rover in direction R0 (a sample, a repair kit…) and puts it in cargo.',
     target: (u, d) => (validDir(d) ? adjacent(u, d) : null),
     check(e, u, dir) {
       if (!validDir(dir)) return Status.ERR_INVALID;
@@ -100,7 +100,7 @@ export const TOOLS: Record<ToolId, ToolDef> = {
     arg: 'slot',
     ticks: 30,
     energy: 300,
-    description: 'Analyzes the item in cargo <slot>, freeing it and recording a 16-byte spectrum (18 B in the recorder; E.FULL keeps the item).',
+    description: 'Analyses the item in cargo slot R0. The item is used up; a 16-byte spectrum goes into the recorder, which sends it home for science credits. Needs 18 free recorder bytes, else E.FULL and the item is kept.',
     check(e, u, slot) {
       if (!validSlot(u, slot)) return Status.ERR_INVALID;
       if (!e.registry.get(u.cargo[slot])?.science) return Status.ERR_INVALID;
@@ -122,7 +122,7 @@ export const TOOLS: Record<ToolId, ToolDef> = {
     arg: 'dir',
     ticks: 4,
     energy: 150,
-    description: 'Finds the nearest ore vein up to 12 tiles away in <dir>, through walls: SEITYP / SEIDST (0 = none).',
+    description: 'Listens through the ground, even through walls, for the nearest ore vein up to 12 tiles away in direction R0. Then SEITYP = which ore and SEIDST = how far (0 = none found).',
     check: (_e, _u, dir) => (validDir(dir) ? Status.OK : Status.ERR_INVALID),
     complete(e, u, dir) {
       u.seismicType = 0;
@@ -147,7 +147,7 @@ export const TOOLS: Record<ToolId, ToolDef> = {
     energy: BALANCE.snapEnergy,
     keepsHeading: true,
     description:
-      'ROM SNAP (R0 = dir, R1 = mode F.M1…F.M5; the camera block CAMCS / CAMDIR) photographs the first obstacle, item or rover within 2 tiles in <dir>; with nothing that close, a landscape of what lies ahead (ridges, ground, the sun). The photo goes into image memory at IMGBAS: change it with MOV / MOVB, then send it home with ROM SNDIMG. Needs SUNLIT ≥ 20 or the headlight aimed that way (HDG = dir), else the photo is dark and worth nothing. Mk-I modes: 1 grey, 2 dithered (64×64, 1 KB each); upgrades add 3 colour palette (2 KB), 4 hi-res 128×128 (4 KB), 5 RGB332 (4 KB).',
+      'Photographs the first obstacle, item or rover within 2 tiles in direction R0; if nothing is that close, the landscape ahead (ridges, ground, the sun). The photo goes into image memory (Image tab), where your code can change it; SNDIMG sends it home. It needs light: SUNLIT at least 20, or the headlight on with the rover facing that way (HDG = R0); otherwise the photo is dark and worth nothing. Mk-I modes: F.M1 grey, F.M2 dithered grey (64×64, 1 KB each); upgrades add F.M3 16 colours (2 KB), F.M4 high resolution 128×128 (4 KB), F.M5 full colour (4 KB).',
     target: (u, d) => (validDir(d) ? adjacent(u, d) : null),
     check(_e, u, dir, mode = 1) {
       return !validDir(dir) || !u.chassis.cameraModes.includes(mode) ? Status.ERR_INVALID : Status.OK;
@@ -166,7 +166,7 @@ export const TOOLS: Record<ToolId, ToolDef> = {
     ticks: 10,
     energy: 200,
     description:
-      'Repairs [system] (F.HULL, F.SOL, F.ANT) by consuming the material in cargo <slot>: KIT +30 hull / +40 solar / +40 dish, IRON +10 hull / +15 dish, SILIC +20 solar.',
+      'Repairs the part in R1 (F.HULL the body, F.SOL the solar array, F.ANT the radio dish) by using up the material in cargo slot R0: KIT +30 hull / +40 solar / +40 dish, IRON +10 hull / +15 dish, SILIC +20 solar. A material that cannot fix that part gives E.INV and is kept.',
     check(e, u, slot, system = SystemId.SYS_HULL) {
       if (!validSlot(u, slot) || system < 0 || system > 2) return Status.ERR_INVALID;
       return e.registry.get(u.cargo[slot])?.repairs?.[system] ? Status.OK : Status.ERR_INVALID;

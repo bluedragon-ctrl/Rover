@@ -5,9 +5,11 @@
  */
 import { CHASSIS_MK1, BLUE11 } from '../core/balance';
 import { DumpKind, STACK11_WORDS } from '../core/downlink';
-import { DEVICE_BLOCKS, IO_REGISTERS, CARGO_BASE, CLOCK_VECTOR, TX_VECTOR, type IoRegister } from '../core/machine/iopage';
+import { DEVICE_BLOCKS, IO_REGISTERS, CARGO_BASE, CLOCK_VECTOR, TX_VECTOR, ProgFault, PROG_FAULT_NAMES, type IoRegister } from '../core/machine/iopage';
 import { ROM_EXPORTS, ROM_ROUTINES, ROM_SOURCE } from '../core/machine/rom';
-import { systemSymbols } from '../core/machine/names';
+import { ERROR_NAMES, systemSymbols } from '../core/machine/names';
+import { PHOTO_FORMATS_2X } from '../core/photos';
+import { STATUS_NOTES } from './comms';
 import { MSG_TYPE_NAMES, MsgType } from '../core/messages';
 import { INSTRUCTIONS } from '../blue11';
 import type { WorldRegistry } from '../core/WorldRegistry';
@@ -446,67 +448,168 @@ function romHtml(): string {
     <details class="small"><summary>The whole ROM source</summary><pre class="rom-src">${esc(ROM_SOURCE)}</pre></details>`;
 }
 
+/**
+ * What each predefined name means, for the Symbols tab (a test checks every system name has
+ * one). Error codes come from Comms' own notes, fault codes from the I/O page's names.
+ */
+export function symbolDocs(): Record<string, string> {
+  const d: Record<string, string> = {};
+  for (const [k, v] of Object.entries(ERROR_NAMES)) d[k] = STATUS_NOTES[v];
+  for (const [k, v] of Object.entries(ProgFault)) d[`PF.${k}`] = PROG_FAULT_NAMES[v];
+  const look: Record<string, string> = { grey: '4 greys', dither: '4 greys, dithered (dots for smoother shading)', palette: '16 colours', rgb332: '256 colours' };
+  for (const [m, f] of Object.entries(PHOTO_FORMATS_2X)) d[`F.M${m}`] = `camera mode ${m}: ${f.w}×${f.h} pixels, ${look[f.kind]}`;
+  for (const k of ['NORTH', 'EAST', 'SOUTH', 'WEST']) d[k] = `${k.toLowerCase()}: for directions in R0, DRVDIR, HDG…`;
+  Object.assign(d, {
+    'F.T0': 'tool on hardpoint 0 (Mk-I: the drill)',
+    'F.T1': 'tool on hardpoint 1 (Mk-I: the grabber)',
+    'F.T2': 'tool on hardpoint 2 (Mk-I: the spectrometer)',
+    'F.T3': 'tool on hardpoint 3 (empty until the seismic scanner upgrade)',
+    'F.HULL': 'repair the hull (the rover\'s body)',
+    'F.SOL': 'repair the solar array',
+    'F.ANT': 'repair the radio dish',
+    'F.ERAS': 'image function: wipe image memory',
+    GO: 'CSR bit 0: write it to start a device',
+    IE: 'CSR bit 6: interrupt when done (firmware)',
+    DONE: 'CSR bit 7: the device has finished and is ready',
+    READY: 'the same bit 7, for TXCS / RECCS: room for a byte',
+    ERR: 'CSR bit 15: the device refused or failed',
+    'T.TEXT': 'text: Comms prints the characters',
+    'T.ERR': 'an error report: a code and the address where it happened',
+    'T.LOG': 'one logged value: a tag and a number (ROM LOG)',
+    'T.DATA': 'data of your own: Comms shows the bytes',
+    'T.IMG': 'a piece of a photo (ROM SNDIMG)',
+    'T.SPEC': 'a spectrum from the spectrometer',
+    SOH: 'start of a message (the first byte)',
+    ETX: 'end of a message (the last byte)',
+    'P.NONE': 'no program loaded, or the firmware cleared it',
+    'P.RDY': 'ready to run (or stopped part way: it can go on)',
+    'P.RUN': 'running now',
+    'P.DONE': 'finished: HALT or RTS PC',
+    'P.FLT': 'crashed: PRGER says why',
+    'P.HLT': 'stopped at a BPT breakpoint',
+    'W.DONE': 'it finished',
+    'W.TIME': 'its time (SLICE) ran out',
+    'W.PRE': 'an emergency stopped it (PREMPT)',
+    'W.FLT': 'it crashed',
+    'W.BPT': 'it hit a BPT breakpoint',
+    'PR.ALR': 'stop the program when a world event is announced',
+    'PR.DMG': 'stop the program when the rover is damaged',
+    'PR.BAT': 'stop the program when the battery drops below BATALM',
+    'A.NONE': 'no event coming',
+    'A.ECL': 'an eclipse: dark, no solar power for a while',
+    'A.SQL': 'a dust squall: dust on the solar array',
+    OFF: 'lamp off',
+    RED: 'lamp red',
+    GREEN: 'lamp green',
+    BLUE: 'lamp blue',
+    AMBER: 'lamp amber',
+    PSW: 'address of the processor status word (the flags, Flags tab)',
+    PRGBAS: 'address where the program starts',
+    IMGBAS: 'address where image memory starts (Image tab)',
+    CARGO: 'address of the cargo slots, one byte each (what is in them: a tile code)',
+    SAFE: 'BOOTCS bit 8: the rover is in safe mode',
+    'PF.IOT': 'an IOT instruction (nothing serves it for programs)',
+    'PF.EMT': 'an EMT instruction (nothing serves it for programs)',
+    'PF.TRP': 'a TRAP, but the firmware has no handler for it',
+  });
+  return d;
+}
+
 function constsHtml(registry: WorldRegistry): string {
   const sys = systemSymbols();
+  const docs = symbolDocs();
   const io = new Set(IO_REGISTERS.map((r) => r.name));
-  const groups: [string, (k: string) => boolean][] = [
-    ['Error codes (driver results, xxER)', (k) => k === 'OK' || k.startsWith('E.')],
-    ['Function codes (CSR bits 3–1)', (k) => k.startsWith('F.')],
-    ['CSR bits', (k) => ['GO', 'IE', 'DONE', 'READY', 'ERR'].includes(k)],
-    ['Message types and framing', (k) => k.startsWith('T.') || k === 'SOH' || k === 'ETX'],
-    ['Program states (PRGST)', (k) => k.startsWith('P.')],
-    ['Why the program returned (PRGCS bits 3–1)', (k) => k.startsWith('W.')],
-    ['Program faults (PRGER)', (k) => k.startsWith('PF.')],
-    ['Preemption (PREMPT bits)', (k) => k.startsWith('PR.')],
-    ['Alerts (ALERT)', (k) => k.startsWith('A.')],
-    ['Directions', (k) => ['NORTH', 'EAST', 'SOUTH', 'WEST'].includes(k)],
-    ['Light colours (IND1–3)', (k) => ['OFF', 'RED', 'GREEN', 'BLUE', 'AMBER'].includes(k)],
-    ['Addresses', (k) => ['PSW', 'PRGBAS', 'IMGBAS', 'CARGO', 'SAFE'].includes(k)],
+  const groups: [string, (k: string) => boolean, string][] = [
+    ['Error codes', (k) => k === 'OK' || k.startsWith('E.'), 'What a ROM routine answers in R0, and a device\'s xxER register: <code>OK</code> or why not. <code>CMP R0, #E.BLK</code> · <code>BEQ BLOCKD</code> handles one case.'],
+    ['Which tool, mode or part (R1 for ACT, SNAP, USE)', (k) => k.startsWith('F.'), 'Already shifted into CSR bits 3–1, so they can go straight into a CSR.'],
+    ['Device CSR bits', (k) => ['GO', 'IE', 'DONE', 'READY', 'ERR'].includes(k), '<code>BIT #DONE, @#RADCS</code> tests a bit, <code>BIS #GO, @#RADCS</code> sets one (I/O page tab).'],
+    ['Message types and framing (Radio tab)', (k) => k.startsWith('T.') || k === 'SOH' || k === 'ETX', ''],
+    ['Program states (PRGST)', (k) => k.startsWith('P.'), 'Firmware: what state the program is in.'],
+    ['Why the program came back (PRGCS bits 3–1)', (k) => k.startsWith('W.'), ''],
+    ['Program crashes (PRGER)', (k) => k.startsWith('PF.'), ''],
+    ['Emergencies (PREMPT bits)', (k) => k.startsWith('PR.'), 'Add the ones you want: <code>MOV #PR.DMG!PR.BAT, @#PREMPT</code>.'],
+    ['World events (ALERT)', (k) => k.startsWith('A.'), ''],
+    ['Directions', (k) => ['NORTH', 'EAST', 'SOUTH', 'WEST'].includes(k), ''],
+    ['Lamp colours (IND1–3)', (k) => ['OFF', 'RED', 'GREEN', 'BLUE', 'AMBER'].includes(k), '<code>MOV #GREEN, @#IND1</code>'],
+    ['Addresses', (k) => ['PSW', 'PRGBAS', 'IMGBAS', 'CARGO', 'SAFE'].includes(k), ''],
   ];
   const used = new Set<string>();
-  const parts = groups.map(([title, f]) => {
+  const rows = (entries: [string, number][], text: (k: string) => string) =>
+    `<table>${entries.map(([k, v]) => `<tr><td><code>${k}</code></td><td class="dim small">${o(v, 1)}</td><td class="small">${esc(text(k))}</td></tr>`).join('')}</table>`;
+  const parts = groups.map(([title, f, blurb]) => {
     const entries = Object.entries(sys).filter(([k]) => !io.has(k) && f(k) && !used.has(k));
     entries.forEach(([k]) => used.add(k));
-    return `<h4>${esc(title)}</h4><p class="consts">${entries.map(([k, v]) => `<code>${k}=${o(v, 1)}</code>`).join(' ')}</p>`;
+    return `<h4>${esc(title)}</h4>${blurb ? `<p class="small dim">${blurb}</p>` : ''}${rows(entries, (k) => docs[k] ?? '')}`;
   });
   const rest = Object.entries(sys).filter(([k]) => !io.has(k) && !used.has(k));
-  if (rest.length) parts.push(`<h4>Other</h4><p class="consts">${rest.map(([k, v]) => `<code>${k}=${o(v, 1)}</code>`).join(' ')}</p>`);
+  if (rest.length) parts.push(`<h4>Other</h4>${rows(rest, (k) => docs[k] ?? '')}`);
   const tiles = Object.entries(registry.shortConstants());
-  parts.push(`<h4>Tiles (radar, ground, cargo)</h4><p class="consts">${tiles.map(([k, v]) => `<code>${k}=${o(v, 1)}</code>`).join(' ')}</p>`);
-  return `<p class="small dim">Predefined symbols, in octal. Device register names are in the I/O page tab, ROM routines in the ROM tab.</p>${parts.join('')}`;
+  const tileName = (k: string) => registry.get(registry.shortConstants()[k])?.name ?? '';
+  parts.push(`<h4>Tiles: ground, rocks and items</h4><p class="small dim">What <code>GROUND</code>, <code>RADHIT</code>, <code>SEITYP</code> and the cargo slots hold. <code>CMP @#RADHIT, #IRON</code> · <code>BEQ ORE</code> asks "did the radar see iron?".</p>${rows(tiles, tileName)}`);
+  return `<p class="small">A <b>symbol</b> is a name the assembler already knows, so you can write <code>E.BLK</code> instead of a number
+    you would have to look up. Use one with <code>#</code> as a value (<code>MOV #NORTH, R0</code>) and compare with it
+    (<code>CMP R0, #E.BUSY</code>). The numbers are octal. Device register names are in the I/O page tab, ROM routines in the ROM tab.</p>${parts.join('')}`;
 }
+
+/** Sending a text message home, step by step (the Radio tab; a test runs it). */
+export const RADIO_EXAMPLE = `      MOV  #T.TEXT, R0  ; type: text
+      MOV  #HELLO, R1   ; where its bytes are
+      MOV  #2, R2       ; how many bytes
+      JSR  PC, PUTMSG   ; send it home live
+      BNE  FULL         ; no room just now
+      ...
+HELLO: .ASCII /HI/`;
 
 function radioHtml(): string {
   const types = Object.entries(MSG_TYPE_NAMES)
-    .map(([v, n]) => `<tr><td><code>T.${Object.entries(MsgType).find(([, x]) => x === Number(v))?.[0] ?? v}</code></td><td class="dim small">${o(Number(v), 3)}</td><td class="small">${n}</td></tr>`)
+    .map(([v]) => {
+      const k = `T.${Object.entries(MsgType).find(([, x]) => x === Number(v))?.[0] ?? v}`;
+      return `<tr><td><code>${k}</code></td><td class="dim small">${o(Number(v), 3)}</td><td class="small">${esc(symbolDocs()[k] ?? '')}</td></tr>`;
+    })
     .join('');
-  return `<p class="small">Your code talks to mission control in <b>messages</b>, byte by byte into <code>TXBUF</code> (real time, a
-    ${BLUE11.txFifoBytes} B FIFO, lossy) or <code>RECBUF</code> (the recorder: store and forward). The ROM's <code>LOG</code>, <code>PUTMSG</code>,
-    <code>SEND</code> and <code>SNDIMG</code> write them for you. The rover sends dumps first, then TX, then the recorder.</p>
-    <h4>Message format</h4><table>
+  return `<p class="small">Your code talks to mission control (the Comms tab) in <b>messages</b>. There are two ways home:</p>
+    <table>
+      <tr><td><b>live</b></td><td class="small">bytes written to <code>TXBUF</code> go out at once through a ${BLUE11.txFifoBytes}-byte queue.
+      Fast, but if the queue is full or the link is bad, bytes are lost. ROM: <code>LOG</code>, <code>PUTMSG</code>.</td></tr>
+      <tr><td><b>recorder</b></td><td class="small">bytes written to <code>RECBUF</code> are stored and sent later, when the link allows.
+      Slower, but they arrive. ROM: <code>SEND</code>, <code>SNDIMG</code>.</td></tr>
+    </table>
+    <p class="small dim">The rover sends register and stack dumps first, then the live queue, then the recorder.</p>
+    <h4>Sending a message, step by step</h4>
+<pre class="small">${esc(RADIO_EXAMPLE)}</pre>
+    <p class="small dim">For one number, <code>LOG</code> is simpler: <code>MOV #1, R0</code> · <code>MOV @#BAT, R1</code> ·
+    <code>JSR PC, LOG</code> sends "tag 1 = the battery level". Name your tags with symbols starting <code>L.</code>
+    (<code>L.BAT = 1</code>) and Comms shows the name.</p>
+    <h4>What a message looks like</h4>
+    <p class="small">Every message is a row of bytes: a start code, its type, its length, the body, an end code. The text "HI" is
+    six bytes: <code>001 001 002 110 111 003</code>. The ROM writes the frame for you; you only give the type and the body.</p>
+    <table>
       <tr><td><code>SOH</code></td><td class="small">001: a message starts</td></tr>
-      <tr><td><code>type</code></td><td class="small">1 byte: what it is (below; 100–377 are yours)</td></tr>
-      <tr><td><code>length</code></td><td class="small">1 byte: body bytes (0–255)</td></tr>
-      <tr><td><code>body</code></td><td class="small">the bytes</td></tr>
-      <tr><td><code>ETX</code></td><td class="small">003: the end. If the length or the ETX does not match, Comms shows the message <i>broken</i> (bytes lost when the FIFO was full) or <i>incomplete</i> (cut off by a reboot)</td></tr>
+      <tr><td><code>type</code></td><td class="small">1 byte: what kind of message (below; 100–377 are free for your own)</td></tr>
+      <tr><td><code>length</code></td><td class="small">1 byte: how many body bytes follow (0–255)</td></tr>
+      <tr><td><code>body</code></td><td class="small">the bytes themselves</td></tr>
+      <tr><td><code>ETX</code></td><td class="small">003: the end. If the length or the ETX does not match, Comms shows the message <i>broken</i> (bytes lost when the queue was full) or <i>incomplete</i> (cut off by a reboot)</td></tr>
     </table>
     <h4>Types</h4><table>${types}</table>
+    <h4>What is in the body</h4>
     <table>
-      <tr><td><code>T.LOG</code> body</td><td class="small">tag (1 byte) and a value (one word, low byte first). Comms names the tag from your <code>L.</code> symbols: <code>L.BAT = 1</code></td></tr>
-      <tr><td><code>T.TEXT</code> body</td><td class="small">characters; Comms prints them</td></tr>
-      <tr><td><code>T.ERR</code> body</td><td class="small">an error code and the address where it happened (a word)</td></tr>
-      <tr><td><code>T.IMG</code> body</td><td class="small">photo type, chunk number, chunks, then up to 128 pixel bytes (SNDIMG)</td></tr>
+      <tr><td><code>T.LOG</code></td><td class="small">a tag (1 byte) and a value (one word, low byte first). Comms names the tag from your <code>L.</code> symbols</td></tr>
+      <tr><td><code>T.TEXT</code></td><td class="small">characters; Comms prints them</td></tr>
+      <tr><td><code>T.ERR</code></td><td class="small">an error code and the address where it happened (a word)</td></tr>
+      <tr><td><code>T.IMG</code></td><td class="small">photo type, piece number, number of pieces, then up to 128 pixel bytes (SNDIMG)</td></tr>
     </table>
-    <h4>Register dump (Dump registers, BPT)</h4><table>
+    <h4>Register dump (Comms → Dump registers, or BPT)</h4>
+    <p class="small dim">A snapshot of the CPU, sent by the system. Comms decodes it for you; this is what the bytes are.</p>
+    <table>
       <tr><td><code>F8 kind length</code></td><td class="small">system frame; kind ${DumpKind.CPU11} firmware, ${DumpKind.PROG_CPU11} program; length 19</td></tr>
       <tr><td><code>state</code></td><td class="small">1 byte: CPU state (firmware) or PRGST (program)</td></tr>
       <tr><td><code>PSW</code></td><td class="small">a word, low byte first</td></tr>
       <tr><td><code>R0 … R5, SP, PC</code></td><td class="small">eight words, low byte first</td></tr>
     </table>
-    <h4>Stack dump (Dump stack)</h4><table>
+    <h4>Stack dump (Comms → Dump stack)</h4><table>
       <tr><td><code>F8 kind length</code></td><td class="small">kind ${DumpKind.STACK11} firmware, ${DumpKind.PROG_STACK11} program</td></tr>
-      <tr><td><code>SP</code></td><td class="small">a word</td></tr>
-      <tr><td><code>count</code></td><td class="small">1 byte: words that follow (at most ${STACK11_WORDS})</td></tr>
+      <tr><td><code>SP</code></td><td class="small">a word: where the stack top is</td></tr>
+      <tr><td><code>count</code></td><td class="small">1 byte: how many words follow (at most ${STACK11_WORDS})</td></tr>
       <tr><td><code>words</code></td><td class="small">from SP up: the top of the stack first</td></tr>
     </table>`;
 }
