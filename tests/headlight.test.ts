@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BALANCE } from '../src/core/balance';
 import { CHASSIS_MK1 } from '../src/core/balance';
-import { PDP_ALLIN_EXPLORER as DEMO_EXPLORER } from '../src/core/programs-pdp11';
+import { ALLIN_EXPLORER as DEMO_EXPLORER } from '../src/core/programs';
 import { deserialize, serialize } from '../src/core/SaveManager';
 import { coneOffsets, inCone } from '../src/core/sensors';
 import { SimulationEngine } from '../src/core/SimulationEngine';

@@ -16,7 +16,7 @@ export class GoalsPanel {
         return `<div class="goal ${ok ? 'done' : ''}"><b>${ok ? '✔ ' : ''}${g.title}<span>+${g.reward}</span></b><p>${g.description}</p>
           <div class="bar"><i style="width:${(p / g.target) * 100}%"></i></div><div class="small dim">${p} / ${g.target}</div></div>`;
       }).join('') +
-      `<h4 class="evh">Storyteller events</h4><p class="small dim">Events unlock as you progress. Training versions come first and always arrive with a long warning on @ALERT.</p>` +
+      `<h4 class="evh">Storyteller events</h4><p class="small dim">Events unlock as you progress. Training versions come first and always arrive with a long warning on ALERT.</p>` +
       EVENT_DEFS.map((d) => {
         const dir = this.engine.director;
         const open = dir.isUnlocked(d);

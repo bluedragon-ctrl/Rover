@@ -1,11 +1,11 @@
 /**
- * M15 I/O page (docs/PDP11_IO.md §3): Rover's devices as DEC-style registers at fixed
+ * M15 I/O page (docs/BLUE11_IO.md §3): Rover's devices as DEC-style registers at fixed
  * addresses. The device logic is unchanged (SimulationEngine.device(), Unit.deviceLeft(),
  * the world); this table is only the face the CPU sees. Add a register here and it appears
  * as a predefined symbol (symbols.ts).
  */
 
-import { BALANCE, PDP11 } from '../balance';
+import { BALANCE, BLUE11 } from '../balance';
 import type { ChunkedWorld } from '../ChunkedWorld';
 import { signalStrength, wrapDeg, type SunState } from '../Environment';
 import { ProgState, Status } from '../types';
@@ -37,7 +37,7 @@ export type DeviceStart = 'DRIVE' | 'DRIVE_N' | 'RADAR' | 'TOOL' | 'REPAIR' | 'C
 /** RO read-only, RW read/write, WO write-only (reads 0), FW written by the firmware only (the program may read). */
 export type Access = 'RO' | 'RW' | 'WO' | 'FW';
 
-/** CSR bits (PDP11_IO.md §3.1). */
+/** CSR bits (BLUE11_IO.md §3.1). */
 export const CSR = { GO: 0o1, FN: 0o16, IE: 0o100, DONE: 0o200, ERR: 0o100000 } as const;
 
 /** The six devices with a CSR, each a block of eight words from `base`. */
@@ -59,14 +59,14 @@ export const DEVICE_BLOCKS: readonly DeviceBlock[] = [
 ];
 export const TX_VECTOR = 0o150;
 export const CLOCK_VECTOR = 0o100;
-/** Device interrupts request at level 4, the line clock at 6 (PDP11_CPU.md §8). */
+/** Device interrupts request at level 4, the line clock at 6 (BLUE11_CPU.md §8). */
 export const DEVICE_LEVEL = 4;
 export const CLOCK_LEVEL = 6;
 
 /** `BOOTCS` bit 8: safe mode latched. */
 export const BOOT_SAFE = 0o400;
 
-/** `PRGCS` bits 3–1: why the last program run ended (PDP11_IO.md §3.7). */
+/** `PRGCS` bits 3–1: why the last program run ended (BLUE11_IO.md §3.7). */
 export const Why = { NONE: 0, DONE: 1, TIME: 2, PRE: 3, FLT: 4, BPT: 5 } as const;
 /** `PRGER`: program fault codes. */
 export const ProgFault = { ODD: 1, NXM: 2, PRO: 3, STK: 4, ILL: 5, IOT: 6, EMT: 7, TRP: 8 } as const;
@@ -198,7 +198,7 @@ function start(h: IoHost, key: DevKey): void {
         ctx.device(u, 'ERASE', l.arg);
       } else {
         // FN 1 (the camera's send) is retired on this core: the ROM's SNDIMG frames the photo
-        // into the recorder instead (PDP11_IO.md §3.5a). Anything else is invalid.
+        // into the recorder instead (BLUE11_IO.md §3.5a). Anything else is invalid.
         io.imgLast = 'send';
         u.results.send = Status.ERR_INVALID;
       }
@@ -389,7 +389,7 @@ function telemetryAndActuators(): IoRegister[] {
   return regs;
 }
 
-/** Program control and watchdog (177000, firmware writes; PDP11_IO.md §3.7). */
+/** Program control and watchdog (177000, firmware writes; BLUE11_IO.md §3.7). */
 const CONTROL: IoRegister[] = [
   {
     addr: 0o177000,
@@ -445,7 +445,7 @@ const CONTROL: IoRegister[] = [
     addr: 0o177030,
     name: 'BOOTCT',
     access: 'RO',
-    description: `Fault and watchdog reboots in the last ${PDP11.safeModeTicks} ticks, this boot included`,
+    description: `Fault and watchdog reboots in the last ${BLUE11.safeModeTicks} ticks, this boot included`,
     read: (h) => h.u.faultBoots.length,
   },
   {
@@ -458,33 +458,33 @@ const CONTROL: IoRegister[] = [
   },
 ];
 
-/** Output: the TX device (176540; PDP11_IO.md §3.5). */
+/** Output: the TX device (176540; BLUE11_IO.md §3.5). */
 const OUTPUT: IoRegister[] = [
   {
     addr: 0o176540,
     name: 'TXCS',
     access: 'RW',
     description: `TX control/status: bit 7 READY (room for a byte), bit 6 IE (firmware) interrupt at vector ${TX_VECTOR.toString(8)} when room comes back`,
-    read: (h) => (h.u.link.txFree(PDP11.txFifoBytes) > 0 ? CSR.DONE : 0) | (h.io.tx.ie ? CSR.IE : 0),
+    read: (h) => (h.u.link.txFree(BLUE11.txFifoBytes) > 0 ? CSR.DONE : 0) | (h.io.tx.ie ? CSR.IE : 0),
     write: (h, v) => {
       if (h.program) return;
       const ie = (v & CSR.IE) !== 0;
-      const raise = ie && !h.io.tx.ie && h.u.link.txFree(PDP11.txFifoBytes) > 0;
+      const raise = ie && !h.io.tx.ie && h.u.link.txFree(BLUE11.txFifoBytes) > 0;
       h.io.tx.ie = ie;
       if (raise) h.io.tx.ev = true;
     },
   },
   { addr: 0o176542, name: 'TXBUF', access: 'WO', description: 'Queue one byte for the downlink (dropped and counted in TXLOST if the FIFO is full)', read: () => 0,
     write: (h, v) => {
-      h.u.link.txPut(v, PDP11.txFifoBytes);
-      h.io.tx.ready = h.u.link.txFree(PDP11.txFifoBytes) > 0;
+      h.u.link.txPut(v, BLUE11.txFifoBytes);
+      h.io.tx.ready = h.u.link.txFree(BLUE11.txFifoBytes) > 0;
     },
   },
-  { addr: 0o176544, name: 'TXFREE', access: 'RO', description: `Free FIFO bytes (${PDP11.txFifoBytes} on Mk-I)`, read: (h) => h.u.link.txFree(PDP11.txFifoBytes) },
+  { addr: 0o176544, name: 'TXFREE', access: 'RO', description: `Free FIFO bytes (${BLUE11.txFifoBytes} on Mk-I)`, read: (h) => h.u.link.txFree(BLUE11.txFifoBytes) },
   { addr: 0o176546, name: 'TXLOST', access: 'RW', description: 'Bytes dropped since boot (saturates at 255; write to set)', read: (h) => h.u.link.txLost, write: (h, v) => (h.u.link.txLost = clamp(v, 0, 255)) },
 ];
 
-/** The recorder: CPU messages stored and forwarded (PDP11_IO.md §3.5). */
+/** The recorder: CPU messages stored and forwarded (BLUE11_IO.md §3.5). */
 const recFree = (h: IoHost): number => h.u.link.recFree(h.u.recorderBytes);
 const RECORDER: IoRegister[] = [
   {
@@ -519,7 +519,7 @@ export function recordByte(u: Unit, v: number): void {
   }
 }
 
-/** Clock, CPU and console registers at their real PDP-11 addresses. */
+/** Clock, CPU and console registers at their traditional addresses. */
 const SYSTEM: IoRegister[] = [
   {
     addr: 0o177546,

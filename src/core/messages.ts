@@ -1,5 +1,5 @@
 /**
- * M15 framed standard output (docs/PDP11_IO.md §3.5a): the program writes messages
+ * M15 framed standard output (docs/BLUE11_IO.md §3.5a): the program writes messages
  * `SOH type length body ETX` byte by byte into the TX device; mission control splits the
  * received stream into messages and marks the ones that did not arrive whole.
  * Headless and integer-only.

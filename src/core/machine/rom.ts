@@ -1,6 +1,6 @@
 /**
- * M15 ROM (docs/PDP11_CPU.md §10, PDP11_IO.md §6): boot with safe mode, default handlers,
- * the program's exit stub, the device drivers and the helpers. Readable MACRO-11, assembled
+ * M15 ROM (docs/BLUE11_CPU.md §10, BLUE11_IO.md §6): boot with safe mode, default handlers,
+ * the program's exit stub, the device drivers and the helpers. Readable Blue-11 assembly, assembled
  * once at 160000; nothing is hidden (Reference → ROM shows this source).
  *
  * Calling convention: `JSR PC, NAME`. Arguments in R0 and R1 (a third in R2, which is kept);
@@ -8,12 +8,12 @@
  * other register is kept. Drivers return the device's error code (`OK` = 0).
  *
  * Before the ROM runs, the disk controller (the host) has copied both images into core and
- * set `STKLIM` to the end of the firmware image (PDP11_CPU.md §6.2).
+ * set `STKLIM` to the end of the firmware image (BLUE11_CPU.md §6.2).
  */
 
-import { assemble, type AssembleResult } from '../../pdp11';
+import { assemble, type AssembleResult } from '../../blue11';
 import { BootReason } from '../downlink';
-import { PDP11 } from '../balance';
+import { BLUE11 } from '../balance';
 import { IMG_CHUNK } from '../messages';
 import { systemSymbols } from './names';
 
@@ -95,7 +95,7 @@ SAFLEN = . - SAFMSG
         .EVEN
 
 ; ---------------------------------------------------------------- drivers
-; Every driver follows the same path (PDP11_IO.md §3.1): parameters, GO, wait for DONE,
+; Every driver follows the same path (BLUE11_IO.md §3.1): parameters, GO, wait for DONE,
 ; R0 = the device's error register: OK, or why it was refused or failed.
 
 ; STEP: drive R1 tiles in direction R0.
@@ -409,14 +409,14 @@ export const ROM_ROUTINES = ['STEP', 'SCAN', 'SLEEP', 'ACT', 'USE', 'SNAP', 'SEN
 
 function build(): AssembleResult {
   const a = assemble(ROM_SOURCE, {
-    origin: PDP11.romBase,
+    origin: BLUE11.romBase,
     names: 'dec',
     symbols: {
       ...systemSymbols(),
       VECEND: 0o154,
       FAULT: BootReason.FAULT,
-      SAFEN: PDP11.safeModeBoots,
-      SAFET: PDP11.safeModeTicks,
+      SAFEN: BLUE11.safeModeBoots,
+      SAFET: BLUE11.safeModeTicks,
       CHUNK: IMG_CHUNK,
     },
   });

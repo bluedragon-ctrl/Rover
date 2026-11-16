@@ -1,11 +1,11 @@
 /**
  * The Reference tab's shell (section tabs, panes, the filter box) and the sections that do not
- * depend on the instruction set: Tools and Image. The rest is in ReferencePdp11.ts.
+ * depend on the instruction set: Tools and Image. The rest is in ReferenceBlue11.ts.
  */
-import { BALANCE, CHASSIS_MK1, PDP11 } from '../core/balance';
+import { BALANCE, CHASSIS_MK1, BLUE11 } from '../core/balance';
 import { DEVICE_BLOCKS } from '../core/machine/iopage';
 import { PHOTO_FORMATS_2X, photoBytes } from '../core/photos';
-import { PDP_PROGRAM_TEMPLATES } from '../core/programs-pdp11';
+import { PROGRAM_TEMPLATES } from '../core/programs';
 import { TOOLS } from '../core/tools';
 import { imageBytes } from '../core/Unit';
 
@@ -49,7 +49,7 @@ export function imageHtml(): string {
   const B = BALANCE;
   const f1 = PHOTO_FORMATS_2X[1];
   const row = (f1.w * f1.bpp) / 8;
-  const examples = Object.keys(PDP_PROGRAM_TEMPLATES).filter((n) => n.startsWith('Image: '));
+  const examples = Object.keys(PROGRAM_TEMPLATES).filter((n) => n.startsWith('Image: '));
   const modes = Object.entries(PHOTO_FORMATS_2X)
     .map(([m, f]) => `<tr><td>${m}</td><td>${f.w}×${f.h}</td><td>${8 / f.bpp}</td><td>${(f.w * f.bpp) / 8}</td><td>${photoBytes(Number(m))} B</td><td>${PIXEL_MEANING[f.kind]}</td></tr>`)
     .join('');
@@ -65,7 +65,7 @@ camera ───► image memory ───► recorder ───► Gallery
     <h4>Routines and registers</h4>
     <table class="radio-kv">
       <tr><td><code>JSR PC, SNAP</code></td><td>R0 = direction, R1 = mode (<code>F.M1</code>…): photograph into image memory (overwrites all of it). ${B.snapTicks} ticks, ${B.snapEnergy} energy. Nothing is sent yet.</td></tr>
-      <tr><td><code>IMGBAS</code></td><td>Image memory starts at ${o(PDP11.imageBase)}: read and write it with <code>MOV</code> / <code>MOVB</code> and every addressing mode. <code>IMGSIZ</code> says how big it is.</td></tr>
+      <tr><td><code>IMGBAS</code></td><td>Image memory starts at ${o(BLUE11.imageBase)}: read and write it with <code>MOV</code> / <code>MOVB</code> and every addressing mode. <code>IMGSIZ</code> says how big it is.</td></tr>
       <tr><td><code>JSR PC, SNDIMG</code></td><td>R0 = photo type (0: the last photo's mode, <code>IMGTYP</code>): send image memory home through the recorder as <code>T.IMG</code> messages. Image memory is kept.</td></tr>
       <tr><td><code>JSR PC, ERASE</code></td><td>Set every byte to 0 and forget the last photo. ${B.eraseTicks} ticks, ${B.eraseEnergy} energy.</td></tr>
       <tr><td><code>JSR PC, PLOT</code></td><td>R0 = x, R1 = y, R2 = grey 0–3: set one pixel of a 64×64 grey photo.</td></tr>

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BALANCE } from '../src/core/balance';
 import { GOALS } from '../src/core/EventDirector';
-import { PDP_ALLIN_PROSPECTOR, PDP_DEFAULT_FIRMWARE } from '../src/core/programs-pdp11';
+import { ALLIN_PROSPECTOR, DEFAULT_FIRMWARE } from '../src/core/programs';
 import { SimulationEngine } from '../src/core/SimulationEngine';
 import { TOOLS } from '../src/core/tools';
 import { CpuState, Layer, Status } from '../src/core/types';
@@ -84,7 +84,7 @@ describe('grabber, spectrometer, USE', () => {
 
 describe('goals', () => {
   it('the default firmware completes First contact and awards credits', () => {
-    const { e } = rover(PDP_DEFAULT_FIRMWARE, { seed: 3 });
+    const { e } = rover(DEFAULT_FIRMWARE, { seed: 3 });
     const done: string[] = [];
     e.events.on('GOAL_COMPLETED', (g) => done.push(g.id));
     run(e, 400);
@@ -95,7 +95,7 @@ describe('goals', () => {
   it('the all-in-one Prospector mines, analyzes and delivers science over 3 sols', () => {
     const e = new SimulationEngine({ seed: 12345 });
     const u = e.spawnUnit('t');
-    e.upload(u, PDP_ALLIN_PROSPECTOR, { factory: true });
+    e.upload(u, ALLIN_PROSPECTOR, { factory: true });
     run(e, BALANCE.dayTicks * 3);
     expect(u.cpu.state).not.toBe(CpuState.FAULT);
     console.log(`prospector 3 sols: ore ${e.stats.oreMined}, items ${e.stats.itemsCollected}, analyzed ${e.stats.itemsAnalyzed}, science ${e.stats.scienceDelivered}, credits ${e.credits}, goals ${[...e.director.completed].join(',')}, bat ${u.batteryPercent}%`);

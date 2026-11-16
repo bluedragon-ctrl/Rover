@@ -2,7 +2,7 @@ import type { SimulationEngine, Slot } from '../core/SimulationEngine';
 import { CpuState, Dir, ProgState } from '../core/types';
 import type { Unit } from '../core/Unit';
 import { TOOLS } from '../core/tools';
-import { disassemble } from '../pdp11';
+import { disassemble } from '../blue11';
 import { IO_REGISTERS } from '../core/machine/iopage';
 import { ROM_EXPORTS } from '../core/machine/rom';
 import { STACK11_WORDS } from '../core/downlink';
@@ -12,7 +12,7 @@ import { romRoutineAt } from './comms';
 const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!);
 
 /** Names the disassembler shows for addresses: I/O registers and ROM routines. */
-const PDP_NAMES = new Map<number, string>([...IO_REGISTERS.filter((r) => !r.alias).map((r) => [r.addr, r.name] as [number, string]), ...Object.entries(ROM_EXPORTS).map(([n, a]) => [a, n] as [number, string])]);
+const NAMES = new Map<number, string>([...IO_REGISTERS.filter((r) => !r.alias).map((r) => [r.addr, r.name] as [number, string]), ...Object.entries(ROM_EXPORTS).map(([n, a]) => [a, n] as [number, string])]);
 
 /** PSW flag bits, high to low as DEC prints them. */
 const FLAGS: [string, number, string][] = [
@@ -92,7 +92,7 @@ export class DebuggerPanel {
         : `FIRMWARE${ctxName === 'handler' ? ' · handler in the program\'s time' : u.slice >= 0 ? ' · the program has the CPU' : ''}`;
     const line = this.builds?.lineAt(u, slot, pc) ?? 0;
     const inRom = pc >= 0o160000 && pc < 0o170000;
-    const dis = disassemble((a) => m.peek(a) ?? 0, pc, { nameOf: (a) => PDP_NAMES.get(a) });
+    const dis = disassemble((a) => m.peek(a) ?? 0, pc, { nameOf: (a) => NAMES.get(a) });
     const where = inRom ? `ROM ${romRoutineAt(pc)}` : line ? `L${line}` : '';
     const reg = (i: number) => {
       const name = i === 6 ? 'SP' : i === 7 ? 'PC' : `R${i}`;

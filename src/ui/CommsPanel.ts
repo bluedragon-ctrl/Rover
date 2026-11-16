@@ -4,7 +4,7 @@ import type { SimulationEngine } from '../core/SimulationEngine';
 import type { Unit } from '../core/Unit';
 import { costText, describeMessage, DictionaryCache, fieldsHtml, frameFields, messageFields, replyTo, sentByBreakpoint, sentText, snapKindOf, tagName, tagSource, type Dictionaries } from './comms';
 import { MsgType, type ReceivedMessage } from '../core/messages';
-import { PDP11 } from '../core/balance';
+import { BLUE11 } from '../core/balance';
 import type { Slot } from '../core/SimulationEngine';
 import { hint } from './hint';
 import { productSize } from '../core/imaging';
@@ -69,7 +69,7 @@ export class CommsPanel {
     el.classList.add('comms-panel');
     el.innerHTML = `
       <section class="panel-box link-box">
-        <header><span><b>Radio link</b>${hint(HELP(PDP11.txFifoBytes, ch?.linkBytesPerTick ?? BALANCE.linkBytesPerTick))}</span></header>
+        <header><span><b>Radio link</b>${hint(HELP(BLUE11.txFifoBytes, ch?.linkBytesPerTick ?? BALANCE.linkBytesPerTick))}</span></header>
         <div id="comms-link"></div>
       </section>
       <section class="panel-box grow">
@@ -140,7 +140,7 @@ export class CommsPanel {
     return `
       <div class="link-row"><span class="dir down">▼ down</span>${meter}<span class="${ok ? '' : 'warn'}">signal ${sig}${ok ? '' : ` · needs ${min}: nothing arrives`}</span></div>
       <div class="link-row small dim"><span class="dir"></span>
-        <span title="Message bytes waiting in the real-time FIFO (TX). Bytes that do not fit are lost.">TX ${link.tx.length}/${PDP11.txFifoBytes} B</span> ·
+        <span title="Message bytes waiting in the real-time FIFO (TX). Bytes that do not fit are lost.">TX ${link.tx.length}/${BLUE11.txFifoBytes} B</span> ·
         <span title="Photos and other messages waiting in the recorder (sent after TX)">recorder ${link.recUsed}/${u.recorderBytes} B</span> ·
         <span class="${link.txLost ? 'warn' : ''}" title="TX bytes dropped since the last reboot (TXLOST)">lost ${link.txLost} B</span></div>
       <div class="link-row small dim"><span class="dir up">▲ up</span>

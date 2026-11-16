@@ -1,11 +1,11 @@
 /**
- * PDP-11 compatible CPU, assembler and disassembler: a standalone library.
+ * Blue-11: a CPU, assembler and disassembler as a standalone library.
  *
  * Rover is its first user, not its owner: nothing in this folder imports from the game
- * (a test enforces it). Deterministic, integer-only, no DOM. Design: docs/PDP11_CPU.md §14.
+ * (a test enforces it). Deterministic, integer-only, no DOM. Design: docs/BLUE11_CPU.md §14.
  *
  * API reference, conventions (octal, 16-bit words, cycles), recipes and pitfalls:
- * README.md in this folder; its examples are run by tests/pdp11/readme-examples.test.ts.
+ * README.md in this folder; its examples are run by tests/blue11/readme-examples.test.ts.
  */
 
 export { Cpu, BUS_ERROR, VEC, PSW, PSW_ADDRESS } from './cpu';

@@ -1,5 +1,5 @@
 /**
- * Memory-mapped devices on a PDP-11 bus, and a machine that hosts them: RAM from address
+ * Memory-mapped devices on the Blue-11 bus, and a machine that hosts them: RAM from address
  * 0, devices in the I/O page, the CPU, and time counted in CPU cycles (deterministic: no
  * wall-clock time). A project adds its own peripherals as {@link Device}s instead of
  * writing its own address decoding; {@link DL11} and {@link KW11L} are DEC's console and

@@ -1,5 +1,5 @@
 /**
- * A minimal PDP-11 system around the CPU: RAM, a DL11 console terminal and a KW11-L line
+ * A minimal system around the CPU: RAM, a DL11 console terminal and a KW11-L line
  * clock, at their real DEC addresses and vectors. Used by the tests and the standalone
  * simulator page; a project with its own peripherals builds on {@link DeviceMachine}
  * (`devices.ts`) the same way.
@@ -12,7 +12,7 @@ import { CSR, DeviceMachine, DL11, KW11L, type DeviceMachineOptions } from './de
 
 export { CSR };
 
-/** DL11 console and KW11-L clock registers (octal addresses, as on every PDP-11). */
+/** DL11 console and KW11-L clock registers (octal addresses, as on the original machines). */
 export const DEV = {
   RCSR: 0o177560, RBUF: 0o177562, XCSR: 0o177564, XBUF: 0o177566,
   LKS: 0o177546,

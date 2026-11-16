@@ -1,15 +1,15 @@
 /**
- * M15 slice 5: Reference for the PDP-11 core (MACRO-11). Generated from the tables it
+ * The Reference tab for the Blue-11 and its assembly language. Generated from the tables it
  * describes where they exist (instruction set, I/O page, ROM routines, predefined symbols,
  * dump and message formats), so it stays in sync; a test checks every instruction has a row.
  */
-import { CHASSIS_MK1, PDP11 } from '../core/balance';
+import { CHASSIS_MK1, BLUE11 } from '../core/balance';
 import { DumpKind, STACK11_WORDS } from '../core/downlink';
 import { DEVICE_BLOCKS, IO_REGISTERS, CARGO_BASE, CLOCK_VECTOR, TX_VECTOR, type IoRegister } from '../core/machine/iopage';
 import { ROM_EXPORTS, ROM_ROUTINES, ROM_SOURCE } from '../core/machine/rom';
 import { systemSymbols } from '../core/machine/names';
 import { MSG_TYPE_NAMES, MsgType } from '../core/messages';
-import { INSTRUCTIONS } from '../pdp11';
+import { INSTRUCTIONS } from '../blue11';
 import type { WorldRegistry } from '../core/WorldRegistry';
 import { imageHtml, mountReference, toolsHtml } from './ReferencePanel';
 import { oct6 } from './toolchain';
@@ -117,7 +117,7 @@ const SECTIONS = [
 function basicsHtml(): string {
   const rows = (r: [string, string][]) => `<table>${r.map(([a, b]) => `<tr><td><code>${a}</code></td><td class="small">${b}</td></tr>`).join('')}</table>`;
   return `
-    <p class="small">The rover's computer is a <b>PDP-11</b>-style 16-bit CPU, programmed in a subset of <b>MACRO-11</b>. Words are 16
+    <p class="small">The rover's computer is the <b>Blue-11</b>, a 16-bit CPU, programmed in <b>Blue-11 assembly</b>. Words are 16
     bits, stored low byte first; addresses are byte addresses, words sit at even ones. <b>Numbers are octal</b>.</p>
     <h4>Writing code</h4>
     ${rows([
@@ -142,11 +142,11 @@ function basicsHtml(): string {
     <h4>Memory map</h4>
     ${rows([
       ['000000–000177', 'trap and interrupt vectors (the boot ROM fills them)'],
-      [`${o(PDP11.firmwareBase)}–${o(PDP11.programBase - 1)}`, `the firmware: code, data, its stack below ${o(PDP11.programBase)} (PRGBAS)`],
-      [`${o(PDP11.programBase)}–${o(PDP11.coreBytes - 1)}`, 'the program: code, data, its stack from the top of core down (Mk-I core 2 KB)'],
-      [`${o(PDP11.imageBase)}–`, 'image memory (IMGBAS): the photo the camera took'],
-      [`${o(PDP11.romBase)}–167777`, 'the ROM: boot, handlers, drivers, helpers (read and execute only)'],
-      [`${o(PDP11.ioBase)}–177777`, 'device registers: the I/O page'],
+      [`${o(BLUE11.firmwareBase)}–${o(BLUE11.programBase - 1)}`, `the firmware: code, data, its stack below ${o(BLUE11.programBase)} (PRGBAS)`],
+      [`${o(BLUE11.programBase)}–${o(BLUE11.coreBytes - 1)}`, 'the program: code, data, its stack from the top of core down (Mk-I core 2 KB)'],
+      [`${o(BLUE11.imageBase)}–`, 'image memory (IMGBAS): the photo the camera took'],
+      [`${o(BLUE11.romBase)}–167777`, 'the ROM: boot, handlers, drivers, helpers (read and execute only)'],
+      [`${o(BLUE11.ioBase)}–177777`, 'device registers: the I/O page'],
     ])}
     <h4>Firmware, program and the gate</h4>
     <p class="small">The <b>firmware</b> keeps the rover alive and gives the <b>program</b> time slices: it writes <code>GO</code> to
@@ -301,7 +301,7 @@ function romHtml(): string {
   const helpers = ROM_ROUTINES.filter((n) => !drivers.includes(n));
   const table = (names: readonly string[]) =>
     `<table>${names.map((n) => `<tr><td><code>JSR PC, ${n}</code></td><td class="dim small">${o(ROM_EXPORTS[n])}</td><td class="small">${esc(docs[n] ?? '')}</td></tr>`).join('')}</table>`;
-  return `<p class="small">The ROM at <code>${o(PDP11.romBase)}</code> boots the rover, serves the default trap handlers and offers routines.
+  return `<p class="small">The ROM at <code>${o(BLUE11.romBase)}</code> boots the rover, serves the default trap handlers and offers routines.
     Call one with <code>JSR PC, NAME</code>: arguments in <code>R0</code>, <code>R1</code> (a third in <code>R2</code>, kept), the result in
     <code>R0</code> with its flags (<code>BNE</code> = not OK). <code>R0</code> and <code>R1</code> are scratch; every other register is kept.
     Drivers return the device's error code (<code>OK</code> = 0).</p>
@@ -345,7 +345,7 @@ function radioHtml(): string {
     .map(([v, n]) => `<tr><td><code>T.${Object.entries(MsgType).find(([, x]) => x === Number(v))?.[0] ?? v}</code></td><td class="dim small">${o(Number(v), 3)}</td><td class="small">${n}</td></tr>`)
     .join('');
   return `<p class="small">Your code talks to mission control in <b>messages</b>, byte by byte into <code>TXBUF</code> (real time, a
-    ${PDP11.txFifoBytes} B FIFO, lossy) or <code>RECBUF</code> (the recorder: store and forward). The ROM's <code>LOG</code>, <code>PUTMSG</code>,
+    ${BLUE11.txFifoBytes} B FIFO, lossy) or <code>RECBUF</code> (the recorder: store and forward). The ROM's <code>LOG</code>, <code>PUTMSG</code>,
     <code>SEND</code> and <code>SNDIMG</code> write them for you. The rover sends dumps first, then TX, then the recorder.</p>
     <h4>Message format</h4><table>
       <tr><td><code>SOH</code></td><td class="small">001: a message starts</td></tr>
@@ -375,8 +375,8 @@ function radioHtml(): string {
     </table>`;
 }
 
-/** Reference tab for a world with the PDP-11 core. */
-export function renderReference11(el: HTMLElement, registry: WorldRegistry): void {
+/** The Reference tab. */
+export function renderReference(el: HTMLElement, registry: WorldRegistry): void {
   el.classList.add('ref11');
   mountReference(el, SECTIONS, {
     basics: basicsHtml(),

@@ -1,5 +1,5 @@
 /**
- * PDP-11 instruction table (the PDP-11/40 set with its EIS option, minus memory
+ * Instruction table (the original /40 model's set with its EIS option, minus memory
  * management). Shared by the assembler and the disassembler; the CPU decodes by the same
  * opcode values.
  *
@@ -105,7 +105,7 @@ export function decodeOp(word: number): OpInfo | null {
   return null;
 }
 
-/** Six octal digits, the PDP-11 way of writing a word. */
+/** Six octal digits, the traditional way of writing a word. */
 export function octal(n: number, digits = 6): string {
   return (n >>> 0).toString(8).padStart(digits, '0');
 }

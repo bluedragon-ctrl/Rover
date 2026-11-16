@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PDP11 } from '../src/core/balance';
+import { BLUE11 } from '../src/core/balance';
 import { ROM, ROM_ENTRY, ROM_EXPORTS, ROM_ROUTINES } from '../src/core/machine/rom';
 import { isDecName, predefinedSymbols } from '../src/core/machine/symbols';
 import { IMG_CHUNK, MsgType } from '../src/core/messages';
@@ -56,13 +56,13 @@ const result = (name: string, r0: string, r1 = '0', r2 = '0', ticks = 8) => {
   return { r0: r[3], r1: r[4], r2: r[2], nzvc: r[5], e, u };
 };
 
-describe('ROM (PDP11_CPU.md §10)', () => {
+describe('ROM (BLUE11_CPU.md §10)', () => {
   it('assembles into the ROM window and exports every routine as a DEC name', () => {
     expect(ROM.ok).toBe(true);
     expect(ROM.bytes.length).toBeLessThanOrEqual(0o10000); // 160000-167777
     for (const n of ROM_ROUTINES) {
       expect(isDecName(n)).toBe(true);
-      expect(ROM_EXPORTS[n]).toBeGreaterThanOrEqual(PDP11.romBase);
+      expect(ROM_EXPORTS[n]).toBeGreaterThanOrEqual(BLUE11.romBase);
     }
     const syms = predefinedSymbols(createDefaultRegistry());
     expect(syms.STEP).toBe(ROM_EXPORTS.STEP);
@@ -190,13 +190,13 @@ TXTEND:`;
     const { e, u } = rover(fw);
     run(e, 8);
     expect(regs(u)[3]).toBe(u.recorderBytes - 7);
-    expect(u.recorderBytes).toBe(2048); // Mk-I 1 KB x PDP11.recorderScale
+    expect(u.recorderBytes).toBe(2048); // Mk-I 1 KB x BLUE11.recorderScale
     run(e, 20, true);
     expect(e.messages).toMatchObject([{ channel: 'rec', type: MsgType.DATA, body: [1, 2, 3], status: 'ok' }]);
   });
 });
 
-describe('photos: SNAP, SNDIMG, ERASE (PDP11_CPU.md §6.3, PDP11_IO.md §3.5a)', () => {
+describe('photos: SNAP, SNDIMG, ERASE (BLUE11_CPU.md §6.3, BLUE11_IO.md §3.5a)', () => {
   const snapSend = (edit = '') => `
 START:  MOV  #NORTH, R0
         MOV  #F.M1, R1
@@ -284,7 +284,7 @@ ${edit}
   });
 });
 
-describe('safe mode (PDP11_CPU.md §10, from M14 §6.3)', () => {
+describe('safe mode (BLUE11_CPU.md §10, from M14 §6.3)', () => {
   const CRASH = 'START:  MOV @#10000, R0'; // a bus error: the ROM reboots (reason: fault)
 
   it('three fault reboots within 500 ticks run the ROM\'s safe firmware until a new upload', () => {
@@ -294,7 +294,7 @@ describe('safe mode (PDP11_CPU.md §10, from M14 §6.3)', () => {
     expect(u.machine.cpu.r[7]).toBeGreaterThanOrEqual(ROM_ENTRY.SAFEFW);
     expect(u.cpu.state).toBe(CpuState.RUNNING);
     run(e, 200, true);
-    expect(u.faultBoots.length).toBe(PDP11.safeModeBoots); // no more crashes
+    expect(u.faultBoots.length).toBe(BLUE11.safeModeBoots); // no more crashes
     expect(u.indicators[0]).toBe(1); // red
     expect(u.solarOpen).toBe(1);
     const texts = e.messages.filter((m) => m.type === MsgType.TEXT).map((m) => String.fromCharCode(...m.body));
@@ -314,7 +314,7 @@ describe('safe mode (PDP11_CPU.md §10, from M14 §6.3)', () => {
   it('fault reboots spread over more than 500 ticks do not', () => {
     const { e, u } = rover(`START:  MOV #300., R0\n        JSR PC, SLEEP\n        MOV @#10000, R0`);
     run(e, 900);
-    expect(u.faultBoots.length).toBeLessThan(PDP11.safeModeBoots);
+    expect(u.faultBoots.length).toBeLessThan(BLUE11.safeModeBoots);
     expect(u.safeMode).toBe(false);
     expect(u.bootReason).toBe(BootReason.FAULT);
   });

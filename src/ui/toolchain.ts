@@ -4,12 +4,12 @@
  * format. No DOM.
  */
 import type { Extension } from '@codemirror/state';
-import { PDP11 } from '../core/balance';
+import { BLUE11 } from '../core/balance';
 import type { ImageResult } from '../core/machine/RoverMachine';
-import { PDP_FIRMWARE_TEMPLATES, PDP_PROGRAM_TEMPLATES } from '../core/programs-pdp11';
+import { FIRMWARE_TEMPLATES, PROGRAM_TEMPLATES } from '../core/programs';
 import type { SimulationEngine, Slot } from '../core/SimulationEngine';
 import type { Unit } from '../core/Unit';
-import { macro11, macro11Highlight } from '../pdp11/codemirror';
+import { blue11Asm, blue11Highlight } from '../blue11/codemirror';
 
 export interface Diag {
   line: number;
@@ -26,7 +26,7 @@ export interface SlotBuild {
   /** Source line of the instruction at an address (0 if none). */
   lineAt: (addr: number) => number;
   /** The assembler's result. */
-  pdp: ImageResult;
+  result: ImageResult;
 }
 
 /** One row of the listing pane. */
@@ -45,9 +45,9 @@ export interface ListingRowView {
 export const oct6 = (v: number): string => (v & 0xffff).toString(8).padStart(6, '0');
 
 /** The program's core region ends below its first stack word (its return address). */
-export const pdpRegions = (u: Unit): { fw: number; prog: number } => ({
-  fw: PDP11.programBase - PDP11.firmwareBase,
-  prog: u.machine.coreBytes - 2 - PDP11.programBase,
+export const coreRegions = (u: Unit): { fw: number; prog: number } => ({
+  fw: BLUE11.programBase - BLUE11.firmwareBase,
+  prog: u.machine.coreBytes - 2 - BLUE11.programBase,
 });
 
 const stripComments = (src: string): string => src.replace(/;[^\n]*/g, '');
@@ -65,7 +65,7 @@ export interface Toolchain {
   snapsWithoutSend(b: SlotBuild | null, other: SlotBuild | null): boolean;
 }
 
-function pdpBuild(e: SimulationEngine, u: Unit, source: string, slot: Slot): SlotBuild {
+function buildSlot(e: SimulationEngine, u: Unit, source: string, slot: Slot): SlotBuild {
   const r = e.assembleFor(u, source, slot);
   const lines = r.asm.lineAt;
   return {
@@ -74,16 +74,16 @@ function pdpBuild(e: SimulationEngine, u: Unit, source: string, slot: Slot): Slo
     warnings: r.asm.warnings.map((x) => ({ line: x.line, message: x.message })),
     bytes: r.asm.bytes.length,
     lineAt: (addr) => lines.get(addr) ?? 0,
-    pdp: r,
+    result: r,
   };
 }
 
 /**
- * The MACRO-11 listing, row by row: `addr  words  source` in fixed columns (address 0–5,
- * words from 8, source from 30), as `src/pdp11/assembler.ts` writes it.
+ * The assembler's listing, row by row: `addr  words  source` in fixed columns (address 0–5,
+ * words from 8, source from 30), as `src/blue11/assembler.ts` writes it.
  */
-export function pdpListing(b: SlotBuild): ListingRowView[] {
-  const asm = b.pdp.asm;
+export function listingRows(b: SlotBuild): ListingRowView[] {
+  const asm = b.result.asm;
   const errs = new Map<number, string>();
   for (const e of b.errors) if (!errs.has(e.line)) errs.set(e.line, e.message);
   const codeLines = new Set(asm.lines.filter((l) => l.code).map((l) => l.line));
@@ -102,14 +102,14 @@ export function pdpListing(b: SlotBuild): ListingRowView[] {
 
 export function toolchain(e: SimulationEngine): Toolchain {
   return {
-    language: [macro11, macro11Highlight],
-    build: (u, src, slot) => pdpBuild(e, u, src, slot),
-    templates: (slot) => (slot === 'program' ? PDP_PROGRAM_TEMPLATES : PDP_FIRMWARE_TEMPLATES),
+    language: [blue11Asm, blue11Highlight],
+    build: (u, src, slot) => buildSlot(e, u, src, slot),
+    templates: (slot) => (slot === 'program' ? PROGRAM_TEMPLATES : FIRMWARE_TEMPLATES),
     addr: (a) => oct6(a),
     // The gate: `PRGCS` (GO) directly or the ROM's RUN driver.
-    runsProgram: (b) => usesName(b.pdp.image?.source ?? '', /\b(RUN|PRGCS)\b/i),
+    runsProgram: (b) => usesName(b.result.image?.source ?? '', /\b(RUN|PRGCS)\b/i),
     snapsWithoutSend: (b, other) => {
-      const src = (x: SlotBuild | null) => (x?.pdp.image?.source ? stripComments(x.pdp.image.source) : '');
+      const src = (x: SlotBuild | null) => (x?.result.image?.source ? stripComments(x.result.image.source) : '');
       const a = src(b);
       if (!/\bSNAP\b/i.test(a)) return false;
       return !/\b(SNDIMG|RECBUF)\b/i.test(a + src(other));

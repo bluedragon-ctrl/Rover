@@ -3,7 +3,7 @@
  * assembly language, register reads, and the usual idle loop.
  */
 import { expect } from 'vitest';
-import { PDP11 } from '../../src/core/balance';
+import { BLUE11 } from '../../src/core/balance';
 import { SimulationEngine } from '../../src/core/SimulationEngine';
 import { CpuState, Layer } from '../../src/core/types';
 import type { Unit } from '../../src/core/Unit';
@@ -48,7 +48,7 @@ export function rover(firmware: string, opts: { seed?: number; flat?: boolean; s
 /** Run ticks until the boot ROM has handed over to the firmware (3 ticks after a reboot). */
 export function boot(e: SimulationEngine, u: Unit): void {
   for (let t = 0; t < 20; t++) {
-    if (u.machine.cpu.r[7] < PDP11.romBase || u.cpu.state !== CpuState.RUNNING) return;
+    if (u.machine.cpu.r[7] < BLUE11.romBase || u.cpu.state !== CpuState.RUNNING) return;
     e.advanceTick();
   }
   throw new Error('never booted');

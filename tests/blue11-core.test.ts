@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PDP11 } from '../src/core/balance';
+import { BLUE11 } from '../src/core/balance';
 import { BootReason, decodeFrame } from '../src/core/downlink';
 import { IO_REGISTERS, ProgFault, Why } from '../src/core/machine/iopage';
 import { ROM, ROM_ENTRY } from '../src/core/machine/rom';
@@ -38,7 +38,7 @@ function rover(firmware: string, program?: string, seed = 3, setup?: (u: Unit, e
 function booted(e: SimulationEngine, u: Unit): number {
   for (let t = 1; t <= 20; t++) {
     e.advanceTick();
-    if (u.machine.cpu.r[7] < PDP11.romBase || u.cpu.state !== CpuState.RUNNING) return t;
+    if (u.machine.cpu.r[7] < BLUE11.romBase || u.cpu.state !== CpuState.RUNNING) return t;
   }
   throw new Error('never booted');
 }
@@ -68,7 +68,7 @@ START:  CLR  R5
 `;
 const withSlice = (n: number) => RUN_LOOP.replace('START:  CLR  R5', `START:  MOV  #${n}., @#SLICE\n        CLR  R5`);
 
-describe('M15 names (PDP11_IO.md §10)', () => {
+describe('M15 names (BLUE11_IO.md §10)', () => {
   it('every predefined symbol is a DEC name of at most six characters', () => {
     const syms = predefinedSymbols(createDefaultRegistry());
     const bad = Object.keys(syms).filter((k) => !isDecName(k));
@@ -87,23 +87,23 @@ describe('M15 names (PDP11_IO.md §10)', () => {
   it('register addresses are even, unique, in the I/O page', () => {
     const addrs = IO_REGISTERS.map((r) => r.addr);
     expect(new Set(addrs).size).toBe(addrs.length);
-    for (const a of addrs) expect(a % 2 === 0 && a >= PDP11.ioBase).toBe(true);
+    for (const a of addrs) expect(a % 2 === 0 && a >= BLUE11.ioBase).toBe(true);
   });
 });
 
-describe('boot ROM (PDP11_CPU.md §10)', () => {
+describe('boot ROM (BLUE11_CPU.md §10)', () => {
   it('assembles at 160000 and boots the firmware at 000200 with R0 = top of core', () => {
     expect(ROM.ok).toBe(true);
-    expect(ROM_ENTRY.BOOT).toBe(PDP11.romBase);
+    expect(ROM_ENTRY.BOOT).toBe(BLUE11.romBase);
     const e0 = new SimulationEngine({ seed: 1 });
     const u0 = e0.spawnUnit('t');
     e0.upload(u0, 'START:  HALT', factory);
     expect(booted(e0, u0)).toBeLessThanOrEqual(5); // a few ticks of boot time
     const { e, u } = rover('START:  MOV R0, R4\n        MOV SP, R3\n1$:     WAIT\n        BR 1$');
     run(e, 2);
-    expect(fwRegs(u)[4]).toBe(PDP11.coreBytes); // the probe found 2 KB
-    expect(fwRegs(u)[3]).toBe(PDP11.programBase); // the firmware stack starts below the program
-    expect(peek(u, 0o4)).toBeGreaterThanOrEqual(PDP11.romBase); // vectors filled
+    expect(fwRegs(u)[4]).toBe(BLUE11.coreBytes); // the probe found 2 KB
+    expect(fwRegs(u)[3]).toBe(BLUE11.programBase); // the firmware stack starts below the program
+    expect(peek(u, 0o4)).toBeGreaterThanOrEqual(BLUE11.romBase); // vectors filled
     expect(peek(u, 0o177546) & 0o100).toBe(0o100); // line clock IE on
     expect(u.machine.cpu.priority).toBe(0);
   });
@@ -140,7 +140,7 @@ describe('boot ROM (PDP11_CPU.md §10)', () => {
   });
 });
 
-describe('device registers (PDP11_IO.md §3)', () => {
+describe('device registers (BLUE11_IO.md §3)', () => {
   it('drive: DRVCNT counts down, DONE / ERR / DRVER after it', () => {
     const fw = `
 START:  MOV  #3, @#DRVCNT
@@ -183,7 +183,7 @@ START:  MOV  #GO, @#DRVCS       ; DRVCNT is 0: invalid
     expect(fwRegs(u)[3]).toBe(Status.ERR_DEPLOYED);
   });
 
-  it('a firmware interrupt handler on the drive vector (PDP11_IO.md §7.3)', () => {
+  it('a firmware interrupt handler on the drive vector (BLUE11_IO.md §7.3)', () => {
     const fw = (dir: string) => `
 START:  MOV  #DRVINT, @#120
         MOV  #200, @#122
@@ -236,7 +236,7 @@ START:  MOV  #EAST, @#RADDIR
   });
 });
 
-describe('the gate (PDP11_CPU.md §7)', () => {
+describe('the gate (BLUE11_CPU.md §7)', () => {
   it('HALT ends the program with R0 as its result', () => {
     const { e, u } = rover(RUN_LOOP, 'START:  MOV #42., R0\n        HALT');
     run(e, 2);
@@ -278,11 +278,11 @@ describe('the gate (PDP11_CPU.md §7)', () => {
   };
 
   it('protection: the program can write only its own region, image memory and open registers', () => {
-    expect(faultOf('START:  MOV #1, @#200\n        HALT')).toMatchObject({ state: ProgState.PROG_FAULT, code: ProgFault.PRO, pc: PDP11.programBase });
+    expect(faultOf('START:  MOV #1, @#200\n        HALT')).toMatchObject({ state: ProgState.PROG_FAULT, code: ProgFault.PRO, pc: BLUE11.programBase });
     expect(faultOf('START:  MOV #GO, @#PRGCS\n        HALT').code).toBe(ProgFault.PRO);
     expect(faultOf('START:  CLR @#PSW\n        HALT').code).toBe(ProgFault.PRO);
     expect(faultOf('START:  MOV #1, @#160000\n        HALT').code).toBe(ProgFault.PRO);
-    // RTI can't take the program into firmware mode (PDP-11/45 user-mode rules)
+    // RTI can't take the program into firmware mode (the original /45 model's user-mode rules)
     expect(faultOf('START:  CLR -(SP)\n        MOV #1$, -(SP)\n        RTI\n1$:     MOV #1, @#200\n        HALT').code).toBe(ProgFault.PRO);
     const ok = faultOf('START:  MOV #GREEN, @#IND2\n        MOV #123, @#100000\n        MOV @#200, R0\n        HALT');
     expect(ok.state).toBe(ProgState.PROG_DONE);
@@ -293,7 +293,7 @@ describe('the gate (PDP11_CPU.md §7)', () => {
 
   it('faults: odd address, no memory, illegal instruction, stack overflow, with PRGPC', () => {
     expect(faultOf('START:  MOV @#2001, R0\n        HALT').code).toBe(ProgFault.ODD);
-    expect(faultOf('START:  NOP\n        MOV @#10000, R0\n        HALT')).toMatchObject({ code: ProgFault.NXM, pc: PDP11.programBase + 2 });
+    expect(faultOf('START:  NOP\n        MOV @#10000, R0\n        HALT')).toMatchObject({ code: ProgFault.NXM, pc: BLUE11.programBase + 2 });
     expect(faultOf('START:  MUL R0, R1\n        HALT').code).toBe(ProgFault.ILL); // no EIS board
     const { e, u } = rover(RUN_LOOP, 'START:\n1$:     MOV R0, -(SP)\n        BR 1$');
     run(e, 80);
@@ -327,7 +327,7 @@ describe('the gate (PDP11_CPU.md §7)', () => {
   });
 });
 
-describe('interrupts and system calls during the program (PDP11_CPU.md §7.3, §8)', () => {
+describe('interrupts and system calls during the program (BLUE11_CPU.md §7.3, §8)', () => {
   it('the clock handler runs in the firmware and returns; the program wakes every tick', () => {
     const fw = `
 START:  MOV  #CLK, @#100
@@ -344,7 +344,7 @@ CNT:    .WORD 0`;
     expect(u.progState).toBe(ProgState.PROG_DONE);
     expect(u.progResult).toBe(12); // R2 counted to 5, R3 kept 7: the handler used no registers
     expect(peek(u, label(e, u, fw, 'CNT'))).toBeGreaterThanOrEqual(5);
-    expect(fwRegs(u)[6]).toBe(PDP11.programBase); // the firmware's stack balanced
+    expect(fwRegs(u)[6]).toBe(BLUE11.programBase); // the firmware's stack balanced
   });
 
   it('TRAP n is a system call: the firmware handler sees n and the program\'s R0', () => {
@@ -382,7 +382,7 @@ SYSCAL: MOV  R1, -(SP)          ; handlers run on the program's R0-R5: save what
   });
 });
 
-describe('framed standard output (PDP11_IO.md §3.5a)', () => {
+describe('framed standard output (BLUE11_IO.md §3.5a)', () => {
   const sender = (text: string, extra = '') => `
 START:  MOV  #MSG, R1
         MOV  #MSGEND-MSG, R2
@@ -400,7 +400,7 @@ MSGEND:`;
     const { e, u } = rover(sender('STUCK AT 12,-4'), undefined, 3, (r) => (r.antennaHealth = 0)); // no signal: the bytes wait
     run(e, 4); // 5 cycles a byte
     u.antennaHealth = 100;
-    expect(peek(u, 0o176544)).toBe(PDP11.txFifoBytes - 18);
+    expect(peek(u, 0o176544)).toBe(BLUE11.txFifoBytes - 18);
     run(e, 30, true);
     const ok = e.messages.filter((m) => m.status === 'ok');
     expect(ok).toHaveLength(1);
@@ -413,7 +413,7 @@ MSGEND:`;
     const { e, u } = rover(sender(long), undefined, 3, (r) => (r.antennaHealth = 0));
     run(e, 10);
     u.antennaHealth = 100;
-    expect(peek(u, 0o176546)).toBe(74 - PDP11.txFifoBytes);
+    expect(peek(u, 0o176546)).toBe(74 - BLUE11.txFifoBytes);
     expect(peek(u, 0o176540) & 0o200).toBe(0); // not READY
     run(e, 60, true);
     expect(e.messages).toEqual([]); // 10 bytes short: ground still waits for the rest

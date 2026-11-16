@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { assemble } from '../../src/pdp11';
+import { assemble } from '../../src/blue11';
 import { runAsm, words } from './helpers';
 
 const msgs = (src: string) => assemble(src).errors.map((e) => e.message);
 const warns = (src: string) => assemble(src).warnings.map((e) => [e.line, e.message]);
 
-describe('pdp11 assembler: MACRO-11 implicit .WORD', () => {
+describe('blue11 assembler: implicit .WORD', () => {
   it('an expression where the instruction goes is a word', () => {
     expect(words(' 1234')).toEqual([0o1234]);
     expect(words(" 'A, -1, <2+3>*2")).toEqual([0o101, 0o177777, 10]);
@@ -40,12 +40,12 @@ DATA:   777`);
     expect(msgs(' .BYTE 1\n 2')).toEqual([expect.stringMatching(/odd address/)]);
   });
 
-  it('clears and sets still may not be mixed (MACRO-11 would quietly make it a set)', () => {
+  it('clears and sets still may not be mixed (the original assembler would quietly make it a set)', () => {
     expect(msgs(' CLC!SEV')).toEqual([expect.stringMatching(/cannot be combined/)]);
   });
 });
 
-describe('pdp11 assembler warnings', () => {
+describe('blue11 assembler warnings', () => {
   it('are separate from errors and do not stop the program', () => {
     const a = assemble('X = 200000\n MOV #X, R0\n HALT');
     expect(a.ok).toBe(true);

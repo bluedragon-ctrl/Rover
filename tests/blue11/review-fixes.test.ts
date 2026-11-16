@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { assemble, disassemble, SimpleMachine } from '../../src/pdp11';
+import { assemble, disassemble, SimpleMachine } from '../../src/blue11';
 import { o, runAsm, words } from './helpers';
 
 const err = (src: string): string => assemble(src).errors.map((e) => e.message).join('\n');
 
-describe('pdp11 library: review fixes', () => {
+describe('blue11 library: review fixes', () => {
   it('a byte write to the high byte of a device register leaves its low byte alone', () => {
     const m = new SimpleMachine();
     const csrs = { RCSR: o('177560'), XCSR: o('177564'), LKS: o('177546') };

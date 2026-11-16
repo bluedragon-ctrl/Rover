@@ -2,7 +2,7 @@ import type { SimulationEngine, Slot, UplinkCommand } from '../core/SimulationEn
 import type { Unit } from '../core/Unit';
 import { EditorPanel } from './EditorPanel';
 import { InspectPanel, type SnapMark } from './InspectPanel';
-import { pdpListing, pdpRegions, toolchain, type SlotBuild, type Toolchain } from './toolchain';
+import { listingRows, coreRegions, toolchain, type SlotBuild, type Toolchain } from './toolchain';
 
 export interface CodeWorkspaceOptions {
   el: HTMLElement;
@@ -190,15 +190,15 @@ export class CodeWorkspace {
   private sizes(): { fw: number; prog: number; cap: number } {
     const u = this.opts.rover();
     const draft = this.current.result?.bytes ?? 0;
-    const r = pdpRegions(u);
+    const r = coreRegions(u);
     return { fw: this.slot === 'firmware' ? draft : u.firmwareBytes, prog: this.slot === 'program' ? draft : u.programBytes, cap: r.fw + r.prog };
   }
 
   private totalsHtml(): string {
     const s = this.sizes();
     const u = this.opts.rover();
-    // Two regions of core (PDP11_CPU.md §6).
-    const r = pdpRegions(u);
+    // Two regions of core (BLUE11_CPU.md §6).
+    const r = coreRegions(u);
     const kb = u.machine.coreBytes / 1024;
     return `<span class="fwc">firmware ${s.fw} / ${r.fw}</span> · <span class="progc">program ${s.prog} / ${r.prog}</span> B · core ${kb} KB`;
   }
@@ -209,7 +209,7 @@ export class CodeWorkspace {
     const ui = this.current;
     const res = ui.result;
     const s = this.sizes();
-    const regions = pdpRegions(u);
+    const regions = coreRegions(u);
     const over = s.fw > regions.fw || s.prog > regions.prog;
     const bar = this.q('#cw-flash');
     bar.classList.toggle('over', over);
@@ -276,18 +276,18 @@ export class CodeWorkspace {
     const el = this.listingEl;
     const res = this.current.result;
     if (!el || !res) return;
-    this.renderPdpListing(el, res);
+    this.renderOctalListing(el, res);
   }
 
   /** The listing (address and words in octal, as the assembler writes it). */
-  private renderPdpListing(el: HTMLElement, res: SlotBuild): void {
-    el.classList.add('pdp');
-    const rows = pdpListing(res).map((r) => {
+  private renderOctalListing(el: HTMLElement, res: SlotBuild): void {
+    el.classList.add('octal');
+    const rows = listingRows(res).map((r) => {
       const cls = `lst-row ${r.kind}${r.error ? ' err' : ''}`;
       const title = r.error ? ` title="${esc(r.error)}"` : '';
       return `<div class="${cls}" data-line="${r.line}"${title}><span class="a">${r.addr}</span><span class="h">${r.code.join(' ')}</span><span class="s">${esc(r.source)}</span></div>`;
     });
-    const asm = res.pdp.asm;
+    const asm = res.result.asm;
     const n = asm.bytes.length;
     const name = this.slot === 'program' ? 'PROGRAM' : 'FIRMWARE';
     const range = n ? `${this.tc.addr(asm.origin, this.slot)}–${this.tc.addr(asm.origin + n - 1, this.slot)}` : 'empty';

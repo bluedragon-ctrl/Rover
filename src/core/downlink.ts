@@ -24,7 +24,7 @@ export const BootReason = {
   WATCHDOG: 2,
   COLD_BOOT: 3,
   ADMIN: 4,
-  /** @WDT expired: the firmware did not kick it in time (SPEC §3.9.5). */
+  /** WDT expired: the firmware did not kick it in time (SPEC §3.9.5). */
   WDT_TIMEOUT: 5,
   /** The game changed the language and rewrote the rover's code (save migration, M14). */
   UPDATE: 6,
@@ -62,7 +62,7 @@ export const productFrameBytes = (type: number): number => 2 + (PRODUCT_PAYLOAD[
 
 /**
  * Processing level of a product (SPEC §3.8.7), carried in bits 2–1 of its science header:
- * RAW = sent as the camera took it (and every spectrum), EDITED = changed with STB after the
+ * RAW = sent as the camera took it (and every spectrum), EDITED = changed in image memory after the
  * SNAP, DRAWN = no camera picture behind it.
  */
 export const Level = { RAW: 0, EDITED: 1, DRAWN: 2 } as const;
@@ -98,7 +98,7 @@ export interface ProductDesc {
   horizon?: HorizonView;
   /** Photos: the subject tile is an anomaly (ground truth: the gallery never shows this). */
   anomaly?: boolean;
-  /** M15: a photo at double resolution (PHOTO_FORMATS_2X, the PDP-11 core's camera). */
+  /** M15: a photo at double resolution (PHOTO_FORMATS_2X, the camera since M15). */
   x2?: boolean;
   /** M12: processing level (Level; absent = RAW). */
   level?: number;
@@ -182,7 +182,7 @@ export class Downlink {
   headSent = 0;
   /** Byte budget accumulator: +bytesPerTick × signal per tick, 100 = one byte. */
   acc = 0;
-  /** @LOG_LOST: frames dropped since boot, saturates at 255. */
+  /** Log frames dropped since boot, saturates at 255. */
   lost = 0;
   /** Drops since the last queued frame (attached to the next frame as its gap). */
   gap = 0;
@@ -197,7 +197,7 @@ export class Downlink {
   /** Bytes of sys[0] already transmitted. */
   sysSent = 0;
   /**
-   * M15 `TX` device (PDP11_IO.md §3.5): the CPU's real-time byte stream, oldest first. A
+   * M15 `TX` device (BLUE11_IO.md §3.5): the CPU's real-time byte stream, oldest first. A
    * {@link TX_BOOT} entry marks a reboot: out of band, no air time (ground resets its
    * message parser there, so a message cut off by the reboot shows as incomplete).
    */
@@ -205,7 +205,7 @@ export class Downlink {
   /** `TXLOST`: bytes dropped because the FIFO was full, since boot (saturates at 255). */
   txLost = 0;
   /**
-   * M15 recorder messages (`RECBUF`, PDP11_IO.md §3.5): the CPU's store-and-forward byte
+   * M15 recorder messages (`RECBUF`, BLUE11_IO.md §3.5): the CPU's store-and-forward byte
    * stream, oldest first, with {@link TX_BOOT} markers like `tx`. It shares the recorder's
    * room with the products and goes out after `tx`, before them.
    */
@@ -332,7 +332,7 @@ export class Downlink {
           this.sysSent = 0;
         }
       } else if (this.fifo.length) {
-        // Log frames; on the PDP-11 core only the system's boot frames use this queue.
+        // Log frames: only the system's boot frames use this queue since M15.
         if (++this.headSent >= this.fifo[0].bytes.length) {
           done.push(this.fifo.shift()!);
           this.headSent = 0;
@@ -370,7 +370,7 @@ export const DUMP_HEADER = 0x80 | (SYSTEM_TAG << 3);
 export const DumpKind = { CPU11: 5, STACK11: 6, PROG_CPU11: 7, PROG_STACK11: 8 } as const;
 /** The most stack words a stack dump carries. */
 export const STACK11_WORDS = 8;
-/** State byte of a program dump: @PROG_STATE. */
+/** State byte of a program dump: `PRGST`. */
 export const PROG_STATE_NAMES: readonly string[] = ['PROG_NONE', 'PROG_READY', 'PROG_RUNNING', 'PROG_DONE', 'PROG_FAULT', 'PROG_HALTED'];
 /** CPU state byte in a dump. */
 export const CPU_STATE_CODES: readonly string[] = ['RUNNING', 'BLOCKED', 'HALTED', 'FAULT'];

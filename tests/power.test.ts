@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BALANCE } from '../src/core/balance';
 import { angleDiff, cos1000, Environment, signalStrength, sin1000, solarGain } from '../src/core/Environment';
 import { MsgType, SOH, ETX } from '../src/core/messages';
-import { PDP_ALLIN_EXPLORER as DEMO_EXPLORER, PDP_DEFAULT_FIRMWARE as FACTORY_IDLE } from '../src/core/programs-pdp11';
+import { ALLIN_EXPLORER as DEMO_EXPLORER, DEFAULT_FIRMWARE as FACTORY_IDLE } from '../src/core/programs';
 import { SimulationEngine } from '../src/core/SimulationEngine';
 import { CpuState, Layer, Status } from '../src/core/types';
 import { factory, fw, HANG, reg } from './helpers/rover';

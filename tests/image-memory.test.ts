@@ -3,7 +3,7 @@ import { BALANCE } from '../src/core/balance';
 import { Level } from '../src/core/downlink';
 import { productFrame } from '../src/core/imaging';
 import { photoBytes } from '../src/core/photos';
-import { PDP_PROGRAM_TEMPLATES } from '../src/core/programs-pdp11';
+import { PROGRAM_TEMPLATES } from '../src/core/programs';
 import { deserialize, serialize } from '../src/core/SaveManager';
 import type { SimulationEngine } from '../src/core/SimulationEngine';
 import { CpuState, Layer } from '../src/core/types';
@@ -103,7 +103,7 @@ describe('Code tab helpers', () => {
     expect(tc.snapsWithoutSend(b(`START:  ${snap('F.M1')}\n        HALT`), null)).toBe(true);
     expect(tc.snapsWithoutSend(b(`START:  ${snap('F.M1')}\n        ${send}\n        HALT`), null)).toBe(false);
     expect(tc.snapsWithoutSend(b(`START:  ${snap('F.M1')}\n        HALT`), b(`START:  ${send}${HANG}`, 'firmware'))).toBe(false);
-    for (const [name, src] of Object.entries(PDP_PROGRAM_TEMPLATES)) if (name !== 'Image: Memory map') expect(tc.snapsWithoutSend(b(src), null), name).toBe(false);
+    for (const [name, src] of Object.entries(PROGRAM_TEMPLATES)) if (name !== 'Image: Memory map') expect(tc.snapsWithoutSend(b(src), null), name).toBe(false);
   });
 
   it('hex view: header decoded with its level, payload rows by image memory address', () => {

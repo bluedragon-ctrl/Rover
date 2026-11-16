@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BootReason } from '../src/core/downlink';
-import { PDP_DEFAULT_FIRMWARE, PDP_PROGRAM_TEMPLATES } from '../src/core/programs-pdp11';
+import { DEFAULT_FIRMWARE, PROGRAM_TEMPLATES } from '../src/core/programs';
 import { MsgType } from '../src/core/messages';
 import { deserialize, serialize } from '../src/core/SaveManager';
 import type { SimulationEngine } from '../src/core/SimulationEngine';
@@ -8,7 +8,7 @@ import { CpuState, Preempt, ProgState } from '../src/core/types';
 import type { Unit } from '../src/core/Unit';
 import { factory, fw, HANG, rover as base, run, sleep } from './helpers/rover';
 
-const WEATHER = PDP_PROGRAM_TEMPLATES['Weather station'];
+const WEATHER = PROGRAM_TEMPLATES['Weather station'];
 
 function rover(firmware: string, program?: string, seed = 7): { e: SimulationEngine; u: Unit } {
   return base(firmware, { seed, setup: (e, u) => {
@@ -96,7 +96,7 @@ describe('watchdog WDT (SPEC §3.9.5)', () => {
   });
 
   it('the default firmware arms it and keeps it fed through charging, idling and slices', () => {
-    const { e, u } = rover(PDP_DEFAULT_FIRMWARE, WEATHER);
+    const { e, u } = rover(DEFAULT_FIRMWARE, WEATHER);
     const timeouts = watch(u, e);
     run(e, 6000); // 2.5 sols: nights, charging, sleeping programs
     expect(u.wdt).toBeGreaterThan(0);
@@ -115,7 +115,7 @@ describe('fault protection PREMPT (SPEC §3.9.2)', () => {
   });
 
   it('the default firmware stops the Weather station for an alert and logs why (L.PRE)', () => {
-    const { e, u } = rover(PDP_DEFAULT_FIRMWARE, WEATHER);
+    const { e, u } = rover(DEFAULT_FIRMWARE, WEATHER);
     run(e, 30, true);
     e.director.triggerNow('PARTIAL_ECLIPSE');
     until(e, () => u.preempted !== 0, 50);
@@ -124,7 +124,7 @@ describe('fault protection PREMPT (SPEC §3.9.2)', () => {
   });
 
   it('round-trips an armed watchdog, fault protection and the thermal state at night', () => {
-    const make = () => rover(PDP_DEFAULT_FIRMWARE, WEATHER, 3).e;
+    const make = () => rover(DEFAULT_FIRMWARE, WEATHER, 3).e;
     const a = make();
     run(a, 2600);
     const b0 = make();

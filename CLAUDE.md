@@ -47,10 +47,10 @@ npm run build      # typecheck + production bundle in dist/
   Repair materials: `repairs` on the tile in `WorldRegistry`.
   New upgrades: `UPGRADES` in `src/core/upgrades.ts` (modify the rover's own `chassis`;
   never the shared `CHASSIS_MK1`).
-- `src/pdp11/` (M15) is a **standalone library** (CPU, assembler, disassembler): nothing in
+- `src/blue11/` (M15) is a **standalone library** (CPU, assembler, disassembler): nothing in
   it may import from the game (a test enforces it); Rover-specific things (memory map,
-  I/O page, gate, ROM) live outside it. API: `src/pdp11/README.md`; rules for changing
-  it: `src/pdp11/AGENTS.md`. `simulator.html`
+  I/O page, gate, ROM) live outside it. API: `src/blue11/README.md`; rules for changing
+  it: `src/blue11/AGENTS.md`. `simulator.html`
   (`src/simulator/`) is its standalone page; its examples are tested.
 - M15 slice 3: Rover's side of the PDP-11 core lives in `src/core/machine/` (I/O page
   `iopage.ts`: new registers go there and become predefined symbols, six characters at
@@ -58,11 +58,11 @@ npm run build      # typecheck + production bundle in dist/
   only with `new SimulationEngine({ cpu: 'pdp11' })` until slice 6.
 - M15 slice 4: the ROM's routines (`ROM_ROUTINES` in `src/core/machine/rom.ts`) become
   predefined symbols; system names live in `names.ts`. Shipped PDP-11 code (default firmware,
-  lessons) is in `src/core/programs-pdp11.ts`, next to the Rover-ASM `programs.ts` until
-  slice 6; every template there must assemble and is run by `tests/pdp-programs.test.ts`.
+  lessons) is in `src/core/programs.ts`, next to the Rover-ASM `programs.ts` until
+  slice 6; every template there must assemble and is run by `tests/blue11-programs.test.ts`.
 - M15 slice 5: the UI serves both cores through `src/ui/toolchain.ts` (`engine.pdp11` picks);
   a PDP-11 world starts from Admin → *New PDP-11 world* or `?cpu=pdp11`. The PDP-11 Reference is
-  `src/ui/ReferencePdp11.ts` (a new instruction needs a row in `INSTR_DOC`; a test checks). UI code
+  `src/ui/ReferenceBlue11.ts` (a new instruction needs a row in `INSTR_DOC`; a test checks). UI code
   reads the machine only through `registers`, `stackWords`, `peek` and `ioSnapshot` (never
   `read`: `TICKL` has a side effect).
 - Shapes are drawn only in `src/render/VectorFactory.ts` (keeps M8 visual work local).

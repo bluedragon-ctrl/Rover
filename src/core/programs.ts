@@ -1,7 +1,7 @@
 /**
- * M15 shipped code for the PDP-11 core (docs/PDP11_CPU.md §15, slice 4): the default
- * firmware and every lesson, rewritten in MACRO-11. The Rover-ASM versions in programs.ts
- * stay for the current game until the switch-over (slice 6). Tests assemble and run each.
+ * Shipped code (docs/BLUE11_CPU.md §14.5): the default firmware, the firmware templates and
+ * every lesson, in Blue-11 assembly. Tests assemble and run each
+ * (tests/blue11-programs.test.ts).
  *
  * Numbers are octal unless they end in a dot (`50.` is fifty). Names have at most six
  * characters. The ROM's routines take R0 and R1 (a third in R2, kept) and answer in R0
@@ -11,7 +11,7 @@
 // ------------------------------------------------------------------ firmware
 
 /** Default firmware: the line clock, the gate (RUN), the watchdog and fault protection. */
-export const PDP_DEFAULT_FIRMWARE = `; DEFAULT FIRMWARE: keeps the rover alive and runs your program in
+export const DEFAULT_FIRMWARE = `; DEFAULT FIRMWARE: keeps the rover alive and runs your program in
 ; time slices. Upload programs in the Program slot.
 ;
 ; Three jobs run at once:
@@ -123,7 +123,7 @@ CNT:    .WORD 1
 `;
 
 /** Firmware lesson: the gate and nothing else. */
-export const PDP_MINIMAL_FIRMWARE = `; MINIMAL FIRMWARE: the smallest firmware that runs a program. No
+export const MINIMAL_FIRMWARE = `; MINIMAL FIRMWARE: the smallest firmware that runs a program. No
 ; charging, no dish, no watchdog: the rover runs flat if you keep it.
 ;
 ; Learn: the gate. Writing GO to PRGCS hands the CPU to the program; the
@@ -138,7 +138,7 @@ START:  CLR  @#SLICE            ; 0: no time limit
 `;
 
 /** All-in-one firmware: Explorer without a program, charging by itself. */
-export const PDP_ALLIN_EXPLORER = `; EXPLORER (all-in-one firmware): wander, turn right at obstacles,
+export const ALLIN_EXPLORER = `; EXPLORER (all-in-one firmware): wander, turn right at obstacles,
 ; deploy the solar array to recharge when the battery runs low.
 ;
 ; Learn: what a firmware must do by itself when it runs no program:
@@ -197,7 +197,7 @@ CHARGE: CLR  @#LIGHT
 `;
 
 /** All-in-one firmware: Prospector, charging by itself. */
-export const PDP_ALLIN_PROSPECTOR = `; PROSPECTOR (all-in-one firmware): wander; mine ore and grab samples
+export const ALLIN_PROSPECTOR = `; PROSPECTOR (all-in-one firmware): wander; mine ore and grab samples
 ; next to the rover and analyze them. The spectra wait in the recorder
 ; until the downlink has sent them: keep the dish on the orbiter.
 ;
@@ -255,7 +255,7 @@ CHARGE: MOV  #1, @#SOLOPN
 `;
 
 /** All-in-one firmware: fetch supply crates forever. */
-export const PDP_ALLIN_FETCH = `; FETCH (all-in-one firmware): drive to the nearest supply crate and
+export const ALLIN_FETCH = `; FETCH (all-in-one firmware): drive to the nearest supply crate and
 ; grab it, which installs the upgrade. Greedy: no obstacle avoidance.
 ;
 ; Learn: a firmware that never ends: with no crate it sleeps and checks
@@ -290,7 +290,7 @@ IDLE:   MOV  #BLUE, @#IND1      ; lamp 1 blue: no crate to fetch
 
 // ------------------------------------------------------------------ programs
 
-export const PDP_FIRST_STEPS = `; FIRST STEPS: drive a 3x3 square, then end.
+export const FIRST_STEPS = `; FIRST STEPS: drive a 3x3 square, then end.
 ;
 ; Learn: registers, MOV and # (a number), calling the ROM (JSR PC, STEP),
 ; checking a result with BNE, a loop, HALT with a result in R0.
@@ -319,7 +319,7 @@ STUCK:  CLR  R0                 ; result 0: something was in the way
         HALT
 `;
 
-export const PDP_DRIVE_YOURSELF = `; DRIVE YOURSELF: the same 3x3 square as First steps, but talking to
+export const DRIVE_YOURSELF = `; DRIVE YOURSELF: the same 3x3 square as First steps, but talking to
 ; the drive's registers instead of calling the ROM.
 ;
 ; Learn: devices are memory (the I/O page), the CSR's GO / DONE / ERR
@@ -356,7 +356,7 @@ STUCK:  MOV  @#DRVER, R0        ; result: why it stopped
         RTS  PC
 `;
 
-export const PDP_COUNT = `; COUNT WITH A VARIABLE: drive a 2x2 square one tile at a time and
+export const COUNT = `; COUNT WITH A VARIABLE: drive a 2x2 square one tile at a time and
 ; count the tiles in memory. HALT with how often the program has run:
 ; press "Run again" (Comms) and both counts keep growing.
 ;
@@ -365,7 +365,7 @@ export const PDP_COUNT = `; COUNT WITH A VARIABLE: drive a 2x2 square one tile a
 ;
 ; The registers are the CPU's working space, but memory is bigger.
 ; .WORD 0 reserves a word in the program and the label names its
-; address. Unlike Rover-ASM, the PDP-11 adds to memory directly: INC
+; address. The Blue-11 adds to memory directly, no register needed: INC
 ; TILES reads the word, adds 1 and writes it back in one instruction.
 ; Run again restarts the program without reloading it, so the words keep
 ; their values; a reboot loads the program again and they start at 0.
@@ -400,7 +400,7 @@ RUNS:   .WORD 0                 ; how often the program ran
 TILES:  .WORD 0                 ; tiles driven, all runs together
 `;
 
-export const PDP_ROUTE = `; ROUTE: drive a route stored in the program, then report how many
+export const ROUTE = `; ROUTE: drive a route stored in the program, then report how many
 ; legs worked.
 ;
 ; Learn: data in the program (.BYTE), a pointer register, autoincrement
@@ -434,7 +434,7 @@ GOOD:   .WORD 0                 ; legs driven without a problem
 ROUTE:  .BYTE EAST, 3, NORTH, 2, WEST, 3, SOUTH, 2, 377
 `;
 
-export const PDP_DRIVE_AND_SCAN = `; DRIVE AND SCAN AT ONCE: drive 10 tiles east and count the samples
+export const DRIVE_AND_SCAN = `; DRIVE AND SCAN AT ONCE: drive 10 tiles east and count the samples
 ; lying north of the way, sweeping the radar while the wheels turn.
 ; Returns the number of samples seen.
 ;
@@ -475,7 +475,7 @@ FIN:    MOV  R2, R0
         RTS  PC                 ; result: samples seen
 `;
 
-export const PDP_EXPLORER = `; EXPLORER: wander, turn right at obstacles, report acid vents.
+export const EXPLORER = `; EXPLORER: wander, turn right at obstacles, report acid vents.
 ;
 ; Learn: the radar (SCAN, RADHIT, RADDST), tile names, BIC as MOD 4,
 ; telling errors apart, LOG for mission control.
@@ -521,7 +521,7 @@ AHEAD:  MOV  R2, R0
         BR   TURN               ; and leave it
 `;
 
-export const PDP_PHOTOGRAPHER = `; PHOTOGRAPHER: photograph all four directions, send the photos
+export const PHOTOGRAPHER = `; PHOTOGRAPHER: photograph all four directions, send the photos
 ; home, HALT with how many were sent.
 ;
 ; Learn: SNAP and SNDIMG, aiming the headlight with HDG, the recorder.
@@ -554,7 +554,7 @@ NEXT:   INC  R2
         HALT
 `;
 
-export const PDP_PROSPECTOR = `; PROSPECTOR: wander; mine ore veins and pick up samples next to the
+export const PROSPECTOR = `; PROSPECTOR: wander; mine ore veins and pick up samples next to the
 ; rover, analyze them and send the spectra home.
 ;
 ; Learn: tools (ACT), cargo bytes (CARGO, index mode), a subroutine of
@@ -614,7 +614,7 @@ LAB:    MOV  R3, -(SP)          ; save R3
         RTS  PC
 `;
 
-export const PDP_FIELD_REPAIR = `; FIELD REPAIR: repair worn systems with what is in cargo, HALT with
+export const FIELD_REPAIR = `; FIELD REPAIR: repair worn systems with what is in cargo, HALT with
 ; the number of repairs.
 ;
 ; Learn: USE, tables of addresses, index deferred mode @TABLE(R2),
@@ -658,7 +658,7 @@ HEALTH: .WORD HULL, SOLHLT, ANTHLT ; the health registers' addresses
 FUNS:   .WORD F.HULL, F.SOL, F.ANT ; and the matching repair functions
 `;
 
-export const PDP_FETCH = `; FETCH: drive to the nearest supply crate and pick it up, which
+export const FETCH = `; FETCH: drive to the nearest supply crate and pick it up, which
 ; installs the upgrade. HALT 1 = installed, 0 = no crate, 2 = stuck.
 ;
 ; Learn: positions (X, Y, DROPX, DROPY), SUB for differences, the ROM
@@ -697,7 +697,7 @@ NOCRAT: CLR  R0
         HALT
 `;
 
-export const PDP_SPIRAL = `; SPIRAL: search around the start in a growing square spiral (legs of
+export const SPIRAL = `; SPIRAL: search around the start in a growing square spiral (legs of
 ; 1, 1, 2, 2, 3, 3... tiles), logging every corner.
 ;
 ; Learn: subroutines that call subroutines, the stack, BPT.
@@ -738,7 +738,7 @@ LEG:    MOV  R2, R0
         RTS  PC
 `;
 
-export const PDP_SEISMIC = `; SEISMIC SURVEY: listen for ore in four directions, drive to the
+export const SEISMIC = `; SEISMIC SURVEY: listen for ore in four directions, drive to the
 ; nearest vein and mine it. Needs the seismic scanner upgrade.
 ;
 ; Learn: finding the smallest value in a loop, a tool that answers
@@ -789,7 +789,7 @@ NOTOOL: CLR  R0
         HALT
 `;
 
-export const PDP_WEATHER = `; WEATHER STATION: stay put and report the weather: the sunlight every
+export const WEATHER = `; WEATHER STATION: stay put and report the weather: the sunlight every
 ; 100 ticks, plus every warning of a squall or an eclipse. Runs until
 ; you upload another program.
 ;
@@ -839,7 +839,7 @@ CALM:   MOV  #100., R0
 
 // ------------------------------------------------------------------ image lessons (64x64)
 
-export const PDP_IMAGE_LINE = `; LINE: your first picture. Clear image memory to black, draw a white
+export const IMAGE_LINE = `; LINE: your first picture. Clear image memory to black, draw a white
 ; line across the middle and send it home as a photo.
 ;
 ; Image memory starts at IMGBAS. A 64x64 grey photo has 2 bits a pixel:
@@ -858,7 +858,7 @@ START:  JSR  PC, ERASE          ; every byte 0
         HALT
 `;
 
-export const PDP_IMAGE_TEST_PATTERN = `; TEST PATTERN: four grey bars, like a camera test card.
+export const IMAGE_TEST_PATTERN = `; TEST PATTERN: four grey bars, like a camera test card.
 ;
 ; A byte holds four pixels, so 125 (octal: 01 01 01 01) is four
 ; dark-grey pixels; 0, 125, 252 and 377 are the four greys. The byte's
@@ -883,7 +883,7 @@ START:  MOV  #IMGBAS, R1
 GREYS:  .BYTE 0, 125, 252, 377
 `;
 
-export const PDP_IMAGE_NEGATIVE = `; NEGATIVE: take a photo, turn it into a negative, send it.
+export const IMAGE_NEGATIVE = `; NEGATIVE: take a photo, turn it into a negative, send it.
 ;
 ; COM flips every bit of a word: in a 2-bit pixel that turns 0 into 3
 ; and 1 into 2, a negative. A word is two bytes, eight pixels; 1 KB is
@@ -906,7 +906,7 @@ FAIL:   CLR  R0
         HALT
 `;
 
-export const PDP_IMAGE_STAMP = `; STAMP: take a photo and write where it was taken into its first four
+export const IMAGE_STAMP = `; STAMP: take a photo and write where it was taken into its first four
 ; bytes, like the engineering header real spacecraft send with images.
 ; In the Gallery, open the photo's hex view: the first bytes are yours.
 ;
@@ -927,7 +927,7 @@ FAIL:   CLR  R0
         HALT
 `;
 
-export const PDP_IMAGE_PLOT = `; PLOT: draw single pixels. Takes a photo and draws a white diagonal
+export const IMAGE_PLOT = `; PLOT: draw single pixels. Takes a photo and draws a white diagonal
 ; from the top-left corner to the bottom-right one with the ROM's PLOT
 ; (64x64 2-bpp pictures: modes 1 and 2).
 ;
@@ -955,7 +955,7 @@ FAIL:   CLR  R0
         HALT
 `;
 
-export const PDP_IMAGE_MEMORY_MAP = `; MEMORY MAP: Explorer that remembers where it has been. Image memory
+export const IMAGE_MEMORY_MAP = `; MEMORY MAP: Explorer that remembers where it has been. Image memory
 ; is used as a big scratch RAM: one byte per tile counts the visits, a
 ; 32x32 map that repeats every 32 tiles. Back on a known tile, the rover
 ; turns by the number of earlier visits, so it leaves a loop differently
@@ -1000,37 +1000,37 @@ AHEAD:  MOV  R2, R0
         BR   LOOP
 `;
 
-/** Program templates for the PDP-11 core, in the Code tab's course order. */
-export const PDP_PROGRAM_TEMPLATES: Record<string, string> = {
-  'First steps': PDP_FIRST_STEPS,
-  'Drive yourself': PDP_DRIVE_YOURSELF,
-  'Count with a variable': PDP_COUNT,
-  Route: PDP_ROUTE,
-  'Drive and scan at once': PDP_DRIVE_AND_SCAN,
-  Explorer: PDP_EXPLORER,
-  Photographer: PDP_PHOTOGRAPHER,
-  Prospector: PDP_PROSPECTOR,
-  'Field repair': PDP_FIELD_REPAIR,
-  'Fetch supply crate': PDP_FETCH,
-  Spiral: PDP_SPIRAL,
-  'Seismic survey': PDP_SEISMIC,
-  'Weather station': PDP_WEATHER,
-  'Image: Line': PDP_IMAGE_LINE,
-  'Image: Test pattern': PDP_IMAGE_TEST_PATTERN,
-  'Image: Negative': PDP_IMAGE_NEGATIVE,
-  'Image: Stamp': PDP_IMAGE_STAMP,
-  'Image: Plot': PDP_IMAGE_PLOT,
-  'Image: Memory map': PDP_IMAGE_MEMORY_MAP,
+/** Program templates (lessons), in the Code tab's course order. */
+export const PROGRAM_TEMPLATES: Record<string, string> = {
+  'First steps': FIRST_STEPS,
+  'Drive yourself': DRIVE_YOURSELF,
+  'Count with a variable': COUNT,
+  Route: ROUTE,
+  'Drive and scan at once': DRIVE_AND_SCAN,
+  Explorer: EXPLORER,
+  Photographer: PHOTOGRAPHER,
+  Prospector: PROSPECTOR,
+  'Field repair': FIELD_REPAIR,
+  'Fetch supply crate': FETCH,
+  Spiral: SPIRAL,
+  'Seismic survey': SEISMIC,
+  'Weather station': WEATHER,
+  'Image: Line': IMAGE_LINE,
+  'Image: Test pattern': IMAGE_TEST_PATTERN,
+  'Image: Negative': IMAGE_NEGATIVE,
+  'Image: Stamp': IMAGE_STAMP,
+  'Image: Plot': IMAGE_PLOT,
+  'Image: Memory map': IMAGE_MEMORY_MAP,
 };
 
 /**
- * Firmware templates for the PDP-11 core. The default firmware includes fault protection
- * (it was a separate template on Rover-ASM); the minimal one shows the gate alone.
+ * Firmware templates. The default firmware includes fault protection
+ * (a separate template before M15); the minimal one shows the gate alone.
  */
-export const PDP_FIRMWARE_TEMPLATES: Record<string, string> = {
-  'Default firmware': PDP_DEFAULT_FIRMWARE,
-  'Minimal (the gate only)': PDP_MINIMAL_FIRMWARE,
-  'All-in-one Explorer (no program)': PDP_ALLIN_EXPLORER,
-  'All-in-one Prospector (no program)': PDP_ALLIN_PROSPECTOR,
-  'All-in-one Fetch (no program)': PDP_ALLIN_FETCH,
+export const FIRMWARE_TEMPLATES: Record<string, string> = {
+  'Default firmware': DEFAULT_FIRMWARE,
+  'Minimal (the gate only)': MINIMAL_FIRMWARE,
+  'All-in-one Explorer (no program)': ALLIN_EXPLORER,
+  'All-in-one Prospector (no program)': ALLIN_PROSPECTOR,
+  'All-in-one Fetch (no program)': ALLIN_FETCH,
 };

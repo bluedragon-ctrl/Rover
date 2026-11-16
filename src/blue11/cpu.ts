@@ -1,5 +1,5 @@
 /**
- * A PDP-11 CPU (the PDP-11/40 instruction set, EIS optional), with nothing around it:
+ * The Blue-11 CPU (the original /40 model's instruction set, EIS optional), with nothing around it:
  * memory and devices come from the host through a {@link Bus}.
  *
  * Deterministic and integer-only: no wall-clock time, no randomness, no exceptions out
@@ -29,7 +29,7 @@ export interface CpuOptions {
    */
   cycles?: CycleModel;
   /**
-   * PDP-11/45 rules for the non-kernel modes (PSW bits 15–14 ≠ 0): `RTI` / `RTT` can't lower
+   * The original /45 model's rules for the non-kernel modes (PSW bits 15–14 ≠ 0): `RTI` / `RTT` can't lower
    * the mode bits (15–11) or change the priority (7–5); a write to the PSW's bus address
    * traps to 4 (the I/O page is not the user's); `RESET` does nothing. Default off.
    */
@@ -98,7 +98,7 @@ export const PSW = {
   PREVIOUS_MODE: 0o030000,
 } as const;
 
-/** The PSW also answers on the bus, as on every PDP-11. */
+/** The PSW also answers on the bus, as on the original machines. */
 export const PSW_ADDRESS = 0o177776;
 
 class Abort {
@@ -117,7 +117,7 @@ export class Cpu {
   /** Stopped by `HALT` or a double fault; `run` does nothing until cleared. */
   halted = false;
   /**
-   * Stack limit (PDP-11/70 `STKLIM` style, simplified): a push through `SP` to an address
+   * Stack limit (the original /70 model's `STKLIM` style, simplified): a push through `SP` to an address
    * below it traps to 4 before anything is written. 0 = no limit.
    */
   stackLimit = 0;

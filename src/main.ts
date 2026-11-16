@@ -1,6 +1,6 @@
 import './style.css';
 import { BALANCE } from './core/balance';
-import { PDP_DEFAULT_FIRMWARE, PDP_FIRST_STEPS } from './core/programs-pdp11';
+import { DEFAULT_FIRMWARE, FIRST_STEPS } from './core/programs';
 import { SimClock } from './core/SimClock';
 import { SimulationEngine, type Slot, type UplinkCommand } from './core/SimulationEngine';
 import { CpuState, Layer, ProgState } from './core/types';
@@ -9,7 +9,7 @@ import { ThreeScene } from './render/ThreeScene';
 import { DebuggerPanel } from './ui/DebuggerPanel';
 import { CodeWorkspace } from './ui/CodeWorkspace';
 import { RoverBuilds, toolchain } from './ui/toolchain';
-import { renderReference11 } from './ui/ReferencePdp11';
+import { renderReference } from './ui/ReferenceBlue11';
 import { PerfHud } from './ui/PerfHud';
 import { CompassHud } from './ui/CompassHud';
 import { GoalsPanel } from './ui/GoalsPanel';
@@ -42,7 +42,7 @@ if (loaded.engine) {
   engine = new SimulationEngine({ seed: seedParam || Math.floor(Math.random() * 1e9) });
   rover = engine.spawnUnit('Rover-1', 0, 0);
   // M10: every rover ships the default firmware and no program (SPEC §3.9.4).
-  engine.upload(rover, PDP_DEFAULT_FIRMWARE, { factory: true });
+  engine.upload(rover, DEFAULT_FIRMWARE, { factory: true });
 }
 const seed = engine.seed;
 
@@ -88,7 +88,7 @@ engine.events.on('GOAL_COMPLETED', (g) => {
   toasts.appendChild(t);
   setTimeout(() => t.remove(), 5000);
 });
-renderReference11($('#reference'), engine.registry);
+renderReference($('#reference'), engine.registry);
 
 // Code tab: Program / Firmware slots and the machine-code listing (M10; ?listing=0 hides it).
 const code = new CodeWorkspace({
@@ -97,7 +97,7 @@ const code = new CodeWorkspace({
   rover: () => rover,
   log: (level, m) => log(level, m),
   listing: params.get('listing') !== '0',
-  starterProgram: PDP_FIRST_STEPS,
+  starterProgram: FIRST_STEPS,
   inspect: sendCommand,
 });
 // Comms: a source line (fw L55, a dump's next address) opens it in the Code tab.

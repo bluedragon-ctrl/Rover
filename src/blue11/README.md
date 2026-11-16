@@ -1,11 +1,11 @@
-# `src/pdp11/` — PDP-11 CPU, MACRO-11 assembler, disassembler, devices
+# `src/blue11/` — Blue-11: CPU, assembler, disassembler, devices
 
-A self-contained TypeScript library: the PDP-11/40 instruction set (EIS optional), a
-MACRO-11 subset assembler, a disassembler, a bus with pluggable memory-mapped devices,
-and DEC's console and line clock. No dependencies. Rover is its first user, not its owner.
-Design rationale: [`docs/PDP11_CPU.md`](../../docs/PDP11_CPU.md) §14.
+A self-contained TypeScript library. The Blue-11 implements the PDP-11 instruction set (a
+subset of its assembler syntax): the /40 model's set with the EIS option, an assembler, a
+disassembler, a bus with pluggable memory-mapped devices, and DEC's console and line clock. No dependencies. Rover is its first user, not its owner.
+Design rationale: [`docs/BLUE11_CPU.md`](../../docs/BLUE11_CPU.md) §14.
 
-Every code block in this file is run by `tests/pdp11/readme-examples.test.ts`, and that
+Every code block in this file is run by `tests/blue11/readme-examples.test.ts`, and that
 test fails if a block here isn't in it. If you change an example, change both.
 
 ## Contents
@@ -31,14 +31,14 @@ test fails if a block here isn't in it. If you change an example, change both.
 | Your own memory map, protection, or timing model (as Rover's `src/core/machine/` does) | `Cpu` with your own `Bus` |
 | Turn source into bytes, a listing, line numbers | `assemble` |
 | Show machine code as text | `disassemble` |
-| Syntax highlighting in CodeMirror 6 | `src/pdp11/codemirror.ts` (separate entry point) |
+| Syntax highlighting in CodeMirror 6 | `src/blue11/codemirror.ts` (separate entry point) |
 
-Import everything from `src/pdp11/index.ts` (the only entry point); `codemirror.ts` is a
+Import everything from `src/blue11/index.ts` (the only entry point); `codemirror.ts` is a
 second, optional one.
 
 ## Conventions
 
-- **Octal everywhere, as on the PDP-11.** Addresses, opcodes and register values in
+- **Octal everywhere, as on the original machine.** Addresses, opcodes and register values in
   docs, messages, listings and disassembly are octal. In TypeScript write `0o177564`;
   `octal(n)` formats six digits. In assembler source, numbers are octal unless they end in
   `.` (`10.` = ten).
@@ -58,7 +58,7 @@ second, optional one.
   `DeviceMachine.add` (overlap, bad address) and `new KW11L(0)` throw `Error`. An exception
   thrown by your own `Bus` or `Device` code passes through `run`.
 - **Determinism rules for contributors:** no DOM, no `Math.random`, no `Date`, no imports
-  from outside this folder (`tests/pdp11/boundary.test.ts` enforces the last).
+  from outside this folder (`tests/blue11/boundary.test.ts` enforces the last).
 
 ## Quick start
 
@@ -90,7 +90,7 @@ MSG:    .ASCIZ /HELLO/
 | `origin` | `0o1000` | where the location counter starts |
 | `symbols` | none | predefined symbols, `Record<string, number>` or `Map` (device registers, constants); a label of the same name is an error, `NAME = expr` overrides it |
 | `names` | `'dec'` | `'dec'`: 1–6 characters of letters, digits, `.`, `$` (longer is an error, not cut). `'long'`: any length, `_` allowed |
-| `hex` | `false` | accept `^X` hexadecimal (`^XFF`). Not MACRO-11, so off by default; without it `^X` is an error |
+| `hex` | `false` | accept `^X` hexadecimal (`^XFF`). Not standard syntax, so off by default; without it `^X` is an error |
 
 | Result field | |
 | :--- | :--- |
@@ -102,7 +102,7 @@ MSG:    .ASCIZ /HELLO/
 | `labels` | `Set<NAME>`: which of `symbols` are labels |
 | `lines` | `{ line, address, bytes, code }[]`, the source lines in order with what each produced (`code` = an instruction) |
 | `lineAt` | `Map<address, line>` for instructions: highlight the current line in a debugger |
-| `listing`, `listingRows` | MACRO-11 style listing as text, and row by row with source lines |
+| `listing`, `listingRows` | listing in the traditional style as text, and row by row with source lines |
 
 **Syntax.** `label: OP src, dst ; comment`. Names are case-insensitive. `NAME = expr`
 (a symbol), `NAME = %3` (a register alias), `. = . + 10` (move the location counter).
@@ -116,13 +116,14 @@ Registers `R0`–`R7`, `SP`, `PC`.
 **Directives:** `.WORD .BYTE .ASCII .ASCIZ .BLKW .BLKB .EVEN .ODD .END`. The listing
 directives `.TITLE .SBTTL .IDENT .ENABL .DSABL .LIST .NLIST .PAGE` are accepted and ignored.
 
-### MACRO-11 compatibility
+### Assembler compatibility
 
-A **subset of DEC's MACRO-11** (RT-11 / RSX-11) with the same syntax and meaning: programs
-inside the subset assemble on a real MACRO-11 too, and listings read the same. Each claim
-is tested in `tests/pdp11/macro11.test.ts` and `macro11-compat.test.ts`.
+A **subset of DEC's original assembler** (RT-11 / RSX-11) with the same syntax and meaning:
+programs inside the subset assemble on the original assembler too, and listings read the
+same. Each claim
+is tested in `tests/blue11/syntax.test.ts` and `syntax-compat.test.ts`.
 
-**The same as MACRO-11:**
+**The same as the original assembler:**
 - Statement format `label: OPCODE operands ; comment`, case-insensitive, commas with or
   without spaces.
 - Octal by default, `10.` decimal, `^D ^O ^B`, `^C`, `'A`, `"AB`.
@@ -140,13 +141,13 @@ is tested in `tests/pdp11/macro11.test.ts` and `macro11-compat.test.ts`.
 - Flag operations combine with `!`: `CLC!CLV` = 000243 (the disassembler writes them so).
 - `SOB` jumps backwards 1–63 words; branches reach −128…+127 words.
 
-**Different from MACRO-11 (deliberately):**
-- **Names longer than six characters are an error** with `names: 'dec'`. MACRO-11 keeps
+**Different from the original assembler (deliberately):**
+- **Names longer than six characters are an error** with `names: 'dec'`. The original keeps
   the first six silently, so `COUNTER1` and `COUNTER2` would be one symbol there.
-  `names: 'long'` allows any length and `_`, which MACRO-11 does not.
+  `names: 'long'` allows any length and `_`, which the original does not.
 - **Values that don't fit are errors** (`.BYTE 400`, a branch out of range, `TRAP 400`);
-  MACRO-11 flags them in the listing (`T`, `A`) and assembles anyway.
-- **Mixing clear and set flag operations** (`CLC!SEV`) is an error; MACRO-11 would quietly
+  the original flags them in the listing (`T`, `A`) and assembles anyway.
+- **Mixing clear and set flag operations** (`CLC!SEV`) is an error; the original would quietly
   make it a set.
 - **Predefined symbols** (`options.symbols`) stand in for the system macro library
   (`.MCALL`): a label with such a name is an error, `NAME = expr` may reassign one.
@@ -192,7 +193,7 @@ const r = cpu.run(1000);                           // { reason: 'halt', … }; R
 | :--- | :--- | :--- |
 | `eis` | `false` | `MUL`, `DIV`, `ASH`, `ASHC`; without it they trap to 10 |
 | `cycles` | `'per-bus-access'` | every bus read or write costs 1 cycle (instruction fetches included), `MUL` +4, `DIV` +8, `ASH`/`ASHC` +1. `'flat'`: 1 per instruction |
-| `protectModes` | `false` | PDP-11/45 rules when PSW bits 15–14 ≠ 0: a write to the PSW address traps to 4, `RTI`/`RTT` can't lower the mode bits or change the priority, `RESET` does nothing |
+| `protectModes` | `false` | the /45 model's rules when PSW bits 15–14 ≠ 0: a write to the PSW address traps to 4, `RTI`/`RTT` can't lower the mode bits or change the priority, `RESET` does nothing |
 
 | Member | |
 | :--- | :--- |
@@ -268,7 +269,7 @@ later; `RESET` calls `bus.reset()`; `JSR PC, @(SP)+` pops the target before push
 **Where it departs from the real machine:** `JMP`/`JSR` to a register traps to 10 (the
 models differed; 10 is the illegal-instruction vector). Not implemented: `MARK`, `SPL`,
 `MFPI`/`MTPI`, `MFPS`/`MTPS`, floating point, memory management. With `protectModes` the
-mode rules are the PDP-11/45's, without its memory management: protect memory yourself by
+mode rules are the /45 model's, without its memory management: protect memory yourself by
 refusing writes in `bus.write`.
 
 **Hosting the CPU yourself** (your own `Bus`, as Rover does):
@@ -429,8 +430,8 @@ for (let a = asm.origin; a < asm.origin + asm.bytes.length;) {
   `double single branch jsr rts sob regsrc xor trap none`.
 - `octal(n, digits = 6)`: `octal(0o1000)` → `'001000'`.
 - CodeMirror 6 (needs `@codemirror/language` and `@lezer/highlight`):
-  `import { macro11, macro11Highlight } from './pdp11/codemirror'`, then
-  `extensions: [macro11, macro11Highlight]`. It highlights labels (incl. `1$`),
+  `import { blue11Asm, blue11Highlight } from './blue11/codemirror'`, then
+  `extensions: [blue11Asm, blue11Highlight]`. It highlights labels (incl. `1$`),
   mnemonics, directives, registers, numbers, strings and comments.
 
 ## Pitfalls

@@ -125,12 +125,12 @@ export class Unit {
   /**
    * M15: the recorder's own view of the CPU's messages (`RECBUF`), so it knows where a photo
    * starts. A `SNDIMG` header (T.IMG chunk 0) takes the capture of its type with it, as
-   * today's send did; ground pairs them in order (PDP11_IO.md §3.5a).
+   * today's send did; ground pairs them in order (BLUE11_IO.md §3.5a).
    */
   recParser: ParserState = freshParser();
   /** M15: why the rover last booted (`BOOTCS` bits 7–0). */
   bootReason = 0;
-  /** M15: ticks of the fault and watchdog reboots in the last PDP11.safeModeTicks (`BOOTCT`). */
+  /** M15: ticks of the fault and watchdog reboots in the last BLUE11.safeModeTicks (`BOOTCT`). */
   faultBoots: number[] = [];
   /** M15: safe mode latched (`BOOTCS` SAFE): kept through reboots, cleared by a firmware upload. */
   safeMode = false;

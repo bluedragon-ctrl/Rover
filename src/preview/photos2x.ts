@@ -1,5 +1,5 @@
-// M15 review (preview.html?photos2x=1): today's camera formats next to the doubled ones of the
-// PDP-11 core (PHOTO_FORMATS_2X). The game's own generator (src/core/photos.ts) draws both, at
+// M15 review (preview.html?photos2x=1): the M9 camera formats next to the doubled ones the game
+// uses since M15 (PHOTO_FORMATS_2X). The game's own generator (src/core/photos.ts) draws both, at
 // the same on-screen size, so the difference is only the resolution.
 import { BALANCE } from '../core/balance';
 import { decodePhoto, PHOTO_FORMATS, PHOTO_FORMATS_2X, photoBytes, photoPayload, type PhotoFormats, type PhotoShot } from '../core/photos';

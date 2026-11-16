@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assemble, disassemble, INSTRUCTIONS, octal, SimpleMachine } from '../../src/pdp11';
+import { assemble, disassemble, INSTRUCTIONS, octal, SimpleMachine } from '../../src/blue11';
 import { runAsm, words } from './helpers';
 
 const err = (src: string, opts = {}): string => {
@@ -8,8 +8,8 @@ const err = (src: string, opts = {}): string => {
   return a.errors[0].message;
 };
 
-describe('pdp11 assembler: encoding', () => {
-  it('the listing example of PDP11_CPU.md §3.5', () => {
+describe('blue11 assembler: encoding', () => {
+  it('the listing example of BLUE11_CPU.md §3.5', () => {
     const syms = { DRVCS: 0o176400, DRVDIR: 0o176404, DRVCNT: 0o176406, GO: 1 };
     const a = assemble(`
         CLR  R1
@@ -72,7 +72,7 @@ describe('pdp11 assembler: encoding', () => {
   });
 });
 
-describe('pdp11 assembler: numbers, expressions, symbols', () => {
+describe('blue11 assembler: numbers, expressions, symbols', () => {
   it('octal by default, a trailing dot for decimal, ^D ^O ^B, characters', () => {
     expect(words('.WORD 20, 20., ^D20, ^O20, ^B101, \'A, "AB')).toEqual([16, 20, 20, 16, 5, 65, 0x4241]);
     expect(err('.WORD 19')).toMatch(/not octal.*19\./);
@@ -124,7 +124,7 @@ B:      BR 1$
   });
 });
 
-describe('pdp11 assembler: directives', () => {
+describe('blue11 assembler: directives', () => {
   it('.BYTE, .ASCII, .ASCIZ, .EVEN, .BLKW, .BLKB', () => {
     const a = assemble(`
         .BYTE 1, 377, -1
@@ -152,7 +152,7 @@ W:      .WORD 1`);
   });
 });
 
-describe('pdp11 assembler: errors are values with line and column', () => {
+describe('blue11 assembler: errors are values with line and column', () => {
   it('reports them', () => {
     const a = assemble(' CLR R0\n FOO R1\n MOV R1\n BR NOWHR');
     expect(a.errors.map((e) => [e.line, e.message])).toEqual([
@@ -175,7 +175,7 @@ describe('pdp11 assembler: errors are values with line and column', () => {
   });
 });
 
-describe('pdp11 disassembler', () => {
+describe('blue11 disassembler', () => {
   it('shows targets as absolute addresses or names', () => {
     const w = words(' BR X\n MOV @#X, R0\n JSR PC, X\nX: HALT');
     const read = (a: number): number => w[(a - 0o1000) / 2] ?? 0;
@@ -187,7 +187,7 @@ describe('pdp11 disassembler', () => {
   });
 });
 
-describe('pdp11 programs from the design (PDP11_CPU.md §9)', () => {
+describe('blue11 programs from the design (BLUE11_CPU.md §9)', () => {
   const MUL16 = `
 MUL16:  MOV  R2, -(SP)
         CLR  R2

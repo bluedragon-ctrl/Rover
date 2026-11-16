@@ -458,7 +458,7 @@ export const PALETTE16: readonly RGB[] = [
 ].map(hex);
 
 /**
- * Pixels packed little-endian (owner decision, docs/PDP11_CPU.md §0 decision 18): the first
+ * Pixels packed little-endian (owner decision, docs/BLUE11_CPU.md §0 decision 18): the first
  * pixel of a byte in its low bits, so a word read with `MOV` holds eight 2-bpp pixels in
  * order from bit 0 up, as the CPU numbers its bytes.
  */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assemble, BUS_ERROR, DeviceMachine, KW11L, SimpleMachine, type Cpu, type Device } from '../../src/pdp11';
+import { assemble, BUS_ERROR, DeviceMachine, KW11L, SimpleMachine, type Cpu, type Device } from '../../src/blue11';
 import { o, runAsm, words } from './helpers';
 
 /** A test peripheral: a counter register and a timer that interrupts after `delay` cycles. */
@@ -35,7 +35,7 @@ const boot = (m: DeviceMachine, src: string) => {
   return a;
 };
 
-describe('pdp11 DeviceMachine', () => {
+describe('blue11 DeviceMachine', () => {
   it('routes reads and writes to devices; byte reads take half the word', () => {
     const t = new Timer(o('170000'), 100);
     const m = new DeviceMachine().add(t);
@@ -97,7 +97,7 @@ ISR:    INC R1
   });
 });
 
-describe('pdp11 Cpu.onInstruction', () => {
+describe('blue11 Cpu.onInstruction', () => {
   it('sees every instruction once, with its address and first word', () => {
     const a = assemble(`
         MOV #3, R0
@@ -116,15 +116,15 @@ describe('pdp11 Cpu.onInstruction', () => {
   });
 });
 
-describe('pdp11 assembler ^X (opt-in)', () => {
+describe('blue11 assembler ^X (opt-in)', () => {
   it('is an error by default, a hexadecimal number with hex: true', () => {
-    expect(assemble(' .WORD ^XFF').errors[0].message).toMatch(/not MACRO-11/);
+    expect(assemble(' .WORD ^XFF').errors[0].message).toMatch(/not standard syntax/);
     expect(words(' .WORD ^XFF, ^x1f+1', { hex: true })).toEqual([0xff, 0x20]);
     expect(words(' MOV #^X8000, R0', { hex: true })).toEqual([0o012700, 0x8000]);
     expect(assemble(' .WORD ^XG', { hex: true }).errors[0].message).toMatch(/hexadecimal digits/);
   });
 
-  it('leaves MACRO-11 programs alone', () => {
+  it('leaves standard programs alone', () => {
     const { cpu } = runAsm(' MOV #^D10, R0\n HALT', { asm: { hex: true } });
     expect(cpu.r[0]).toBe(10);
   });

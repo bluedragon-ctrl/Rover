@@ -4,7 +4,7 @@ import { CHUNK, ChunkedWorld, worldToChunk } from '../src/core/ChunkedWorld';
 import { MapGenerator } from '../src/core/MapGenerator';
 import { SimulationEngine } from '../src/core/SimulationEngine';
 import { CpuState, Layer, Status } from '../src/core/types';
-import { PDP_ALLIN_EXPLORER } from '../src/core/programs-pdp11';
+import { ALLIN_EXPLORER } from '../src/core/programs';
 import { fw, reg, rover, run } from './helpers/rover';
 import { T } from '../src/core/WorldRegistry';
 
@@ -110,7 +110,7 @@ describe('engine hardware', () => {
     const once = () => {
       const e = new SimulationEngine({ seed: 11 });
       const u = e.spawnUnit('t');
-      e.upload(u, PDP_ALLIN_EXPLORER, { factory: true });
+      e.upload(u, ALLIN_EXPLORER, { factory: true });
       run(e, 2000);
       return [u.x, u.y, u.energy, u.hull];
     };
@@ -122,7 +122,7 @@ describe('all-in-one firmware', () => {
   it('the Explorer explores for 5000 ticks without faulting', () => {
     const e = new SimulationEngine({ seed: 12345 });
     const u = e.spawnUnit('t');
-    expect(e.upload(u, PDP_ALLIN_EXPLORER, { factory: true }).errors).toEqual([]);
+    expect(e.upload(u, ALLIN_EXPLORER, { factory: true }).errors).toEqual([]);
     const visited = new Set<string>();
     for (let i = 0; i < 5000; i++) {
       e.advanceTick();

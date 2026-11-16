@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { assemble } from '../../src/pdp11';
+import { assemble } from '../../src/blue11';
 
-/** README "MACRO-11 compatibility": every claim there is checked here (from the abandoned PR 40). */
+/** README "Assembler compatibility": every claim there is checked here (from the abandoned PR 40). */
 const ok = (src: string) => {
   const r = assemble(src);
   expect(r.errors, src).toEqual([]);
@@ -13,7 +13,7 @@ const word = (src: string, at = 0) => {
   return r.bytes[at] | (r.bytes[at + 1] << 8);
 };
 
-describe('MACRO-11 compatibility', () => {
+describe('assembler compatibility', () => {
   it('statement format, case, operand spacing', () => {
     expect(ok('start: mov r0,r1 ; comment').bytes).toEqual(ok('START:  MOV  R0, R1').bytes);
   });

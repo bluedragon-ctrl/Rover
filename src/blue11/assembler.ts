@@ -1,5 +1,5 @@
 /**
- * A MACRO-11 subset assembler: one source file, absolute addresses, two passes.
+ * The Blue-11 assembler (a subset of the original assembler syntax): one source file, absolute addresses, two passes.
  *
  * Syntax: `label: OPCODE src, dst ; comment`, `NAME = expr`, `NAME = %n` (register
  * symbol), `. = expr`. Numbers are octal; a trailing `.` makes them decimal; `^D` `^O`
@@ -21,12 +21,12 @@ export interface AssembleOptions {
   symbols?: Readonly<Record<string, number>> | ReadonlyMap<string, number>;
   /**
    * `dec` (default): names are 1–6 characters of letters, digits, `.` and `$`, as in
-   * MACRO-11 (longer names are an error rather than silently cut to six).
+   * the original assembler (longer names are an error rather than silently cut to six).
    * `long`: any length, and `_` allowed.
    */
   names?: NameStyle;
   /**
-   * Accept `^X` hexadecimal numbers (`^XFF`). Not MACRO-11 (which has only `^D` `^O` `^B`),
+   * Accept `^X` hexadecimal numbers (`^XFF`). Not standard syntax (which has only `^D` `^O` `^B`),
    * so off by default; for projects that want an easier mode. The disassembler and the
    * listing stay octal.
    */
@@ -64,7 +64,7 @@ export interface AssembleResult {
   lines: AsmLine[];
   /** Instruction address → source line. */
   lineAt: Map<number, number>;
-  /** MACRO-11 style listing: address, words in octal, source. */
+  /** Listing in the traditional style: address, words in octal, source. */
   listing: string;
   /** The listing row by row, with the source line each row belongs to. */
   listingRows: Array<{ line: number; text: string }>;
@@ -215,7 +215,7 @@ class Assembler {
       if (op) {
         this.instruction(op, om![2], pos + rest.length - om![2].length);
       } else if (dataLine(rest, om)) {
-        // MACRO-11: an expression where the instruction goes is an implicit .WORD. A name
+        // As the original assembler: an expression where the instruction goes is an implicit .WORD. A name
         // alone that is still undefined in pass 2 was more likely meant as an instruction.
         if (this.pass === 2 && om && om[2] === '' && !this.defined(om[1], pos)) {
           throw new AsmFail(`unknown instruction ${om[1]} (for data, use .WORD)`, pos);
@@ -592,7 +592,7 @@ class Assembler {
     }
     const up = this.checkName(name, column);
     if (up in REGISTERS || this.regSymbols.has(up)) throw new AsmFail(`${name} is a register; a value is needed here`, column);
-    // MACRO-11: instruction names are permanent symbols with their opcode as value (MOV #NOP, X).
+    // As the original assembler: instruction names are permanent symbols with their opcode as value (MOV #NOP, X).
     return this.symbols.get(up) ?? this.predefined.get(up) ?? BY_NAME.get(up)?.opcode ?? null;
   }
 
@@ -772,7 +772,7 @@ class ExprParser {
       this.i += 2;
       if (k === 'C') return ~this.term() & 0xffff;
       if (k === 'X') {
-        if (!this.hex) throw new AsmFail('^X (hexadecimal) is not MACRO-11; it needs the hex option', at);
+        if (!this.hex) throw new AsmFail('^X (hexadecimal) is not standard syntax; it needs the hex option', at);
         const h = /^[0-9A-Fa-f]+/.exec(s.slice(this.i));
         if (!h) throw new AsmFail('^X needs hexadecimal digits', at);
         this.i += h[0].length;
@@ -810,7 +810,7 @@ class ExprParser {
 }
 
 /**
- * Is this line an implicit .WORD (MACRO-11: an expression where the instruction goes)?
+ * Is this line an implicit .WORD (as in the original assembler: an expression where the instruction goes)?
  * Yes when it starts with a number, a character, `<`, a sign, or is a name alone or
  * followed by an operator or a comma. A name followed by operands (`MOVV R0, R1`) is an
  * unknown instruction, so typos keep a clear message. Purely syntactic: both passes agree.

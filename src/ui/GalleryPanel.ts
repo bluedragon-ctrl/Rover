@@ -2,7 +2,7 @@ import { headerLevel, hex, isPhoto, Level, LEVEL_NAMES, PRODUCT_NAMES, ProductTy
 
 const LEVEL_TIPS: Record<number, string> = {
   [Level.RAW]: 'raw: sent as the camera took it',
-  [Level.EDITED]: 'edited: changed with STB after the SNAP',
+  [Level.EDITED]: 'edited: changed in image memory after the SNAP',
   [Level.DRAWN]: 'drawn: no camera picture behind it (no credits)',
 };
 import { bandNm, productFrame, productSize, SPECTRUM_BANDS } from '../core/imaging';

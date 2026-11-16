@@ -1,5 +1,5 @@
 /**
- * Optional entry point: MACRO-11 syntax highlighting for CodeMirror 6. Kept out of
+ * Optional entry point: Blue-11 assembly syntax highlighting for CodeMirror 6. Kept out of
  * index.ts so the core library has no dependencies at all.
  */
 import { HighlightStyle, StreamLanguage, syntaxHighlighting } from '@codemirror/language';
@@ -9,8 +9,8 @@ import { BY_NAME } from './isa';
 const REGS = new Set(['R0', 'R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7', 'SP', 'PC']);
 
 /** Tokenizer: labels, mnemonics, directives, registers, numbers (octal / decimal), text. */
-export const macro11 = StreamLanguage.define<{ op: boolean; text: boolean }>({
-  name: 'macro-11',
+export const blue11Asm = StreamLanguage.define<{ op: boolean; text: boolean }>({
+  name: 'blue11-asm',
   startState: () => ({ op: false, text: false }),
   token(stream, state) {
     if (stream.sol()) { state.op = false; state.text = false; }
@@ -48,7 +48,7 @@ export const macro11 = StreamLanguage.define<{ op: boolean; text: boolean }>({
   },
 });
 
-export const macro11Highlight = syntaxHighlighting(
+export const blue11Highlight = syntaxHighlighting(
   HighlightStyle.define([
     { tag: t.comment, color: '#5c6f86', fontStyle: 'italic' },
     { tag: t.keyword, color: '#3affc8', fontWeight: 'bold' },

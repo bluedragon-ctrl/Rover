@@ -1,13 +1,13 @@
-# M15 — PDP-11 core: I/O page, devices and interrupts (design draft)
+# M15 — Blue-11: I/O page, devices and interrupts (design, built)
 
 Status: **draft; CPU side approved** (2026-11-15). Names shrink to six characters, DEC
 style (§9, question 1). Framed standard output approved (§3.5a). **Built in slice 3**
 (`src/core/machine/iopage.ts`, behind the engine switch; notes in §11); the recorder
 registers, safe-mode registers and ROM drivers in slice 4 (§12). Companion of
-[`PDP11_CPU.md`](PDP11_CPU.md) (instruction set, memory, call gate, traps, ROM).
+[`BLUE11_CPU.md`](BLUE11_CPU.md) (instruction set, memory, call gate, traps, ROM).
 
 This document turns today's 61 ports (`src/core/ports.ts`, SPEC §5.6, M14 devices in
-[`ASSEMBLER_CORE.md`](ASSEMBLER_CORE.md) §4) into **device registers** in the PDP-11's
+[`ASSEMBLER_CORE.md`](ASSEMBLER_CORE.md) §4) into **device registers** in the original machine's
 I/O page, using DEC's device conventions. **The device logic stays**:
 `SimulationEngine.device()`, `Unit.deviceLeft()`, timings, energy, interlocks, error
 reasons and the world. Only the face the program sees changes.
@@ -32,7 +32,7 @@ address (`MOV @#BAT, R0`), and every device reports for itself.
 * **Access** per register: read-only (RO), read/write (RW), write-only (WO, reads 0).
   Writes to read-only registers or bits are ignored.
 * **Firmware only** (FW): a write from the program is a **protection fault** (trap 4 →
-  `P.FLT`, [`PDP11_CPU.md`](PDP11_CPU.md) §7.3). The program may read them.
+  `P.FLT`, [`BLUE11_CPU.md`](BLUE11_CPU.md) §7.3). The program may read them.
 * **No register at an address in `170000`–`177777`** → bus error (trap 4).
 * **16-bit values.** Unsigned unless marked *signed* (two's complement, −32768…32767).
   Parameter writes are clamped to their range as today; angle registers wrap modulo 360.
@@ -142,7 +142,7 @@ Today's names without the `@`, shortened to six characters (§10); addresses in 
 | `176212` | `IND1` | RW | lamp, `OFF`…`AMBER` (0–4) |
 | `176214` | `IND2` | RW | |
 | `176216` | `IND3` | RW | |
-| `177570` | `DISP` | RW | was `@POST`, at the PDP-11's real **console display register** address: the lights on the front panel |
+| `177570` | `DISP` | RW | was `@POST`, at the original machine's real **console display register** address: the lights on the front panel |
 
 ### 3.4 Devices (`176400`, eight words each)
 
@@ -213,7 +213,7 @@ Housekeeping, error / event messages, memory dumps and science are all packets w
 different APIDs; there is no separate "error wire". The packets travel on a few **virtual
 channels** with priorities: real-time telemetry and events go out at once and may be lost
 when the link is bad; science is **stored and forwarded** from the recorder until it gets
-through. On the PDP-11 itself, output was a plain byte stream to a terminal (`XCSR` /
+through. On the original machine, output was a plain byte stream to a terminal (`XCSR` /
 `XBUF`), and the program added any structure.
 
 #### Proposed design: two channels, one message format
@@ -282,7 +282,7 @@ Read with index mode:
 
 ### 3.7 Program control and watchdog (`177000`, firmware writes)
 
-The gate and the M10 / M13 machinery ([`PDP11_CPU.md`](PDP11_CPU.md) §7).
+The gate and the M10 / M13 machinery ([`BLUE11_CPU.md`](BLUE11_CPU.md) §7).
 
 | Address | Register | Access | Notes |
 | :--- | :--- | :--- | :--- |
@@ -300,7 +300,7 @@ The gate and the M10 / M13 machinery ([`PDP11_CPU.md`](PDP11_CPU.md) §7).
 | `177026` | `BOOTCS` | FW | slice 4: bits 7–0 why the rover booted (RO); bit 8 `SAFE`: safe mode, latched through reboots, cleared by a firmware upload; the boot ROM sets it |
 | `177030` | `BOOTCT` | RO | slice 4: fault and watchdog reboots (boot reasons 2, 5, 7) in the last 500 ticks, this boot included |
 
-### 3.8 CPU and clock (real PDP-11 addresses)
+### 3.8 CPU and clock (the original machine's addresses)
 
 | Address | Register | Access | Notes |
 | :--- | :--- | :--- | :--- |
@@ -321,7 +321,7 @@ The gate and the M10 / M13 machinery ([`PDP11_CPU.md`](PDP11_CPU.md) §7).
 
 ## 5. Interrupts from devices
 
-CPU side (priority, entry, `RTI`, `WAIT`, the program's time): [`PDP11_CPU.md`](PDP11_CPU.md) §8.
+CPU side (priority, entry, `RTI`, `WAIT`, the program's time): [`BLUE11_CPU.md`](BLUE11_CPU.md) §8.
 
 * **A request** is raised when a device's `DONE` becomes 1 (a run ended, or a start was
   refused) while its `IE` is 1, or when `IE` is set while `DONE` is already 1 (as DEC
@@ -336,8 +336,8 @@ CPU side (priority, entry, `RTI`, `WAIT`, the program's time): [`PDP11_CPU.md`](
 
 | Vector | Source | v1 |
 | :--- | :--- | :--- |
-| `004`–`034` | CPU traps ([`PDP11_CPU.md`](PDP11_CPU.md) §7.3) | yes |
-| `024` | power fail: battery below `BATALM` (the real PDP-11 power-fail trap) | later (open question 6) |
+| `004`–`034` | CPU traps ([`BLUE11_CPU.md`](BLUE11_CPU.md) §7.3) | yes |
+| `024` | power fail: battery below `BATALM` (the original machine's power-fail trap) | later (open question 6) |
 | `100` | line clock, every tick | yes |
 | `104` | reserved (the real KW11-P programmable clock; `SLICE` is the gate in v1) | – |
 | `120` | drive | yes |
@@ -354,7 +354,7 @@ Each vector is two words: the handler's address and its `PSW` (usually its prior
 ## 6. ROM drivers
 
 Arguments in `R0`, `R1`; result in `R0`; `R0` and `R1` scratch
-([`PDP11_CPU.md`](PDP11_CPU.md) §10). Every driver follows the §3.1 path.
+([`BLUE11_CPU.md`](BLUE11_CPU.md) §10). Every driver follows the §3.1 path.
 
 ```
 ; STEP: drive R1 tiles in direction R0. Returns R0 = OK or why not (Z set if OK).
@@ -383,7 +383,7 @@ SLEEP:  MOV  @#TICKL, R1        ; now...
 counter wraps, a real-world technique worth a Reference note. `SCAN`, `ACT`, `USE`, `SNAP`
 and `ERASE` follow `STEP`'s pattern (as built they share its waiting tail `DWAIT`); `LOG`,
 `PUTMSG`, `SEND` and `SNDIMG` write messages (§3.5a); `RUN` is in
-[`PDP11_CPU.md`](PDP11_CPU.md) §7.2. The full table as built: [`PDP11_CPU.md`](PDP11_CPU.md) §10.
+[`BLUE11_CPU.md`](BLUE11_CPU.md) §7.2. The full table as built: [`BLUE11_CPU.md`](BLUE11_CPU.md) §10.
 
 **Cost of waiting:** a `WAIT` loop costs 5–6 cycles per tick plus the clock's handler
 (about 7), against today's free `WAIT @port`. With 32–64 cycles per tick that leaves
@@ -500,7 +500,7 @@ Reference *I/O page* tab is generated from it, as the Ports tab is today.
 
 1. **Names:** ~~DEC-style short names for device blocks and today's names for
    telemetry?~~ Decided 2026-11-15: **six characters at most everywhere**, no `_`
-   ([`PDP11_CPU.md`](PDP11_CPU.md) §0, decision 17). Every long name in this document
+   ([`BLUE11_CPU.md`](BLUE11_CPU.md) §0, decision 17). Every long name in this document
    (`SOLHLT`, `E.BLK`, `A.ECL`, …) needs a short name before slice 3.
    **Scheme approved (owner, 2026-11-15): DEC style, a family prefix and a dot where it
    helps** (`E.BLK` for `ERR_BLOCKED`, `SOLHLT` for `SOLAR_HEALTH`); the full table is §10.
@@ -521,7 +521,7 @@ Reference *I/O page* tab is generated from it, as the Ports tab is today.
 ## 10. Six-character names (approved scheme, 2026-11-15)
 
 Owner decisions: names have at most six characters, letters, digits, `.` and `$`
-([`PDP11_CPU.md`](PDP11_CPU.md) §0, decision 17), in DEC style: a family prefix and a
+([`BLUE11_CPU.md`](BLUE11_CPU.md) §0, decision 17), in DEC style: a family prefix and a
 dot where it helps. This document already uses the new names. Families:
 
 | Prefix | Family | Examples |
@@ -539,7 +539,7 @@ Unchanged because they already fit: `BAT`, `HULL`, `X`, `Y`, `TICKL`, `TICKH`, `
 `SOUTH` `WEST`, `OFF` `RED` `GREEN` `BLUE` `AMBER`, `SAMPLE`, `ROVER`, every device register
 (`DRVCS` …), every ROM routine.
 
-Renamed (today → PDP-11 core):
+Renamed (today → Blue-11):
 
 | Today | New | Notes |
 | :--- | :--- | :--- |
@@ -648,7 +648,7 @@ new tile can't break the rule; a test checks that every predefined symbol fits.
   the last photo (what `SNDIMG` sends for type 0); new `IMGSIZ` (`176530`) tells the ROM how
   much image memory the camera has.
 * **Safe mode registers** `BOOTCS` / `BOOTCT` (§3.7): the hardware counts, the boot ROM
-  decides ([`PDP11_CPU.md`](PDP11_CPU.md) §10). The `SAFE` bit is the rover's only
+  decides ([`BLUE11_CPU.md`](BLUE11_CPU.md) §10). The `SAFE` bit is the rover's only
   non-volatile flag besides image memory.
 * **Link and recorder** (owner, 2026-11-15): on this core ×2 the chassis values, Mk-I
   4 B/tick and 2 KB. A 64×64 photo (1080 B on air) takes about 270 ticks at full signal.

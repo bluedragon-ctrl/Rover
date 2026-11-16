@@ -16,17 +16,17 @@ export interface GoalDef {
 
 /** Sandbox goals. Order = suggested order in the UI. */
 export const GOALS: GoalDef[] = [
-  { id: 'first_contact', title: 'First contact', description: 'Receive a first frame over the downlink (LOG, with the dish on the relay orbiter).', target: 1, reward: 5, progress: (e) => e.stats.framesReceived },
+  { id: 'first_contact', title: 'First contact', description: 'Receive a first message over the downlink (ROM LOG, with the dish on the relay orbiter).', target: 1, reward: 5, progress: (e) => e.stats.framesReceived },
   { id: 'night_owl', title: 'Night owl', description: 'Have a rover powered on at sunrise after a night.', target: 1, reward: 5, progress: (e) => e.stats.sunrisesPowered },
   { id: 'surveyor', title: 'Surveyor', description: 'Map 500 tiles.', target: 500, reward: 10, progress: (e) => e.world.mappedTiles },
   { id: 'trailblazer', title: 'Trailblazer', description: 'Drive 40 tiles (Manhattan distance) from the landing site.', target: 40, reward: 10, progress: (e) => e.stats.maxDistance },
-  { id: 'prospector', title: 'Prospector', description: 'Mine 3 ore veins with the drill (ACT TOOL_0).', target: 3, reward: 10, progress: (e) => e.stats.oreMined },
-  { id: 'collector', title: 'Collector', description: 'Pick up 2 surface items with the grabber (ACT TOOL_1).', target: 2, reward: 10, progress: (e) => e.stats.itemsCollected },
+  { id: 'prospector', title: 'Prospector', description: 'Mine 3 ore veins with the drill (ROM ACT with F.T0).', target: 3, reward: 10, progress: (e) => e.stats.oreMined },
+  { id: 'collector', title: 'Collector', description: 'Pick up 2 surface items with the grabber (ROM ACT with F.T1).', target: 2, reward: 10, progress: (e) => e.stats.itemsCollected },
   { id: 'scientist', title: 'Scientist', description: 'Deliver 5 science products (spectra or photos) over the downlink.', target: 5, reward: 20, progress: (e) => e.stats.scienceDelivered },
-  { id: 'photographer', title: 'Photographer', description: 'Deliver 3 lit photos (SNAP dir, then SEND; in daylight or with the headlight aimed at the subject).', target: 3, reward: 15, progress: (e) => e.stats.photosDelivered },
-  { id: 'darkroom', title: 'Darkroom', description: 'Deliver a lit edited photo: SNAP, change bytes with STB, then SEND (see Reference → Image). The first edit in each camera mode earns a bonus.', target: 1, reward: 15, progress: (e) => e.stats.photosEdited },
+  { id: 'photographer', title: 'Photographer', description: 'Deliver 3 lit photos (ROM SNAP, then SNDIMG; in daylight or with the headlight aimed at the subject).', target: 3, reward: 15, progress: (e) => e.stats.photosDelivered },
+  { id: 'darkroom', title: 'Darkroom', description: 'Deliver a lit edited photo: SNAP, change bytes in image memory (MOVB), then SNDIMG (see Reference → Image). The first edit in each camera mode earns a bonus.', target: 1, reward: 15, progress: (e) => e.stats.photosEdited },
   { id: 'anomaly_hunter', title: 'Anomaly hunter', description: 'Flag a photo of an anomaly in the gallery (rare cliff walls and samples hide something only a photo shows).', target: 1, reward: 30, progress: (e) => e.stats.anomaliesFound },
-  { id: 'field_engineer', title: 'Field engineer', description: 'Repair a system with material from cargo (USE slot SYS_*).', target: 1, reward: 10, progress: (e) => e.stats.repairs },
+  { id: 'field_engineer', title: 'Field engineer', description: 'Repair a system with material from cargo (ROM USE with F.HULL, F.SOL or F.ANT).', target: 1, reward: 10, progress: (e) => e.stats.repairs },
   { id: 'upgraded', title: 'Upgraded', description: 'Buy an upgrade and pick up its supply crate with the grabber.', target: 1, reward: 5, progress: (e) => e.stats.upgradesInstalled },
   { id: 'eclipse', title: 'Into the dark', description: 'Keep a rover powered through a whole solar eclipse.', target: 1, reward: 15, progress: (e) => e.stats.eclipsesSurvived },
   { id: 'storm_chaser', title: 'Storm chaser', description: 'Come out of a micrometeorite squall with hull ≥ 50 and solar array ≥ 50.', target: 1, reward: 15, progress: (e) => e.stats.squallsWeathered },
@@ -119,7 +119,7 @@ export class EventDirector {
     return ev ? EVENT_BY_ID[ev.def] : null;
   }
 
-  /** Most urgent announced or active event, for the @ALERT port and the HUD. */
+  /** Most urgent announced or active event, for the ALERT register and the HUD. */
   /** Was a world event announced at tick `t` (its warning starts)? Fault protection (PRE_ALERT) listens for this. */
   announcedAt(t: number): boolean {
     return this.events.some((ev) => ev.warnTick === t);

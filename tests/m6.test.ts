@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BALANCE } from '../src/core/balance';
-import { PDP_DEFAULT_FIRMWARE as FACTORY_IDLE, PDP_PROSPECTOR } from '../src/core/programs-pdp11';
+import { DEFAULT_FIRMWARE as FACTORY_IDLE, PROSPECTOR } from '../src/core/programs';
 import { deserialize, SAVE_VERSION, SaveError, serialize } from '../src/core/SaveManager';
 import { SimulationEngine } from '../src/core/SimulationEngine';
 import { Alert, CpuState, Layer, Status } from '../src/core/types';
@@ -162,7 +162,7 @@ describe('save / load', () => {
       const e = new SimulationEngine({ seed: 12345 });
       const u = e.spawnUnit('Rover-1');
       e.upload(u, FACTORY_IDLE, factory);
-      e.uploadProgram(u, PDP_PROSPECTOR, factory);
+      e.uploadProgram(u, PROSPECTOR, factory);
       return e;
     };
     const total = BALANCE.dayTicks * 3;

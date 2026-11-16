@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assemble, SimpleMachine } from '../../src/pdp11';
+import { assemble, SimpleMachine } from '../../src/blue11';
 import { EXAMPLES, SIM_SYMBOLS } from '../../src/simulator/examples';
 
 describe('simulator examples', () => {

@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { PDP11 } from '../src/core/balance';
+import { BLUE11 } from '../src/core/balance';
 import { decodeDump, DumpKind, encodeCpu11Dump, encodeStack11Dump, STACK11_WORDS } from '../src/core/downlink';
 import { SimulationEngine } from '../src/core/SimulationEngine';
 import { CpuState, Layer, ProgState } from '../src/core/types';
 import type { Unit } from '../src/core/Unit';
 import { T } from '../src/core/WorldRegistry';
 
-// M15 slice 5: register and stack dumps of the PDP-11 core (uplink DUMP / DUMP_STACKS, BPT).
+// M15 slice 5: register and stack dumps of the Blue-11 (uplink DUMP / DUMP_STACKS, BPT).
 
 const factory = { factory: true };
 
@@ -27,7 +27,7 @@ function rover(firmware: string, program?: string): { e: SimulationEngine; u: Un
 const POLL = 'START:\n1$:     MOV #GO, @#PRGCS\n        WAIT\n        BR 1$';
 const dumps = (u: Unit) => u.link.sys.map((f) => decodeDump(f.bytes));
 
-describe('PDP-11 dump frames', () => {
+describe('dump frames', () => {
   it('register dump round-trips: state, PSW, R0–R7 low byte first', () => {
     const b = encodeCpu11Dump({ state: 'RUNNING', psw: 0o340, r: [1, 0o177777, 3, 4, 5, 6, 0o1776, 0o200] });
     expect([b[1], b[2]]).toEqual([DumpKind.CPU11, 19]);
@@ -44,7 +44,7 @@ describe('PDP-11 dump frames', () => {
   });
 });
 
-describe('PDP-11 dumps on the rover', () => {
+describe('dumps on the rover', () => {
   it('DUMP sends the firmware registers as they are at the moment the request arrives', () => {
     const { e, u } = rover('START:  MOV #1234, R3\n1$:     WAIT\n        BR 1$');
     expect(e.command(u, 'DUMP')).toBeNull();
@@ -66,7 +66,7 @@ describe('PDP-11 dumps on the rover', () => {
     expect(d.sp).toBe(u.machine.registers('firmware').r[6]);
     expect(d.words.slice(0, 2)).toEqual([0o22, 0o11]);
     expect(d.words.length).toBeLessThanOrEqual(STACK11_WORDS);
-    expect(d.sp + 2 * d.words.length).toBeLessThanOrEqual(PDP11.programBase);
+    expect(d.sp + 2 * d.words.length).toBeLessThanOrEqual(BLUE11.programBase);
   });
 
   it('the program stack dump starts at its SP and ends at the top of core (the EXIT return address)', () => {
@@ -95,7 +95,7 @@ describe('PDP-11 dumps on the rover', () => {
     expect(d).toMatchObject({ kind: 'regs', state: 'HALTED' });
   });
 
-  it('dumps arrive on the downlink like the Rover-ASM ones', () => {
+  it('dumps arrive on the downlink first, before the messages', () => {
     const { e, u } = rover('START:\n1$:     WAIT\n        BR 1$');
     expect(e.command(u, 'DUMP')).toBeNull();
     for (let i = 0; i < 40; i++) {
@@ -107,11 +107,11 @@ describe('PDP-11 dumps on the rover', () => {
   });
 });
 
-describe('debugger reads of the PDP-11 core', () => {
+describe('debugger reads of the machine', () => {
   it('peek and ioSnapshot change nothing in the simulation', async () => {
     const { serialize } = await import('../src/core/SaveManager');
-    const { PDP_DEFAULT_FIRMWARE, PDP_FIRST_STEPS } = await import('../src/core/programs-pdp11');
-    const { e, u } = rover(PDP_DEFAULT_FIRMWARE, PDP_FIRST_STEPS);
+    const { DEFAULT_FIRMWARE, FIRST_STEPS } = await import('../src/core/programs');
+    const { e, u } = rover(DEFAULT_FIRMWARE, FIRST_STEPS);
     for (let i = 0; i < 30; i++) e.advanceTick();
     const before = JSON.stringify(serialize(e));
     const snap = u.machine.ioSnapshot();

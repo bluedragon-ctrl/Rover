@@ -111,7 +111,7 @@ ${PUTC}
     name: 'Squares (multiply in software)',
     expect: '1 4 9 16 25 36 49 64 81 100 121 144 \r\n',
     source: `; Squares: print 1*1 ... 12*12. There is no multiply instruction without the
-; EIS option: MUL16 shifts and adds, the way early PDP-11 programs did it.
+; EIS option: MUL16 shifts and adds, the way programs did it before hardware multiply.
 ; Learn: subroutines (JSR PC / RTS PC), the stack, decimal output by repeated division.
 ; Try:   turn on EIS and replace the JSR PC, MUL16 with MUL R0, R0 (watch the cycles).
 

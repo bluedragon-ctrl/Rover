@@ -1,5 +1,5 @@
 /**
- * Disassembler: words back to MACRO-11 text. Addresses and values are octal; branch and
+ * Disassembler: words back to assembly text. Addresses and values are octal; branch and
  * PC-relative targets are shown as absolute addresses (or a name, if `nameOf` knows one).
  */
 

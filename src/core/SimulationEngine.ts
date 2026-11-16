@@ -1,4 +1,4 @@
-import { BALANCE, CHASSIS_MK1, PDP11, type ChassisDef } from './balance';
+import { BALANCE, CHASSIS_MK1, BLUE11, type ChassisDef } from './balance';
 import { ChunkedWorld } from './ChunkedWorld';
 import { EventBus } from './EventBus';
 import { MapGenerator } from './MapGenerator';
@@ -414,9 +414,9 @@ export class SimulationEngine {
     u.batAlarm = 0;
     u.preempted = 0;
     u.cpu.reboot();
-    // Safe mode bookkeeping (BOOTCS, BOOTCT): the boot ROM decides (PDP11_CPU.md §10).
+    // Safe mode bookkeeping (BOOTCS, BOOTCT): the boot ROM decides (BLUE11_CPU.md §10).
     u.bootReason = reason;
-    u.faultBoots = u.faultBoots.filter((t) => t > this.tick - PDP11.safeModeTicks);
+    u.faultBoots = u.faultBoots.filter((t) => t > this.tick - BLUE11.safeModeTicks);
     if (reason === BootReason.WATCHDOG || reason === BootReason.WDT_TIMEOUT || reason === BootReason.FAULT) u.faultBoots.push(this.tick);
     u.machine.hardReboot(); // core reloaded from the images, the CPU at the boot ROM
     this.restartProgram(u);
@@ -1115,7 +1115,7 @@ export class SimulationEngine {
     if (this.gallery.length > GALLERY_KEEP) this.gallery.splice(0, this.gallery.length - GALLERY_KEEP);
   }
 
-  /** M15: mission control splits the TX stream into messages (PDP11_IO.md §3.5a). */
+  /** M15: mission control splits the TX stream into messages (BLUE11_IO.md §3.5a). */
   private receiveTx(u: Unit, bytes: number[]): void {
     let p = this.parsers.get(u.id);
     if (!p) this.parsers.set(u.id, (p = freshParser()));
@@ -1128,7 +1128,7 @@ export class SimulationEngine {
   }
 
   /**
-   * M15: mission control splits the recorder's message stream too (PDP11_IO.md §3.5a) and
+   * M15: mission control splits the recorder's message stream too (BLUE11_IO.md §3.5a) and
    * puts photos sent by the ROM's SNDIMG back together, chunk by chunk, in order. A photo
    * that lost a chunk (a reboot cut it off) is dropped.
    */

@@ -12,7 +12,7 @@ import type { ParserState, ReceivedMessage } from './messages';
 
 /**
  * v21 (M15 slice 6): the rover's computer is the machine of src/core/machine/ and nothing
- * else. Older saves (Rover-ASM, v1–v20) are not migrated (owner decision, docs/PDP11_CPU.md §12):
+ * else. Older saves (Rover-ASM, v1–v20) are not migrated (owner decision, docs/BLUE11_CPU.md §12):
  * loading one raises OldSaveError and the game starts a new world.
  */
 export const SAVE_VERSION = 21;

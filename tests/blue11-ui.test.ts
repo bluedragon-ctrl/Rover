@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { PDP_DEFAULT_FIRMWARE, PDP_FIRMWARE_TEMPLATES, PDP_FIRST_STEPS, PDP_IMAGE_NEGATIVE, PDP_PROGRAM_TEMPLATES } from '../src/core/programs-pdp11';
+import { DEFAULT_FIRMWARE, FIRMWARE_TEMPLATES, FIRST_STEPS, IMAGE_NEGATIVE, PROGRAM_TEMPLATES } from '../src/core/programs';
 import { SimulationEngine } from '../src/core/SimulationEngine';
-import { oct6, pdpListing, pdpRegions, toolchain } from '../src/ui/toolchain';
+import { oct6, listingRows, coreRegions, toolchain } from '../src/ui/toolchain';
 
-// M15 slice 5: the Code tab's view of the PDP-11 core (headless parts).
+// M15 slice 5: the Code tab's view of the Blue-11 (headless parts).
 
 function setup() {
   const e = new SimulationEngine({ seed: 1 });
@@ -11,19 +11,19 @@ function setup() {
   return { e, u, tc: toolchain(e) };
 }
 
-describe('PDP-11 toolchain for the Code tab', () => {
+describe('toolchain for the Code tab', () => {
   it('picks the templates and octal addresses', () => {
     const { tc } = setup();
-    expect(tc.templates('program')).toBe(PDP_PROGRAM_TEMPLATES);
-    expect(tc.templates('firmware')).toBe(PDP_FIRMWARE_TEMPLATES);
+    expect(tc.templates('program')).toBe(PROGRAM_TEMPLATES);
+    expect(tc.templates('firmware')).toBe(FIRMWARE_TEMPLATES);
     expect(tc.addr(0o2000, 'program')).toBe('002000');
   });
 
   it('builds every template; sizes fit the regions', () => {
     const { u, tc } = setup();
-    const r = pdpRegions(u);
+    const r = coreRegions(u);
     expect(r).toEqual({ fw: 0o1600, prog: 2048 - 2 - 0o2000 });
-    for (const [slot, set] of [['program', PDP_PROGRAM_TEMPLATES], ['firmware', PDP_FIRMWARE_TEMPLATES]] as const)
+    for (const [slot, set] of [['program', PROGRAM_TEMPLATES], ['firmware', FIRMWARE_TEMPLATES]] as const)
       for (const [name, src] of Object.entries(set)) {
         const b = tc.build(u, src, slot);
         expect(b.errors, name).toEqual([]);
@@ -33,9 +33,9 @@ describe('PDP-11 toolchain for the Code tab', () => {
 
   it('maps instruction addresses to source lines', () => {
     const { u, tc } = setup();
-    const b = tc.build(u, PDP_FIRST_STEPS, 'program');
-    const start = b.pdp!.asm.symbols.get('START')!;
-    const line = PDP_FIRST_STEPS.split('\n').findIndex((l) => l.startsWith('START:')) + 1;
+    const b = tc.build(u, FIRST_STEPS, 'program');
+    const start = b.result.asm.symbols.get('START')!;
+    const line = FIRST_STEPS.split('\n').findIndex((l) => l.startsWith('START:')) + 1;
     expect(b.lineAt(start)).toBe(line);
     expect(b.lineAt(0o177776)).toBe(0);
   });
@@ -53,7 +53,7 @@ describe('PDP-11 toolchain for the Code tab', () => {
   it('the listing splits address, octal words and source, and marks errors', () => {
     const { u, tc } = setup();
     const b = tc.build(u, 'START:  MOV #3, R1\nLOOP:   BR LOOP\nD:      .WORD 7\n        CLR Q\n', 'program');
-    const rows = pdpListing(b);
+    const rows = listingRows(b);
     expect(rows[0]).toMatchObject({ line: 1, addr: '002000', code: ['012701', '000003'], kind: 'instr' });
     expect(rows[0].source).toMatch(/^START:\s+MOV #3, R1/);
     expect(rows[1]).toMatchObject({ addr: '002004', code: ['000777'], kind: 'instr' });
@@ -63,11 +63,11 @@ describe('PDP-11 toolchain for the Code tab', () => {
 
   it('knows which firmware runs a program and which code photographs without sending', () => {
     const { u, tc } = setup();
-    expect(tc.runsProgram(tc.build(u, PDP_DEFAULT_FIRMWARE, 'firmware'))).toBe(true);
-    expect(tc.runsProgram(tc.build(u, PDP_FIRMWARE_TEMPLATES['All-in-one Explorer (no program)'], 'firmware'))).toBe(false);
+    expect(tc.runsProgram(tc.build(u, DEFAULT_FIRMWARE, 'firmware'))).toBe(true);
+    expect(tc.runsProgram(tc.build(u, FIRMWARE_TEMPLATES['All-in-one Explorer (no program)'], 'firmware'))).toBe(false);
     const snapOnly = tc.build(u, 'START:  CLR R0\n        MOV #F.M1, R1\n        JSR PC, SNAP   ; SNDIMG in a comment does not count\n        HALT', 'program');
     expect(tc.snapsWithoutSend(snapOnly, null)).toBe(true);
-    expect(tc.snapsWithoutSend(tc.build(u, PDP_IMAGE_NEGATIVE, 'program'), null)).toBe(false);
+    expect(tc.snapsWithoutSend(tc.build(u, IMAGE_NEGATIVE, 'program'), null)).toBe(false);
   });
 
   it('formats words as six octal digits', () => {
@@ -76,7 +76,7 @@ describe('PDP-11 toolchain for the Code tab', () => {
   });
 });
 
-describe('Comms on the PDP-11 core', () => {
+describe('Comms', () => {
   it('names log tags from the L. symbols and finds the lines that use them', async () => {
     const { slotDictionary } = await import('../src/ui/comms');
     const { u, tc } = setup();
@@ -89,7 +89,7 @@ describe('Comms on the PDP-11 core', () => {
     const { describeMessage, messageFields, slotDictionary, emptyDictionary } = await import('../src/ui/comms');
     const { MsgType } = await import('../src/core/messages');
     const { u, tc } = setup();
-    const d = { firmware: slotDictionary(tc.build(u, PDP_DEFAULT_FIRMWARE, 'firmware')), program: emptyDictionary() };
+    const d = { firmware: slotDictionary(tc.build(u, DEFAULT_FIRMWARE, 'firmware')), program: emptyDictionary() };
     const log = { unitId: 1, tick: 3, type: MsgType.LOG, body: [1, 0xff, 0xff], status: 'ok' as const };
     expect(describeMessage(log, d)).toBe('L.BAT = -1');
     const f = messageFields(log, d);
@@ -103,13 +103,13 @@ describe('Comms on the PDP-11 core', () => {
     expect(broken.at(-1)?.name).toBe('broken');
   });
 
-  it('explains PDP-11 dumps byte by byte; BPT dumps count as sent by a breakpoint', async () => {
+  it('explains dumps byte by byte; BPT dumps count as sent by a breakpoint', async () => {
     const { frameFields, describeFrame, sentByBreakpoint, slotDictionary, emptyDictionary, romRoutineAt } = await import('../src/ui/comms');
     const { encodeCpu11Dump, encodeStack11Dump } = await import('../src/core/downlink');
     const { ROM_EXPORTS } = await import('../src/core/machine/rom');
     const { ProgState } = await import('../src/core/types');
     const { u, tc } = setup();
-    const d = { firmware: emptyDictionary(), program: slotDictionary(tc.build(u, PDP_FIRST_STEPS, 'program')) };
+    const d = { firmware: emptyDictionary(), program: slotDictionary(tc.build(u, FIRST_STEPS, 'program')) };
     const bytes = encodeCpu11Dump({ state: ProgState.PROG_HALTED, psw: 0o170004, r: [1, 2, 3, 4, 5, 6, 0o3774, 0o2002] }, true);
     const fields = frameFields(bytes, d);
     expect(fields.flatMap((x) => x.bytes)).toEqual(bytes);
@@ -125,10 +125,10 @@ describe('Comms on the PDP-11 core', () => {
   });
 });
 
-describe('Reference for the PDP-11 core', () => {
+describe('Reference', () => {
   it('documents every instruction of the set and every ROM routine', async () => {
-    const { INSTR_DOC, romDocs } = await import('../src/ui/ReferencePdp11');
-    const { INSTRUCTIONS } = await import('../src/pdp11');
+    const { INSTR_DOC, romDocs } = await import('../src/ui/ReferenceBlue11');
+    const { INSTRUCTIONS } = await import('../src/blue11');
     const { ROM_ROUTINES } = await import('../src/core/machine/rom');
     for (const i of INSTRUCTIONS) {
       const base = i.byte ? i.name.slice(0, -1) : i.name;
@@ -142,7 +142,7 @@ describe('Reference for the PDP-11 core', () => {
 });
 
 describe('double-resolution photos in the Gallery', () => {
-  it('a delivered PDP-11 photo frame has all its bytes (not cut to the 1x size)', async () => {
+  it('a delivered photo frame has all its bytes (not cut to the 1x size)', async () => {
     const { productFrame, productSize } = await import('../src/core/imaging');
     const { PHOTO_FORMATS_2X, photoBytes } = await import('../src/core/photos');
     const g = { type: 1, subject: 0, x: 0, y: 0, lit: true, seq: 0, tick: 5, credits: 0, x2: true as const };

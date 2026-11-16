@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PDP11 } from '../src/core/balance';
+import { BLUE11 } from '../src/core/balance';
 import { ProgState } from '../src/core/types';
 import { factory, HANG, reg, rover as base, run, sleep } from './helpers/rover';
 import type { SimulationEngine } from '../src/core/SimulationEngine';
@@ -49,10 +49,10 @@ describe('uploads and commands (SPEC §3.9.3)', () => {
   it('rejects code that does not fit its region of core, naming the limit', () => {
     const { e, u } = rover(`START:${HANG}`);
     const big = (n: number) => `START:  .BLKW ${n}.\n        HALT`;
-    const fw = e.upload(u, big((PDP11.programBase - PDP11.firmwareBase) / 2), factory);
+    const fw = e.upload(u, big((BLUE11.programBase - BLUE11.firmwareBase) / 2), factory);
     expect(fw.assembled.image).toBeNull();
     expect(fw.errors[0].message).toMatch(/firmware ends at .*: it must end below 002000/);
-    const prog = e.uploadProgram(u, big((PDP11.coreBytes - PDP11.programBase) / 2), factory);
+    const prog = e.uploadProgram(u, big((BLUE11.coreBytes - BLUE11.programBase) / 2), factory);
     expect(prog.errors[0].message).toMatch(/program ends at/);
     expect(u.programBytes).toBe(0);
   });

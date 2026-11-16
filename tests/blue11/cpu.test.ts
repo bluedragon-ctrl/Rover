@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { BUS_ERROR, Cpu, PSW, SimpleMachine, assemble, type Bus } from '../../src/pdp11';
+import { BUS_ERROR, Cpu, PSW, SimpleMachine, assemble, type Bus } from '../../src/blue11';
 import { o, runAsm } from './helpers';
 
 /** Run a snippet followed by HALT; return the CPU. */
 const run = (body: string, opts = {}) => runAsm(`${body}\n HALT\n`, opts).cpu;
 const flags = (c: Cpu): string => `${c.n ? 'N' : '-'}${c.z ? 'Z' : '-'}${c.v ? 'V' : '-'}${c.c ? 'C' : '-'}`;
 
-describe('pdp11 CPU: data movement and addressing modes', () => {
+describe('blue11 CPU: data movement and addressing modes', () => {
   it('MOV with every addressing mode', () => {
     const { cpu: c, asm } = runAsm(`
         MOV #TAB, R1
@@ -106,7 +106,7 @@ ADD2:   MOV (R5)+, R0
   });
 });
 
-describe('pdp11 CPU: flags', () => {
+describe('blue11 CPU: flags', () => {
   it('ADD sets V on signed overflow and C on carry', () => {
     expect(flags(run('MOV #77777, R0\n ADD #1, R0'))).toBe('N-V-');
     expect(flags(run('MOV #177777, R0\n ADD #1, R0'))).toBe('-Z-C');
@@ -200,7 +200,7 @@ describe('pdp11 CPU: flags', () => {
   });
 });
 
-describe('pdp11 CPU: cycles per bus access (PDP11_CPU.md §4)', () => {
+describe('blue11 CPU: cycles per bus access (BLUE11_CPU.md §4)', () => {
   const cost = (line: string, opts = {}): number => {
     const a = assemble(`${line}\nCOUNT: .WORD 0\nVAL: .WORD 0`, { origin: 0o1000 });
     expect(a.errors).toEqual([]);
@@ -244,7 +244,7 @@ describe('pdp11 CPU: cycles per bus access (PDP11_CPU.md §4)', () => {
   });
 });
 
-describe('pdp11 CPU: traps', () => {
+describe('blue11 CPU: traps', () => {
   it('odd address and missing memory trap to 4 with the PC of the instruction', () => {
     const { cpu, asm } = runAsm(`
         MOV #H, @#4
@@ -326,7 +326,7 @@ H:      INC R1
   });
 });
 
-describe('pdp11 CPU: interrupts, WAIT, HALT', () => {
+describe('blue11 CPU: interrupts, WAIT, HALT', () => {
   it('WAIT sleeps until an interrupt, which is taken by priority', () => {
     const { m, cpu, result } = runAsm(`
         MOV #CLK, @#100
@@ -378,7 +378,7 @@ CLK:    INC R1
   });
 });
 
-describe('pdp11 CPU: EIS', () => {
+describe('blue11 CPU: EIS', () => {
   const eis = { eis: true };
   it('MUL: 32-bit product in an even/odd pair, C if it needs 32 bits', () => {
     const c = run('MOV #1000., R0\n MUL #1000., R0', eis);
@@ -407,7 +407,7 @@ describe('pdp11 CPU: EIS', () => {
   });
 });
 
-describe('pdp11 CPU: save / load and determinism', () => {
+describe('blue11 CPU: save / load and determinism', () => {
   it('save, load and continue == uninterrupted', () => {
     const src = `
         MOV #CLK, @#100
@@ -458,7 +458,7 @@ CLK:    INC R4
   });
 });
 
-describe('pdp11 CPU: protectModes (PDP-11/45 user-mode rules)', () => {
+describe('blue11 CPU: protectModes (user-mode rules of the original /45 model)', () => {
   // Enter user mode with RTI, then try to get out of it.
   const user = (body: string) => `
         MOV  #TRAP4, @#4
@@ -481,7 +481,7 @@ TRAP4:  MOV  #1, R5
     expect((r.cpu.r[1] >> 5) & 7).toBe(0); // priority unchanged
   });
 
-  it('without the option the CPU is a plain PDP-11/40 (no modes enforced)', () => {
+  it('without the option the CPU is a plain /40 model (no modes enforced)', () => {
     const r = runAsm(user('CLR @#177776'));
     expect(r.cpu.r[5]).toBe(0);
     expect(r.cpu.r[1]).toBe(0);

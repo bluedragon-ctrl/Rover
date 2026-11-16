@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BALANCE } from '../src/core/balance';
-import { PDP_ALLIN_FETCH as FETCH_SUPPLY } from '../src/core/programs-pdp11';
+import { ALLIN_FETCH as FETCH_SUPPLY } from '../src/core/programs';
 import { deserialize, serialize } from '../src/core/SaveManager';
 import { SimulationEngine } from '../src/core/SimulationEngine';
 import { Layer, Status } from '../src/core/types';

@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PDP-11 compatible simulator</title>
+    <title>Blue-11 simulator</title>
     <style>
       :root { --cyan: #38bdf8; --green: #3affc8; --amber: #ffb020; --red: #ff6b6b; --panel: rgba(10, 20, 32, 0.92); --line: rgba(56, 189, 248, 0.28); --dim: #7d8ca3; }
       * { box-sizing: border-box; }
@@ -68,7 +68,7 @@
   </head>
   <body>
     <header>
-      <b>PDP-11 SIM</b>
+      <b>BLUE-11 SIM</b>
       <select id="example" title="Example programs"></select>
       <span class="sep"></span>
       <button id="assemble" class="primary" title="Assemble and load (Ctrl+Enter)">Assemble &amp; load</button>
@@ -92,7 +92,7 @@
     </header>
     <main>
       <section id="editor-sec">
-        <h2>Source <span class="right">MACRO-11 subset · octal by default, <code>10.</code> is decimal</span></h2>
+        <h2>Source <span class="right">Blue-11 assembly · octal by default, <code>10.</code> is decimal</span></h2>
         <div id="editor"></div>
         <div id="errors"></div>
       </section>

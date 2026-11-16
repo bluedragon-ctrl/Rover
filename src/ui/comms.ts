@@ -10,7 +10,7 @@ import type { Unit } from '../core/Unit';
 import { IMG_CHUNK, MSG_TYPE_NAMES, MsgType, SOH, ETX, type ReceivedMessage } from '../core/messages';
 import { ERROR_NAMES } from '../core/machine/names';
 import { ROM_EXPORTS } from '../core/machine/rom';
-import { PDP11 } from '../core/balance';
+import { BLUE11 } from '../core/balance';
 import { oct6, toolchain, type SlotBuild } from './toolchain';
 
 /** Log tags a slot names: the names and the lines that use them. */
@@ -33,9 +33,9 @@ export const emptyDictionary = (): SlotDictionary => ({ tags: {}, lineAt: () => 
  */
 export function slotDictionary(b: SlotBuild): SlotDictionary {
   const tags: LogDictionary = {};
-  const asm = b.pdp.asm;
+  const asm = b.result.asm;
   {
-    const lines = (b.pdp.image?.source ?? '').split('\n').map((l) => l.replace(/;.*$/, ''));
+    const lines = (b.result.image?.source ?? '').split('\n').map((l) => l.replace(/;.*$/, ''));
     for (const [name, v] of asm.symbols) {
       if (!name.startsWith('L.') || asm.labels.has(name)) continue;
       const re = new RegExp(`(^|[^A-Z0-9.$])${name.replace(/[.$]/g, '\\$&')}(?![A-Z0-9.$])`, 'i');
@@ -52,7 +52,7 @@ export function slotDictionary(b: SlotBuild): SlotDictionary {
 const ROM_SORTED = Object.entries(ROM_EXPORTS).sort((a, b) => b[1] - a[1]);
 /** The ROM routine an address lies in (`STEP`), or '' outside the ROM's routines. */
 export function romRoutineAt(addr: number): string {
-  if (addr < PDP11.romBase || addr >= PDP11.ioBase) return '';
+  if (addr < BLUE11.romBase || addr >= BLUE11.ioBase) return '';
   return ROM_SORTED.find(([, a]) => a <= addr)?.[0] ?? '';
 }
 
@@ -352,7 +352,7 @@ export function frameFields(b: readonly number[], d: Dictionaries): FrameField[]
               ? 'means nothing while the program is not running'
               : bptLine
                 ? `the instruction after the BPT on line ${bptLine}`
-                : v >= PDP11.romBase && v < PDP11.ioBase
+                : v >= BLUE11.romBase && v < BLUE11.ioBase
                   ? `in the ROM${romRoutineAt(v) ? `, routine ${romRoutineAt(v)}` : ''} (called from your code: Dump stack shows the return address)`
                   : 'address of the instruction it runs next',
             goto: running && line ? { slot, line } : undefined,

@@ -20,7 +20,7 @@ export class UpgradesPanel {
   private build(): void {
     this.el.innerHTML = `
       <p class="small dim">Credits come from delivered science and goals. A purchase is dropped by parachute 3–6 tiles from the rover
-      (@DROPS, @DROP_X, @DROP_Y) and is installed the moment the grabber picks it up (ACT TOOL_1 dir). Try the "Fetch supply crate" template.</p>
+      (DROPS, DROPX, DROPY) and is installed the moment the grabber picks it up (ROM ACT with F.T1). Try the "Fetch supply crate" template.</p>
       <p class="small" id="upg-header"></p>`;
     this.header = this.el.querySelector('#upg-header')!;
     for (const up of UPGRADES) {

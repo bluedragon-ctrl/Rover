@@ -1,19 +1,19 @@
 /**
- * Standalone PDP-11 simulator page (simulator.html): write MACRO-11, assemble, step or
+ * Standalone Blue-11 simulator page (simulator.html): write Blue-11 assembly, assemble, step or
  * run, and watch registers, flags, memory and the console. Uses only the library in
- * src/pdp11/ (plus CodeMirror), never the game: it is also a check that the library
+ * src/blue11/ (plus CodeMirror), never the game: it is also a check that the library
  * stands on its own.
  */
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { lintGutter, setDiagnostics, type Diagnostic } from '@codemirror/lint';
 import { EditorState, RangeSet, RangeSetBuilder, StateEffect, StateField } from '@codemirror/state';
 import { Decoration, EditorView, GutterMarker, gutter, highlightActiveLine, keymap, lineNumbers, type DecorationSet } from '@codemirror/view';
-import { assemble, disassemble, octal, SimpleMachine, type AssembleResult, type CycleModel, type RunResult } from '../pdp11';
-import { macro11, macro11Highlight } from '../pdp11/codemirror';
+import { assemble, disassemble, octal, SimpleMachine, type AssembleResult, type CycleModel, type RunResult } from '../blue11';
+import { blue11Asm, blue11Highlight } from '../blue11/codemirror';
 import { EXAMPLES, SIM_SYMBOLS } from './examples';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
-const STORE = 'pdp11-sim-source';
+const STORE = 'blue11-sim-source';
 
 // ------------------------------------------------------------------ editor
 
@@ -79,8 +79,8 @@ const editor = new EditorView({
       lintGutter(),
       bpField,
       pcLineField,
-      macro11,
-      macro11Highlight,
+      blue11Asm,
+      blue11Highlight,
       keymap.of([
         { key: 'Mod-Enter', run: () => { load(); return true; } },
         indentWithTab, ...defaultKeymap, ...historyKeymap,

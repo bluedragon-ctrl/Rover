@@ -92,10 +92,10 @@ export const BALANCE = {
 } as const;
 
 /**
- * The rover's computer (docs/PDP11_CPU.md §2, §6): memory map and sizes. The cycle budget is
+ * The rover's computer (docs/BLUE11_CPU.md §2, §6): memory map and sizes. The cycle budget is
  * the chassis' `cyclesPerTick`.
  */
-export const PDP11 = {
+export const BLUE11 = {
   /** Core installed on a Mk-I (memory boards: 4 / 8 KB later). */
   coreBytes: 2048,
   /** Firmware image origin (after the vectors) and the program base (fixed per chassis, decision 13). */
@@ -105,9 +105,9 @@ export const PDP11 = {
   imageBase: 0o100000,
   romBase: 0o160000,
   ioBase: 0o170000,
-  /** Real-time output FIFO of the TX device (PDP11_IO.md §3.5a). */
+  /** Real-time output FIFO of the TX device (BLUE11_IO.md §3.5a). */
   txFifoBytes: 64,
-  /** Safe mode (PDP11_CPU.md §10, from M14 §6.3): this many fault / watchdog reboots within... */
+  /** Safe mode (BLUE11_CPU.md §10, from M14 §6.3): this many fault / watchdog reboots within... */
   safeModeBoots: 3,
   /** ...this many ticks make the boot ROM run its built-in safe firmware. */
   safeModeTicks: 500,
@@ -115,7 +115,7 @@ export const PDP11 = {
 
 export interface ChassisDef {
   name: string;
-  /** CPU cycles (bus accesses) per tick (docs/PDP11_CPU.md §4, §14.5). */
+  /** CPU cycles (bus accesses) per tick (docs/BLUE11_CPU.md §4, §14.5). */
   cyclesPerTick: number;
   /** Log FIFO size in bytes (downlink, §3.8.3). */
   logFifoBytes: number;
@@ -139,9 +139,9 @@ export interface ChassisDef {
 
 export const CHASSIS_MK1: ChassisDef = {
   name: 'Rover Mk-I',
-  cyclesPerTick: 64, // owner, 2026-11-15, after the slice 4 measurement (PDP11_CPU.md §14.5)
+  cyclesPerTick: 64, // owner, 2026-11-15, after the slice 4 measurement (BLUE11_CPU.md §14.5)
   logFifoBytes: 32,
-  recorderBytes: 2048, // photos at double resolution are four times bigger (PDP11_CPU.md §6.3)
+  recorderBytes: 2048, // photos at double resolution are four times bigger (BLUE11_CPU.md §6.3)
   linkBytesPerTick: 4,
   cameraModes: [1, 2],
   sensorRange: 6,

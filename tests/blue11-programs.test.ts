@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { CHASSIS_MK1, PDP11 } from '../src/core/balance';
+import { CHASSIS_MK1, BLUE11 } from '../src/core/balance';
 import { MsgType } from '../src/core/messages';
 import {
-  PDP_DEFAULT_FIRMWARE,
-  PDP_FIRMWARE_TEMPLATES,
-  PDP_PROGRAM_TEMPLATES,
-} from '../src/core/programs-pdp11';
+  DEFAULT_FIRMWARE,
+  FIRMWARE_TEMPLATES,
+  PROGRAM_TEMPLATES,
+} from '../src/core/programs';
 import { SimulationEngine } from '../src/core/SimulationEngine';
 import { deserialize, serialize } from '../src/core/SaveManager';
 import { CpuState, Layer, ProgState } from '../src/core/types';
@@ -23,8 +23,8 @@ function run(e: SimulationEngine, ticks: number): void {
   }
 }
 
-/** A PDP-11 rover with the default firmware and a template, on cleared flat sand (radius 8). */
-function rover(name: string, setup?: (e: SimulationEngine, u: Unit) => void, firmware = PDP_DEFAULT_FIRMWARE): { e: SimulationEngine; u: Unit } {
+/** A rover with the default firmware and a template, on cleared flat sand (radius 8). */
+function rover(name: string, setup?: (e: SimulationEngine, u: Unit) => void, firmware = DEFAULT_FIRMWARE): { e: SimulationEngine; u: Unit } {
   const e = new SimulationEngine({ seed: 5 });
   const u = e.spawnUnit('t', 0, 0);
   for (let y = -8; y <= 8; y++)
@@ -35,7 +35,7 @@ function rover(name: string, setup?: (e: SimulationEngine, u: Unit) => void, fir
     }
   setup?.(e, u);
   expect(e.upload(u, firmware, factory).errors).toEqual([]);
-  if (name) expect(e.uploadProgram(u, PDP_PROGRAM_TEMPLATES[name], factory).errors).toEqual([]);
+  if (name) expect(e.uploadProgram(u, PROGRAM_TEMPLATES[name], factory).errors).toEqual([]);
   return { e, u };
 }
 
@@ -61,26 +61,26 @@ const assembled = (src: string, slot: 'firmware' | 'program') => {
   return e.assembleFor(e.spawnUnit('t'), src, slot);
 };
 
-describe('PDP-11 shipped code assembles', () => {
+describe('shipped code assembles', () => {
   it('every firmware template fits the firmware region', () => {
-    for (const [name, src] of Object.entries(PDP_FIRMWARE_TEMPLATES)) {
+    for (const [name, src] of Object.entries(FIRMWARE_TEMPLATES)) {
       const r = assembled(src, 'firmware');
       expect(r.errors, name).toEqual([]);
-      expect(r.asm.bytes.length, name).toBeLessThanOrEqual(PDP11.programBase - PDP11.firmwareBase);
+      expect(r.asm.bytes.length, name).toBeLessThanOrEqual(BLUE11.programBase - BLUE11.firmwareBase);
     }
   });
 
   it('every program template fits the 1 KB program region', () => {
-    for (const [name, src] of Object.entries(PDP_PROGRAM_TEMPLATES)) {
+    for (const [name, src] of Object.entries(PROGRAM_TEMPLATES)) {
       const r = assembled(src, 'program');
       expect(r.errors, name).toEqual([]);
-      expect(r.asm.bytes.length, name).toBeLessThan(PDP11.coreBytes - PDP11.programBase);
+      expect(r.asm.bytes.length, name).toBeLessThan(BLUE11.coreBytes - BLUE11.programBase);
     }
   });
 
   it('every program template is a lesson (the 13 M14 lessons and 6 image lessons)', () => {
-    expect(Object.keys(PDP_PROGRAM_TEMPLATES).length).toBe(19);
-    for (const [name, src] of Object.entries(PDP_PROGRAM_TEMPLATES)) {
+    expect(Object.keys(PROGRAM_TEMPLATES).length).toBe(19);
+    for (const [name, src] of Object.entries(PROGRAM_TEMPLATES)) {
       expect(src.startsWith('; '), name).toBe(true);
       if (!name.startsWith('Image')) {
         expect(src, name).toMatch(/; Learn:/);
@@ -90,7 +90,7 @@ describe('PDP-11 shipped code assembles', () => {
   });
 });
 
-describe('default firmware (PDP-11)', () => {
+describe('default firmware', () => {
   it('runs First steps and reports how it ended', () => {
     const { e, u } = rover('First steps');
     expect(result(e, u)).toBe(1);
@@ -158,9 +158,9 @@ describe('default firmware (PDP-11)', () => {
   });
 });
 
-describe('PDP-11 lessons run', () => {
+describe('lessons run', () => {
   it('every program template runs 1500 ticks without a fault', () => {
-    for (const name of Object.keys(PDP_PROGRAM_TEMPLATES)) {
+    for (const name of Object.keys(PROGRAM_TEMPLATES)) {
       const { e, u } = rover(name);
       run(e, 1500);
       expect(u.cpu.state, name).toBe(CpuState.RUNNING);
@@ -169,7 +169,7 @@ describe('PDP-11 lessons run', () => {
   });
 
   it('every firmware template runs 1500 ticks without a reboot', () => {
-    for (const [name, src] of Object.entries(PDP_FIRMWARE_TEMPLATES)) {
+    for (const [name, src] of Object.entries(FIRMWARE_TEMPLATES)) {
       const { e, u } = rover('First steps', undefined, src);
       run(e, 1500);
       expect(u.cpu.state, name).toBe(CpuState.RUNNING);
@@ -300,7 +300,7 @@ describe('PDP-11 lessons run', () => {
   });
 });
 
-describe('PDP-11 image lessons (64x64, PDP11_CPU.md §6.3)', () => {
+describe('image lessons (64x64, BLUE11_CPU.md §6.3)', () => {
   const photo = (name: string, setup?: (e: SimulationEngine, u: Unit) => void) => {
     const { e, u } = rover(name, setup);
     expect(result(e, u, 2000)).toBe(1);
@@ -341,7 +341,7 @@ describe('PDP-11 image lessons (64x64, PDP11_CPU.md §6.3)', () => {
 });
 
 /*
- * Cycle budget (PDP11_CPU.md §16 question 1, slice 4): run the default firmware with every
+ * Cycle budget (BLUE11_CPU.md §16 question 1, slice 4): run the default firmware with every
  * template and see how much of the budget it needs. The numbers are written to the test
  * output; the asserts keep the current budget workable.
  */
@@ -349,19 +349,19 @@ describe('cycle budget measurement', () => {
   it('the default firmware and every template within the Mk-I budget', () => {
     const budget = CHASSIS_MK1.cyclesPerTick;
     const rows: string[] = [];
-    for (const name of Object.keys(PDP_PROGRAM_TEMPLATES)) {
+    for (const name of Object.keys(PROGRAM_TEMPLATES)) {
       const { e, u } = rover(name, (e2, r) => {
         if (name.startsWith('Image') || name === 'Photographer') lit(e2, r);
       });
       const m = u.machine.meter;
       run(e, 2000);
-      const bytes = assembled(PDP_PROGRAM_TEMPLATES[name], 'program').asm.bytes.length;
+      const bytes = assembled(PROGRAM_TEMPLATES[name], 'program').asm.bytes.length;
       rows.push(`${name.padEnd(24)} ${String(bytes).padStart(4)} B  avg ${(m.total / m.ticks).toFixed(1).padStart(5)}  peak ${String(m.peak).padStart(3)}  starved ${m.starved}`);
       expect(m.total / m.ticks, name).toBeLessThan(budget);
     }
     const idle = rover('');
     run(idle.e, 2000);
-    const fw = assembled(PDP_DEFAULT_FIRMWARE, 'firmware').asm.bytes.length;
+    const fw = assembled(DEFAULT_FIRMWARE, 'firmware').asm.bytes.length;
     rows.unshift(`${'(firmware idle)'.padEnd(24)} ${String(fw).padStart(4)} B  avg ${(idle.u.machine.meter.total / idle.u.machine.meter.ticks).toFixed(1).padStart(5)}  peak ${idle.u.machine.meter.peak}`);
     console.log(`cycle budget ${budget}/tick\n${rows.join('\n')}`);
   });
