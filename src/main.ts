@@ -90,7 +90,7 @@ engine.events.on('GOAL_COMPLETED', (g) => {
 });
 renderReference($('#reference'), engine.registry);
 
-// Code tab: Program / Firmware slots and the machine-code listing (M10; ?listing=0 hides it).
+// Code tab: Program / Firmware slots and the Listing checkbox (off by default; ?listing=0 removes it).
 const code = new CodeWorkspace({
   el: $('#code-ws'),
   engine,

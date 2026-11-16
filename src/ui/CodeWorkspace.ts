@@ -1,15 +1,15 @@
 import type { SimulationEngine, Slot, UplinkCommand } from '../core/SimulationEngine';
 import type { Unit } from '../core/Unit';
 import { EditorPanel } from './EditorPanel';
-import { InspectPanel, type SnapMark } from './InspectPanel';
-import { listingRows, coreRegions, toolchain, type SlotBuild, type Toolchain } from './toolchain';
+import { InspectPanel } from './InspectPanel';
+import { listingByLine, coreRegions, toolchain, type SlotBuild, type Toolchain } from './toolchain';
 
 export interface CodeWorkspaceOptions {
   el: HTMLElement;
   engine: SimulationEngine;
   rover: () => Unit;
   log: (level: 'info' | 'warn' | 'error', message: string) => void;
-  /** Show the machine-code listing pane (preview first: SPEC §5.7.1). */
+  /** Offer the machine-code listing column (a checkbox, off until the player turns it on: SPEC §5.7.1). */
   listing?: boolean;
   /** Draft shown in the Program slot while the rover has no program. */
   starterProgram?: string;
@@ -28,7 +28,8 @@ interface SlotUi {
   source: string;
 }
 
-const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+/** The listing checkbox is remembered in this browser. */
+const LISTING_KEY = 'rover.listing';
 const SLOT_TEXT: Record<Slot, string> = {
   program:
     'Your task: drive, mine, photograph, in Blue-11 assembly. The firmware runs it in time slices (<code>JSR PC, RUN</code>); finish with <code>HALT</code> (the result in <code>R0</code>). Uploading is cheap and does not reboot.',
@@ -44,10 +45,7 @@ export class CodeWorkspace {
   slot: Slot = 'program';
   private slots: Record<Slot, SlotUi>;
   private q = <T extends HTMLElement>(s: string) => this.opts.el.querySelector(s) as T;
-  private listingEl: HTMLElement | null;
-  private cursorLine: Record<Slot, number> = { firmware: 1, program: 1 };
-  private execLine: Record<Slot, number> = { firmware: 0, program: 0 };
-  private snapMark: Record<Slot, SnapMark | null> = { firmware: null, program: null };
+  private listingOn = false;
   private inspect: InspectPanel | null = null;
   /** Assembling, templates and the listing. */
   readonly tc: Toolchain;
@@ -72,16 +70,15 @@ export class CodeWorkspace {
         <button id="cw-upload" class="primary" title="Ctrl+Enter / Ctrl+S"></button>
         <button id="cw-revert" title="Back to the code you last uploaded (mission control keeps a copy; nothing is sent)">Revert</button>
         <select id="cw-template"></select>
+        ${opts.listing ? '<label class="cw-lst-toggle small" title="Show the machine code beside each line: its address and words in octal, as the assembler writes them"><input type="checkbox" id="cw-listing"> Listing</label>' : ''}
       </div>
-      <div class="toolbar small"><span id="cw-state"></span><span class="dim" id="cw-cost"></span></div>
+      <div class="toolbar small"><span id="cw-state"></span><span class="dim" id="cw-range"></span><span class="dim" id="cw-cost"></span></div>
       <div class="cw-warn small" id="cw-warn" hidden></div>
       <div class="cw-editors">
         <div class="cw-editor" data-ed="program"></div>
         <div class="cw-editor" data-ed="firmware"></div>
       </div>
-      ${opts.listing ? '<div class="cw-listing" id="cw-listing"></div>' : ''}
       ${opts.inspect ? '<section id="cw-inspect"></section>' : ''}`;
-    this.listingEl = opts.listing ? this.q('#cw-listing') : null;
 
     const u = opts.rover();
     const make = (slot: Slot, initial: string): SlotUi => {
@@ -96,11 +93,8 @@ export class CodeWorkspace {
         onChange: (src, res) => {
           ui.source = src;
           ui.result = res;
+          if (this.listingOn) ui.editor.setListing(listingByLine(res));
           if (slot === this.slot) this.refresh();
-        },
-        onCursor: (line) => {
-          this.cursorLine[slot] = line;
-          if (slot === this.slot) this.highlightRows();
         },
       });
       return ui;
@@ -122,20 +116,31 @@ export class CodeWorkspace {
       if (t !== undefined) this.current.editor.setSource(t);
       sel.value = '';
     });
-    this.listingEl?.addEventListener('click', (e) => {
-      const row = (e.target as HTMLElement).closest<HTMLElement>('[data-line]');
-      if (row) this.current.editor.goToLine(Number(row.dataset.line));
-    });
+    if (opts.listing) {
+      const box = this.q<HTMLInputElement>('#cw-listing');
+      box.checked = readListingPref();
+      box.addEventListener('change', () => {
+        writeListingPref(box.checked);
+        this.setListing(box.checked);
+      });
+      this.setListing(box.checked);
+    }
     if (opts.inspect) {
       const ins = new InspectPanel(this.q('#cw-inspect'), opts.engine, opts.rover, opts.inspect, (slot) => this.draftIsUploaded(slot));
       ins.onGoToLine = (line) => this.current.editor.goToLine(line);
-      ins.onMark = (slot, mark) => {
-        this.snapMark[slot] = mark;
-        if (slot === this.slot) this.highlightRows(false);
-      };
+      ins.onMark = (slot, mark) => this.slots[slot].editor.setSnapMark(mark);
       this.inspect = ins;
     }
     this.setSlot('program');
+  }
+
+  /** Show or hide the listing column in both slots' editors. */
+  setListing(on: boolean): void {
+    this.listingOn = on;
+    for (const ui of Object.values(this.slots)) {
+      if (on && ui.result) ui.editor.setListing(listingByLine(ui.result));
+      ui.editor.showListing(on);
+    }
   }
 
   /** True while the slot's editor holds exactly the code on the rover. */
@@ -231,6 +236,11 @@ export class CodeWorkspace {
       st.className = 'small ok';
       st.textContent = '✓ on the rover';
     }
+    const range = this.q('#cw-range');
+    const asm = res?.result.asm;
+    const n = asm?.bytes.length ?? 0;
+    range.textContent = asm && n ? `${this.tc.addr(asm.origin, this.slot)}–${this.tc.addr(asm.origin + n - 1, this.slot)} · ${n} B` : '';
+    range.title = 'Where the code goes in core and how many bytes it takes (octal addresses)';
 
     const warn = this.q('#cw-warn');
     const msgs: string[] = [];
@@ -246,7 +256,6 @@ export class CodeWorkspace {
       msgs.push('This code takes photos (<code>JSR PC, SNAP</code>) but never sends them: a photo stays in image memory until <code>JSR PC, SNDIMG</code> records it for the downlink (Reference → Image).');
     warn.hidden = !msgs.length;
     warn.innerHTML = msgs.map((m) => `⚠ ${m}`).join('<br>');
-    this.renderListing();
   }
 
   /** Upload cost for the selected slot (called from the UI loop: signal and battery change). */
@@ -264,60 +273,21 @@ export class CodeWorkspace {
   /** Admin debugger: the line each slot executes next (0 = none). */
   setExecLine(slot: Slot, line: number): void {
     this.slots[slot].editor.setExecLine(line);
-    if (this.execLine[slot] !== line) {
-      this.execLine[slot] = line;
-      if (slot === this.slot) this.highlightRows();
-    }
   }
+}
 
-  // ------------------------------------------------------------------ listing (SPEC §5.7.1)
-
-  private renderListing(): void {
-    const el = this.listingEl;
-    const res = this.current.result;
-    if (!el || !res) return;
-    this.renderOctalListing(el, res);
+function readListingPref(): boolean {
+  try {
+    return localStorage.getItem(LISTING_KEY) === '1';
+  } catch {
+    return false;
   }
+}
 
-  /** The listing (address and words in octal, as the assembler writes it). */
-  private renderOctalListing(el: HTMLElement, res: SlotBuild): void {
-    el.classList.add('octal');
-    const rows = listingRows(res).map((r) => {
-      const cls = `lst-row ${r.kind}${r.error ? ' err' : ''}`;
-      const title = r.error ? ` title="${esc(r.error)}"` : '';
-      return `<div class="${cls}" data-line="${r.line}"${title}><span class="a">${r.addr}</span><span class="h">${r.code.join(' ')}</span><span class="s">${esc(r.source)}</span></div>`;
-    });
-    const asm = res.result.asm;
-    const n = asm.bytes.length;
-    const name = this.slot === 'program' ? 'PROGRAM' : 'FIRMWARE';
-    const range = n ? `${this.tc.addr(asm.origin, this.slot)}–${this.tc.addr(asm.origin + n - 1, this.slot)}` : 'empty';
-    const status = res.ok ? '' : ` · <span class="bad">not assembled (${res.errors.length} error${res.errors.length > 1 ? 's' : ''})</span>`;
-    const top = el.querySelector('.lst-body')?.scrollTop ?? 0;
-    el.innerHTML = `<div class="lst-head"><b>Listing · ${name}</b><span>${range} · ${n} B${status}</span></div>
-      <div class="lst-cols"><span class="a">addr</span><span class="h">words (octal)</span><span class="s">source</span></div>
-      <div class="lst-body">${rows.join('') || '<div class="dim">No instructions.</div>'}</div>
-      <div class="lst-foot">${this.totalsHtml()}</div>`;
-    el.querySelector('.lst-body')!.scrollTop = top;
-    this.highlightRows(false);
-  }
-
-  private highlightRows(scroll = true): void {
-    const el = this.listingEl;
-    if (!el) return;
-    const cur = this.cursorLine[this.slot];
-    const ex = this.execLine[this.slot];
-    const snap = this.snapMark[this.slot];
-    let first: HTMLElement | null = null;
-    el.querySelectorAll<HTMLElement>('.lst-row').forEach((r) => {
-      const line = Number(r.dataset.line);
-      r.classList.toggle('cursor', line === cur);
-      r.classList.toggle('exec', line === ex && ex > 0);
-      const isSnap = !!snap && line === snap.line && !r.classList.contains('cont');
-      r.classList.toggle('snap', isSnap);
-      if (isSnap) r.title = snap.title;
-      else if (r.title.startsWith('◆')) r.removeAttribute('title');
-      if (line === cur && !first) first = r;
-    });
-    if (scroll && first) (first as HTMLElement).scrollIntoView({ block: 'nearest' });
+function writeListingPref(on: boolean): void {
+  try {
+    localStorage.setItem(LISTING_KEY, on ? '1' : '0');
+  } catch {
+    // private mode: not remembered
   }
 }
