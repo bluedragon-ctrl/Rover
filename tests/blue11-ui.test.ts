@@ -139,6 +139,21 @@ describe('Reference', () => {
     for (const n of ROM_ROUTINES) expect(docs[n], n).toMatch(/\w/);
     expect(docs.STEP).toMatch(/^drive R1 tiles in direction R0/);
   });
+
+  it('every instruction example assembles (the names it branches to defined after it)', async () => {
+    const { INSTR_DOC } = await import('../src/ui/ReferenceBlue11');
+    const { assemble } = await import('../src/blue11');
+    const { predefinedSymbols } = await import('../src/core/machine/symbols');
+    const { createDefaultRegistry } = await import('../src/core/WorldRegistry');
+    const symbols = predefinedSymbols(createDefaultRegistry());
+    const labels = 'LOOP ZERO FITS POS MINUS BAD EVEN ODD BIG SMALL FAR NEAR START'.split(' ').map((l) => `${l}: NOP`).join('\n');
+    for (const [name, d] of Object.entries(INSTR_DOC)) {
+      const code = d.example[0].split(' · ').join('\n');
+      expect(code, name).toMatch(new RegExp(`\\b${name}B?\\b`));
+      const r = assemble(`${code}\n${labels}\nCOUNT: .WORD 0\n`, { symbols });
+      expect(r.errors.map((e) => e.message), `${name}: ${code}`).toEqual([]);
+    }
+  });
 });
 
 describe('double-resolution photos in the Gallery', () => {

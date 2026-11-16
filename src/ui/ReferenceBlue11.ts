@@ -18,86 +18,87 @@ const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
 const o = (v: number, w = 6) => (v & 0xffff).toString(8).padStart(w, '0');
 
 /**
- * What each instruction does: syntax, effect, flags N Z V C in DEC's notation (`*` set by
- * the result, `0` / `1` cleared / set, `-` unchanged). Byte forms (`MOVB`…) share the row.
+ * What each instruction does, written for someone new to assembly: syntax, a plain-language
+ * effect, an example with what it does, flags N Z V C in DEC's notation (`*` set by the
+ * result, `0` / `1` cleared / set, `-` unchanged). Byte forms (`MOVB`…) share the row.
  */
-export const INSTR_DOC: Record<string, { syntax: string; does: string; flags: string }> = {
-  MOV: { syntax: 'MOV src, dst', does: 'dst ← src. MOVB to a register sign-extends', flags: '**0-' },
-  CMP: { syntax: 'CMP src, dst', does: 'compare: src − dst, only the flags change', flags: '****' },
-  BIT: { syntax: 'BIT src, dst', does: 'test bits: src AND dst, only the flags change', flags: '**0-' },
-  BIC: { syntax: 'BIC src, dst', does: 'clear bits: dst ← dst AND NOT src', flags: '**0-' },
-  BIS: { syntax: 'BIS src, dst', does: 'set bits: dst ← dst OR src', flags: '**0-' },
-  ADD: { syntax: 'ADD src, dst', does: 'dst ← dst + src', flags: '****' },
-  SUB: { syntax: 'SUB src, dst', does: 'dst ← dst − src', flags: '****' },
-  XOR: { syntax: 'XOR R, dst', does: 'dst ← dst XOR R', flags: '**0-' },
-  CLR: { syntax: 'CLR dst', does: 'dst ← 0', flags: '0100' },
-  COM: { syntax: 'COM dst', does: 'dst ← NOT dst (every bit flipped)', flags: '**01' },
-  INC: { syntax: 'INC dst', does: 'dst ← dst + 1', flags: '***-' },
-  DEC: { syntax: 'DEC dst', does: 'dst ← dst − 1', flags: '***-' },
-  NEG: { syntax: 'NEG dst', does: 'dst ← −dst', flags: '****' },
-  TST: { syntax: 'TST dst', does: 'set the flags from dst (is it 0? negative?)', flags: '**00' },
-  ASR: { syntax: 'ASR dst', does: 'shift right, bit 15 stays (÷ 2, signed); bit 0 into C', flags: '****' },
-  ASL: { syntax: 'ASL dst', does: 'shift left (× 2); bit 15 into C', flags: '****' },
-  ROR: { syntax: 'ROR dst', does: 'rotate right through C', flags: '****' },
-  ROL: { syntax: 'ROL dst', does: 'rotate left through C', flags: '****' },
-  ADC: { syntax: 'ADC dst', does: 'dst ← dst + C (multi-word arithmetic)', flags: '****' },
-  SBC: { syntax: 'SBC dst', does: 'dst ← dst − C', flags: '****' },
-  SWAB: { syntax: 'SWAB dst', does: 'swap the two bytes of a word; flags from the new low byte', flags: '**00' },
-  SXT: { syntax: 'SXT dst', does: 'dst ← 0 if N is clear, 177777 (−1) if set', flags: '-*0-' },
-  BR: { syntax: 'BR label', does: 'branch always (±127 words)', flags: '----' },
-  BNE: { syntax: 'BNE label', does: 'branch if not equal / not zero (Z = 0)', flags: '----' },
-  BEQ: { syntax: 'BEQ label', does: 'branch if equal / zero (Z = 1)', flags: '----' },
-  BPL: { syntax: 'BPL label', does: 'branch if plus (N = 0)', flags: '----' },
-  BMI: { syntax: 'BMI label', does: 'branch if minus (N = 1)', flags: '----' },
-  BVC: { syntax: 'BVC label', does: 'branch if no overflow (V = 0)', flags: '----' },
-  BVS: { syntax: 'BVS label', does: 'branch if overflow (V = 1)', flags: '----' },
-  BCC: { syntax: 'BCC label', does: 'branch if carry clear (C = 0)', flags: '----' },
-  BCS: { syntax: 'BCS label', does: 'branch if carry set (C = 1)', flags: '----' },
-  BGE: { syntax: 'BGE label', does: 'signed ≥ (N XOR V = 0)', flags: '----' },
-  BLT: { syntax: 'BLT label', does: 'signed < (N XOR V = 1)', flags: '----' },
-  BGT: { syntax: 'BGT label', does: 'signed > (Z OR (N XOR V) = 0)', flags: '----' },
-  BLE: { syntax: 'BLE label', does: 'signed ≤ (Z OR (N XOR V) = 1)', flags: '----' },
-  BHI: { syntax: 'BHI label', does: 'unsigned > (C = 0 and Z = 0)', flags: '----' },
-  BLOS: { syntax: 'BLOS label', does: 'unsigned ≤ (C = 1 or Z = 1)', flags: '----' },
-  BHIS: { syntax: 'BHIS label', does: 'unsigned ≥ (same as BCC)', flags: '----' },
-  BLO: { syntax: 'BLO label', does: 'unsigned < (same as BCS)', flags: '----' },
-  JMP: { syntax: 'JMP dst', does: 'jump to the address of dst (any distance)', flags: '----' },
-  JSR: { syntax: 'JSR R, dst', does: 'call: push R, R ← return address, jump. Usually JSR PC, NAME', flags: '----' },
-  RTS: { syntax: 'RTS R', does: 'return: PC ← R, R ← pop. RTS PC after JSR PC', flags: '----' },
-  SOB: { syntax: 'SOB R, label', does: 'R ← R − 1; branch back to label unless 0 (a counted loop)', flags: '----' },
-  TRAP: { syntax: 'TRAP n', does: 'system call through vector 034 (the firmware serves it)', flags: '****' },
-  EMT: { syntax: 'EMT n', does: 'trap through vector 030 (reserved)', flags: '****' },
-  BPT: { syntax: 'BPT', does: 'breakpoint: trap 014. Halts and sends a register dump', flags: '****' },
-  IOT: { syntax: 'IOT', does: 'trap 020 (reserved)', flags: '****' },
-  RTI: { syntax: 'RTI', does: 'return from an interrupt or trap: pop PC, then PSW', flags: '****' },
-  RTT: { syntax: 'RTT', does: 'as RTI, but a trace trap waits one instruction', flags: '****' },
-  WAIT: { syntax: 'WAIT', does: 'sleep until an interrupt (the rest of the tick costs no cycles)', flags: '----' },
-  HALT: { syntax: 'HALT', does: 'program: end, the result in R0. Firmware: the CPU stops', flags: '----' },
-  RESET: { syntax: 'RESET', does: 'every device back to idle (CSRs: DONE, no IE)', flags: '----' },
-  NOP: { syntax: 'NOP', does: 'nothing', flags: '----' },
-  CLC: { syntax: 'CLC', does: 'clear C. Combine: CLC!CLV', flags: '---0' },
-  CLV: { syntax: 'CLV', does: 'clear V', flags: '--0-' },
-  CLZ: { syntax: 'CLZ', does: 'clear Z', flags: '-0--' },
-  CLN: { syntax: 'CLN', does: 'clear N', flags: '0---' },
-  CCC: { syntax: 'CCC', does: 'clear all four', flags: '0000' },
-  SEC: { syntax: 'SEC', does: 'set C', flags: '---1' },
-  SEV: { syntax: 'SEV', does: 'set V', flags: '--1-' },
-  SEZ: { syntax: 'SEZ', does: 'set Z', flags: '-1--' },
-  SEN: { syntax: 'SEN', does: 'set N', flags: '1---' },
-  SCC: { syntax: 'SCC', does: 'set all four', flags: '1111' },
-  MUL: { syntax: 'MUL src, R', does: 'EIS: R (and R+1) ← R × src. Not installed: use JSR PC, MUL16', flags: '**0*' },
-  DIV: { syntax: 'DIV src, R', does: 'EIS: R, R+1 ÷ src. Not installed: use JSR PC, DIV16', flags: '****' },
-  ASH: { syntax: 'ASH src, R', does: 'EIS: shift R by src places. Not installed', flags: '****' },
-  ASHC: { syntax: 'ASHC src, R', does: 'EIS: shift R, R+1 by src places. Not installed', flags: '****' },
+export const INSTR_DOC: Record<string, { syntax: string; does: string; example: [string, string]; flags: string }> = {
+  MOV: { syntax: 'MOV src, dst', does: 'copy: put the value of src into dst (src is not changed). MOVB copies one byte; into a register it also fills the high byte with the byte\'s sign', example: ['MOV #5, R0', 'R0 is now 5'], flags: '**0-' },
+  CMP: { syntax: 'CMP src, dst', does: 'compare: work out src − dst but keep nothing except the flags. Put a branch right after it (Flags tab: which branch)', example: ['CMP R0, #10', 'then BEQ jumps if R0 is 10 (eight)'], flags: '****' },
+  BIT: { syntax: 'BIT src, dst', does: 'test bits: are any of the bits of src also on in dst? Only the flags change: Z = 1 means none are', example: ['BIT #DONE, @#RADCS', 'then BEQ if the radar is not done yet'], flags: '**0-' },
+  BIC: { syntax: 'BIC src, dst', does: 'bit clear: turn off in dst every bit that is on in src; the other bits stay', example: ['BIC #1, R0', 'R0 becomes even (bit 0 off)'], flags: '**0-' },
+  BIS: { syntax: 'BIS src, dst', does: 'bit set: turn on in dst every bit that is on in src; the other bits stay', example: ['BIS #IE, @#LKS', 'switch on the clock interrupt, keep the rest'], flags: '**0-' },
+  ADD: { syntax: 'ADD src, dst', does: 'add: dst becomes dst + src', example: ['ADD R1, R0', 'R0 = R0 + R1'], flags: '****' },
+  SUB: { syntax: 'SUB src, dst', does: 'subtract: dst becomes dst − src (src is taken away from dst)', example: ['SUB #2, R3', 'R3 = R3 − 2'], flags: '****' },
+  XOR: { syntax: 'XOR R, dst', does: 'exclusive or: flip in dst every bit that is on in register R. The source must be a register', example: ['XOR R1, R0', 'flip in R0 the bits that are on in R1'], flags: '**0-' },
+  CLR: { syntax: 'CLR dst', does: 'clear: set dst to 0', example: ['CLR R2', 'R2 is now 0'], flags: '0100' },
+  COM: { syntax: 'COM dst', does: 'complement: flip every bit of dst (0 becomes 1, 1 becomes 0)', example: ['COM R0', '0 becomes 177777'], flags: '**01' },
+  INC: { syntax: 'INC dst', does: 'increment: add 1 to dst', example: ['INC COUNT', 'the word at COUNT goes up by one'], flags: '***-' },
+  DEC: { syntax: 'DEC dst', does: 'decrement: take 1 from dst', example: ['DEC R4', 'R4 = R4 − 1; BNE loops until it is 0'], flags: '***-' },
+  NEG: { syntax: 'NEG dst', does: 'negate: change the sign of dst (5 becomes −5, −5 becomes 5)', example: ['NEG R0', '3 becomes 177775 (−3)'], flags: '****' },
+  TST: { syntax: 'TST dst', does: 'test: set the flags from dst without changing it, to ask "is it 0? is it negative?"', example: ['TST R0', 'then BEQ if R0 is 0, BMI if negative'], flags: '**00' },
+  ASR: { syntax: 'ASR dst', does: 'arithmetic shift right: move every bit one place right, so the value is halved (signed: the top bit stays). The bit that falls off goes into C', example: ['ASR R0', '12 becomes 5 (ten becomes five)'], flags: '****' },
+  ASL: { syntax: 'ASL dst', does: 'arithmetic shift left: move every bit one place left, so the value doubles. A 0 comes in at the right; the top bit goes into C', example: ['ASL R0', '5 becomes 12 (five becomes ten)'], flags: '****' },
+  ROR: { syntax: 'ROR dst', does: 'rotate right: like ASR, but the old C comes in at the top. With ROL, used to shift numbers bigger than a word', example: ['ROR R0', 'bit 0 into C, the old C into bit 15'], flags: '****' },
+  ROL: { syntax: 'ROL dst', does: 'rotate left: like ASL, but the old C comes in at the bottom', example: ['ROL R0', 'bit 15 into C, the old C into bit 0'], flags: '****' },
+  ADC: { syntax: 'ADC dst', does: 'add carry: add C (0 or 1) to dst. After ADD on the low words, carries into the high word', example: ['ADC R1', 'R1 = R1 + C'], flags: '****' },
+  SBC: { syntax: 'SBC dst', does: 'subtract carry: take C (0 or 1) from dst. After SUB on the low words, borrows from the high word', example: ['SBC R1', 'R1 = R1 − C'], flags: '****' },
+  SWAB: { syntax: 'SWAB dst', does: 'swap bytes: exchange the high and low byte of a word. The flags come from the new low byte', example: ['SWAB R0', '001402 becomes 001003'], flags: '**00' },
+  SXT: { syntax: 'SXT dst', does: 'sign extend: dst becomes 0 if N is clear, 177777 (−1) if N is set. Makes the high word of a signed 32-bit number', example: ['TST R0 · SXT R1', 'R1 = 177777 if R0 is negative, else 0'], flags: '-*0-' },
+  BR: { syntax: 'BR label', does: 'branch: always jump to label. Branches reach about 127 words either way; use JMP for further', example: ['BR LOOP', 'go back to LOOP'], flags: '----' },
+  BNE: { syntax: 'BNE label', does: 'branch if not equal: jump if the last result was not 0 (Z = 0)', example: ['DEC R4 · BNE LOOP', 'repeat until R4 reaches 0'], flags: '----' },
+  BEQ: { syntax: 'BEQ label', does: 'branch if equal: jump if the last result was 0 (Z = 1)', example: ['TST R0 · BEQ ZERO', 'jump to ZERO if R0 is 0'], flags: '----' },
+  BPL: { syntax: 'BPL label', does: 'branch if plus: jump if the last result was 0 or positive (N = 0)', example: ['TST R0 · BPL POS', 'jump if R0 ≥ 0'], flags: '----' },
+  BMI: { syntax: 'BMI label', does: 'branch if minus: jump if the last result was negative (N = 1)', example: ['TST R0 · BMI MINUS', 'jump if R0 < 0'], flags: '----' },
+  BVC: { syntax: 'BVC label', does: 'branch if overflow clear: jump if the last signed result fitted (V = 0)', example: ['ADD R1, R0 · BVC FITS', 'jump if the sum fitted'], flags: '----' },
+  BVS: { syntax: 'BVS label', does: 'branch if overflow set: jump if the last signed result was too big or too small (V = 1)', example: ['ADD R1, R0 · BVS BAD', 'jump if the sum overflowed'], flags: '----' },
+  BCC: { syntax: 'BCC label', does: 'branch if carry clear: jump if C = 0', example: ['ASR R0 · BCC EVEN', 'jump if R0 was even'], flags: '----' },
+  BCS: { syntax: 'BCS label', does: 'branch if carry set: jump if C = 1 (a carry, a borrow or a 1 shifted out)', example: ['ASR R0 · BCS ODD', 'jump if R0 was odd'], flags: '----' },
+  BGE: { syntax: 'BGE label', does: 'branch if greater or equal (signed numbers) after CMP A, B: jump if A ≥ B', example: ['CMP R0, #5 · BGE BIG', 'jump if R0 ≥ 5'], flags: '----' },
+  BLT: { syntax: 'BLT label', does: 'branch if less than (signed) after CMP A, B: jump if A < B', example: ['CMP R0, #5 · BLT SMALL', 'jump if R0 < 5'], flags: '----' },
+  BGT: { syntax: 'BGT label', does: 'branch if greater than (signed) after CMP A, B: jump if A > B', example: ['CMP R0, #5 · BGT BIG', 'jump if R0 > 5'], flags: '----' },
+  BLE: { syntax: 'BLE label', does: 'branch if less or equal (signed) after CMP A, B: jump if A ≤ B', example: ['CMP R0, #5 · BLE SMALL', 'jump if R0 ≤ 5'], flags: '----' },
+  BHI: { syntax: 'BHI label', does: 'branch if higher (unsigned: no negative numbers) after CMP A, B: jump if A > B', example: ['CMP R0, #7 · BHI FAR', 'jump if R0 > 7 (177777 counts as big)'], flags: '----' },
+  BLOS: { syntax: 'BLOS label', does: 'branch if lower or same (unsigned) after CMP A, B: jump if A ≤ B', example: ['CMP R0, #7 · BLOS NEAR', 'jump if R0 ≤ 7'], flags: '----' },
+  BHIS: { syntax: 'BHIS label', does: 'branch if higher or same (unsigned) after CMP A, B: jump if A ≥ B. The same instruction as BCC', example: ['CMP R0, #7 · BHIS FAR', 'jump if R0 ≥ 7'], flags: '----' },
+  BLO: { syntax: 'BLO label', does: 'branch if lower (unsigned) after CMP A, B: jump if A < B. The same instruction as BCS', example: ['CMP R0, #7 · BLO NEAR', 'jump if R0 < 7'], flags: '----' },
+  JMP: { syntax: 'JMP dst', does: 'jump: continue at the address of dst, any distance away. Not to a register', example: ['JMP START', 'continue at START'], flags: '----' },
+  JSR: { syntax: 'JSR R, dst', does: 'jump to subroutine: remember where to come back to, then jump to dst. Almost always JSR PC, NAME (the return address goes on the stack)', example: ['JSR PC, STEP', 'call the ROM routine STEP'], flags: '----' },
+  RTS: { syntax: 'RTS R', does: 'return from subroutine: go back to just after the JSR that called it. RTS PC ends a routine called with JSR PC', example: ['RTS PC', 'back to the caller'], flags: '----' },
+  SOB: { syntax: 'SOB R, label', does: 'subtract one and branch: take 1 from register R and jump back to label unless R is now 0. A counted loop in one instruction (label must be before it, within 63 words)', example: ['MOV #4, R3 · 1$: INC R0 · SOB R3, 1$', 'the loop runs 4 times: R0 goes up by 4'], flags: '----' },
+  TRAP: { syntax: 'TRAP n', does: 'system call: ask the firmware for service number n (0–377). The firmware\'s handler at vector 034 decides what it does', example: ['TRAP 1', 'call firmware service 1'], flags: '****' },
+  EMT: { syntax: 'EMT n', does: 'emulator trap through vector 030. Reserved: nothing on the rover uses it yet', example: ['EMT 0', 'jumps to the 030 handler'], flags: '****' },
+  BPT: { syntax: 'BPT', does: 'breakpoint: stop here and send a register dump to Comms, to see what your code was doing', example: ['BPT', 'stop and show the registers'], flags: '****' },
+  IOT: { syntax: 'IOT', does: 'I/O trap through vector 020. Reserved', example: ['IOT', 'jumps to the 020 handler'], flags: '****' },
+  RTI: { syntax: 'RTI', does: 'return from interrupt: the last instruction of an interrupt or trap handler. Takes PC and PSW back off the stack, so the interrupted code carries on', example: ['RTI', 'end of a handler'], flags: '****' },
+  RTT: { syntax: 'RTT', does: 'return from trace trap: like RTI, but when single-stepping, the next trace trap waits one instruction', example: ['RTT', 'end of a trace handler'], flags: '****' },
+  WAIT: { syntax: 'WAIT', does: 'sleep until an interrupt arrives. The rest of the tick costs no cycles, so a firmware that waits is cheap', example: ['WAIT', 'sleep until the next clock tick'], flags: '----' },
+  HALT: { syntax: 'HALT', does: 'stop. In a program: the program ends and R0 is its result. In the firmware: the whole CPU stops', example: ['MOV #1, R0 · HALT', 'end the program with result 1'], flags: '----' },
+  RESET: { syntax: 'RESET', does: 'put every device back to idle (each CSR shows DONE, interrupts off). Firmware only: in a program it does nothing', example: ['RESET', 'stop all devices'], flags: '----' },
+  NOP: { syntax: 'NOP', does: 'no operation: does nothing, takes one cycle', example: ['NOP', 'nothing'], flags: '----' },
+  CLC: { syntax: 'CLC', does: 'clear the carry flag (C = 0). Flag instructions can be combined with !', example: ['CLC!CLV', 'clear C and V at once'], flags: '---0' },
+  CLV: { syntax: 'CLV', does: 'clear the overflow flag (V = 0)', example: ['CLV', 'V = 0'], flags: '--0-' },
+  CLZ: { syntax: 'CLZ', does: 'clear the zero flag (Z = 0)', example: ['CLZ', 'Z = 0'], flags: '-0--' },
+  CLN: { syntax: 'CLN', does: 'clear the negative flag (N = 0)', example: ['CLN', 'N = 0'], flags: '0---' },
+  CCC: { syntax: 'CCC', does: 'clear all four condition flags', example: ['CCC', 'N Z V C = 0'], flags: '0000' },
+  SEC: { syntax: 'SEC', does: 'set the carry flag (C = 1)', example: ['SEC', 'C = 1'], flags: '---1' },
+  SEV: { syntax: 'SEV', does: 'set the overflow flag (V = 1)', example: ['SEV', 'V = 1'], flags: '--1-' },
+  SEZ: { syntax: 'SEZ', does: 'set the zero flag (Z = 1)', example: ['SEZ', 'Z = 1'], flags: '-1--' },
+  SEN: { syntax: 'SEN', does: 'set the negative flag (N = 1)', example: ['SEN', 'N = 1'], flags: '1---' },
+  SCC: { syntax: 'SCC', does: 'set all four condition flags', example: ['SCC', 'N Z V C = 1'], flags: '1111' },
+  MUL: { syntax: 'MUL src, R', does: 'multiply R by src. With an odd R the result goes back into R; with an even R the 32-bit product fills R (high word) and R+1 (low word). Needs the EIS upgrade: until then use JSR PC, MUL16', example: ['MUL #3, R1', 'R1 = R1 × 3 (EIS only)'], flags: '**0*' },
+  DIV: { syntax: 'DIV src, R', does: 'divide the 32-bit number in R, R+1 by src: quotient in R, remainder in R+1. Needs EIS: until then use JSR PC, DIV16', example: ['DIV #10, R0', 'R0, R1 ÷ 8 (EIS only)'], flags: '****' },
+  ASH: { syntax: 'ASH src, R', does: 'shift R by src places at once: positive left, negative right. Needs EIS: until then repeat ASL / ASR', example: ['ASH #3, R0', 'R0 × 8 (EIS only)'], flags: '****' },
+  ASHC: { syntax: 'ASHC src, R', does: 'like ASH, but shifts the 32-bit number in R, R+1. Needs EIS', example: ['ASHC #-1, R0', 'R0, R1 ÷ 2 (EIS only)'], flags: '****' },
 };
 
 const GROUPS: [string, string[]][] = [
-  ['Double operand', ['MOV', 'CMP', 'BIT', 'BIC', 'BIS', 'ADD', 'SUB', 'XOR']],
-  ['Single operand', ['CLR', 'COM', 'INC', 'DEC', 'NEG', 'TST', 'ASR', 'ASL', 'ROR', 'ROL', 'ADC', 'SBC', 'SWAB', 'SXT']],
-  ['Branches (to a label within 127 words)', ['BR', 'BNE', 'BEQ', 'BPL', 'BMI', 'BVC', 'BVS', 'BCC', 'BCS', 'BGE', 'BLT', 'BGT', 'BLE', 'BHI', 'BLOS', 'BHIS', 'BLO']],
+  ['Two operands: copy, compare, arithmetic, bits (src first, then dst)', ['MOV', 'CMP', 'BIT', 'BIC', 'BIS', 'ADD', 'SUB', 'XOR']],
+  ['One operand: change or test one value', ['CLR', 'COM', 'INC', 'DEC', 'NEG', 'TST', 'ASR', 'ASL', 'ROR', 'ROL', 'ADC', 'SBC', 'SWAB', 'SXT']],
+  ['Branches: jump to a label if a flag says so (within 127 words)', ['BR', 'BNE', 'BEQ', 'BPL', 'BMI', 'BVC', 'BVS', 'BCC', 'BCS', 'BGE', 'BLT', 'BGT', 'BLE', 'BHI', 'BLOS', 'BHIS', 'BLO']],
   ['Jumps and subroutines', ['JMP', 'JSR', 'RTS', 'SOB']],
-  ['Traps and control', ['TRAP', 'EMT', 'BPT', 'IOT', 'RTI', 'RTT', 'WAIT', 'HALT', 'RESET', 'NOP']],
-  ['Flags', ['CLC', 'CLV', 'CLZ', 'CLN', 'CCC', 'SEC', 'SEV', 'SEZ', 'SEN', 'SCC']],
+  ['Traps and control: system calls, interrupts, stopping', ['TRAP', 'EMT', 'BPT', 'IOT', 'RTI', 'RTT', 'WAIT', 'HALT', 'RESET', 'NOP']],
+  ['Setting flags by hand', ['CLC', 'CLV', 'CLZ', 'CLN', 'CCC', 'SEC', 'SEV', 'SEZ', 'SEN', 'SCC']],
   ['EIS (an upgrade, not installed yet: these trap to 010)', ['MUL', 'DIV', 'ASH', 'ASHC']],
 ];
 
@@ -174,14 +175,20 @@ function instructionsHtml(): string {
   const byteForm = (n: string) => names.has(`${n}B`);
   const fl = (f: string) => `<code class="flags4" title="N Z V C: * by the result, 0 / 1 cleared / set, - unchanged">${f}</code>`;
   return (
-    `<p class="small dim">src and dst can be any addressing mode (Modes tab). <b>B</b>: a byte form exists (MOVB…). Flags N Z V C: * set from the result, 0 / 1 cleared / set, - unchanged.</p>` +
+    `<p class="small">An instruction is a name and up to two <b>operands</b>: <code>src</code> (the source, read) and <code>dst</code>
+    (the destination, changed), always in that order: <code>MOV #5, R0</code> copies 5 into <code>R0</code>. An operand can be a
+    register, a number (<code>#5</code>), a memory word (<code>COUNT</code>) or a device register (<code>@#BAT</code>): see the Modes tab.
+    <code>R</code> means a register only. Most instructions also set the <b>flags</b> (Flags tab) that branches test.</p>
+    <p class="small dim">Columns: what to write (<b>B</b>: a byte version exists, like <code>MOVB</code>); what it does, with an example;
+    the flags N Z V C (<code>*</code> set from the result, <code>0</code> / <code>1</code> always cleared / set, <code>-</code> unchanged);
+    the machine code in octal. Examples joined by · are separate lines. Numbers are octal: <code>#10</code> is eight.</p>` +
     GROUPS.map(
       ([title, ops]) =>
         `<h4>${esc(title)}</h4><table>${ops
           .map((n) => {
             const d = INSTR_DOC[n];
             const op = INSTRUCTIONS.find((i) => i.name === n);
-            return `<tr><td><code>${esc(d.syntax)}</code>${byteForm(n) ? ' <small class="dim">B</small>' : ''}</td><td class="small">${esc(d.does)}</td><td class="dim">${fl(d.flags)}</td><td class="dim small">${op ? o(op.opcode) : ''}</td></tr>`;
+            return `<tr><td><code>${esc(d.syntax)}</code>${byteForm(n) ? ' <small class="dim">B</small>' : ''}</td><td class="small">${esc(d.does)}<br><span class="dim">e.g. <code>${esc(d.example[0])}</code> ; ${esc(d.example[1])}</span></td><td class="dim">${fl(d.flags)}</td><td class="dim small">${op ? o(op.opcode) : ''}</td></tr>`;
           })
           .join('')}</table>`,
     ).join('')
