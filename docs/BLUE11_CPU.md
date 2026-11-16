@@ -1,9 +1,10 @@
 # M15 — Blue-11: the CPU (design, built)
 
-Status: **design approved with the decisions of §0** (2026-11-15). Slice 2, the library, is
-built (§14); slice 3, Rover's bus, devices, gate and interrupts, is built behind the engine
-switch (§14.4); slice 6 made it the only core; slice 4, the ROM, default firmware and lessons, is built and
-the cycle budget measured (§14.5): Mk-I 64, decided by the owner.
+Status: **built; M15 complete** (slice 6, 2026-11-16). Design approved with the decisions of
+§0 (2026-11-15). Slice 2 built the library (§14); slice 3 Rover's bus, devices, gate and
+interrupts (§14.4); slice 4 the ROM, default firmware and lessons, the cycle budget measured
+(§14.5, Mk-I 64); slice 5 the UI (§14.6); slice 6 switched the game over, deleted Rover-ASM
+and named the computer **Blue-11** (§14.7).
 Companion document: [`BLUE11_IO.md`](BLUE11_IO.md), which covers the device
 registers, the I/O page and interrupts from devices.
 
@@ -334,10 +335,10 @@ shift away (64 px × 2 bpp = 16 bytes):
 
 The image window grows to 4 KB. To keep sending a photo about as long as today, the
 downlink and recorder scale too (**approved by the owner, 2026-11-15**; built on the Blue-11
-core as `BLUE11.linkScale` / `recorderScale` = 2 on the chassis values): Mk-I link 4 B/tick
+core as a ×2 scale, folded into the chassis values in slice 6): Mk-I link 4 B/tick
 (amplifier upgrade 6), recorder 2 KB (upgrades 4 / 8 KB). A base photo, 1080 B on air as
-`SNDIMG` messages, then takes about 270 ticks at full signal. Review page: `preview.html?photos2x=1`. Built in the game with the switch-over
-(slice 6), together with little-endian photos; the Rover-ASM game keeps today's formats.
+`SNDIMG` messages, then takes about 270 ticks at full signal. Review page: `preview.html?photos2x=1`. In the game since the switch-over
+(slice 6), together with little-endian photos.
 Software compression (run-length coding before `SNDIMG`) becomes a worthwhile later lesson.
 
 ## 7. Firmware, program and the call gate
@@ -864,6 +865,33 @@ Decisions taken while building it:
    from the comments in the ROM source, symbols, dump formats); the instruction descriptions
    and flags are a table in `ReferenceBlue11.ts` that a test checks against the instruction set.
 
+### 14.7 Slice 6 as built: the switch-over (owner may veto)
+
+* **One core.** `new SimulationEngine()` always runs the machine; the `cpu` option,
+  its getter, the `?cpu=` URL and the Admin computer switch are gone. `Unit.cpu` (`CpuStatus`)
+  carries power, halts and faults; `Unit.machine` everything else.
+* **Deleted:** `src/core/vm/` (compiler, VM, ISA), `migrateSource.ts`, the M14 `rom.ts` and
+  `programs.ts` (the Blue-11 one took its name), `ports.ts` (the I/O page reads the world
+  itself through `IoContext`), `roverAsmLanguage.ts`, `listing.ts`, the Rover-ASM Reference
+  (its shell, Tools and Image tabs stay, rewritten), the Rover-ASM half of `toolchain.ts` and
+  every Rover-ASM branch in the UI, dump kinds 1–4, the tests that covered only Rover-ASM.
+  The game-rule tests were ported to Blue-11 code (`tests/helpers/rover.ts`).
+* **Balance folded in:** the chassis carries the Blue-11 numbers (64 cycles, 2 KB recorder,
+  4 B/tick link); `cyclesPerRoverCycle`, `linkScale`, `recorderScale` are gone. Upgrades:
+  `CPU_96` / `CPU_128`, `REC_4K` / `REC_8K`, `LINK_6`; the flash, RAM, register and trace
+  buffer upgrades left (they had nothing to act on). Memory boards and EIS stay designed,
+  not in the catalogue.
+* **Saves reset** (decision 3): `SAVE_VERSION` 21 and no migrations; an older save raises
+  `OldSaveError`, the game says so and starts a new world (the autosave is cleared).
+* **Photos little-endian** (decision 18): the first pixel of a byte in its low bits; the
+  ROM's `PLOT` shifts by `(x MOD 4) × 2`. The lessons did not depend on the order.
+* **Name (owner, 2026-11-16):** the computer is the **Blue-11**, its language **Blue-11
+  assembly**; the trademarked product names are not used as names. the library folder became
+  `src/blue11/`, this document and the I/O one `BLUE11_*.md`. The library README and SPEC §5
+  say once, factually, which instruction set it implements.
+* `flagAnomaly` checks completeness against the photo's own size (`productSize`), not the
+  M9 frame size.
+
 ## 15. Plan (slices)
 
 1. **Design** (this document and [`BLUE11_IO.md`](BLUE11_IO.md)): ✅ reviewed; decisions in §0.
@@ -883,7 +911,7 @@ Decisions taken while building it:
    starting point. ✅ built (§14.6), in review.
 6. **Switch over**: delete Rover-ASM (`Compiler.ts`, `RoverVM.ts`, `isa.ts`,
    `migrateSource.ts`, the old ROM), reset saves, little-endian photos, rewrite SPEC §5
-   and CLAUDE.md.
+   and CLAUDE.md. ✅ built (§14.7), with the rename to Blue-11.
 
 ## 16. Open questions
 

@@ -1,6 +1,6 @@
 # Rover — working notes for contributors and AI sessions
 
-Browser sandbox game: program a planetary rover in Rover-ASM. Vite + TypeScript +
+Browser sandbox game: program a planetary rover's computer, the Blue-11, in Blue-11 assembly. Vite + TypeScript +
 Three.js + CodeMirror 6, Vitest for the core.
 
 ## Start here
@@ -18,7 +18,7 @@ Three.js + CodeMirror 6, Vitest for the core.
 
 ## Commands
 ```bash
-npm run dev        # dev server (game; /preview.html assets; /simulator.html PDP-11 simulator)
+npm run dev        # dev server (game; /preview.html assets; /simulator.html Blue-11 simulator)
 npm test           # vitest (headless core)
 npm run typecheck
 npm run build      # typecheck + production bundle in dist/
@@ -31,15 +31,19 @@ npm run build      # typecheck + production bundle in dist/
 - The renderer (`src/render/`) and UI (`src/ui/`) only **read** sim state and listen to
   `EventBus` events; they never mutate the simulation (admin buttons go through
   `engine.admin` / `engine.cheats`).
-- All gameplay numbers live in `src/core/balance.ts` and the tile registry.
-- New tiles: `WorldRegistry` (constName auto-becomes a language constant).
-  New ports: `src/core/ports.ts` (auto-appears in compiler and Reference tab). Numbers 0–63
-  are taken since M14: reuse the retired 30, 33, 34 once (owner decision), then the extended
-  operand (`ASSEMBLER_CORE.md` §9).
-  New instructions: `src/core/vm/isa.ts` signature + opcode tables, `RoverVM.ts`.
-  New devices (M14): a start port in `ports.ts` (`DevicePort`), its logic in
-  `SimulationEngine.device()`, progress in `Unit.deviceLeft()`, the result in `Unit.results`
-  (`WAIT_DEVICE` maps the port), a driver routine in `src/core/rom.ts` (+ `ROM_ARGS`).
+- All gameplay numbers live in `src/core/balance.ts` (the computer's memory map and sizes in
+  `BLUE11`) and the tile registry.
+- New tiles: `WorldRegistry` (`shortName`, six characters at most, auto-becomes a predefined
+  symbol).
+  New I/O registers: `src/core/machine/iopage.ts` (they become predefined symbols and appear
+  in Reference → I/O page; six-character DEC names, `symbols.ts` tests each one).
+  New devices: a device block in `iopage.ts` (`DEVICE_BLOCKS`, CSR with `GO` / `FN` / `IE` /
+  `DONE` / `ERR`, an `xxER` register), its logic in `SimulationEngine.device()`, progress in
+  `Unit.deviceLeft()`, the result in `Unit.results`, a driver routine in
+  `src/core/machine/rom.ts` (add it to `ROM_ROUTINES`: its comment becomes Reference → ROM).
+  New instructions: in the library (`src/blue11/isa.ts`, `cpu.ts`; follow
+  `src/blue11/AGENTS.md`) and a row in `INSTR_DOC` in `src/ui/ReferenceBlue11.ts` (a test checks).
+  New system names (codes, bits, constants): `src/core/machine/names.ts`.
   New tools: `src/core/tools.ts` (check/complete) + mount in a chassis in `balance.ts`.
   New goals: `GOALS` in `src/core/EventDirector.ts`.
   New world events: `EVENT_DEFS` in `src/core/events.ts` (with prerequisites; add a
@@ -47,40 +51,44 @@ npm run build      # typecheck + production bundle in dist/
   Repair materials: `repairs` on the tile in `WorldRegistry`.
   New upgrades: `UPGRADES` in `src/core/upgrades.ts` (modify the rover's own `chassis`;
   never the shared `CHASSIS_MK1`).
-- `src/blue11/` (M15) is a **standalone library** (CPU, assembler, disassembler): nothing in
-  it may import from the game (a test enforces it); Rover-specific things (memory map,
-  I/O page, gate, ROM) live outside it. API: `src/blue11/README.md`; rules for changing
-  it: `src/blue11/AGENTS.md`. `simulator.html`
-  (`src/simulator/`) is its standalone page; its examples are tested.
-- M15 slice 3: Rover's side of the PDP-11 core lives in `src/core/machine/` (I/O page
-  `iopage.ts`: new registers go there and become predefined symbols, six characters at
-  most; bus, gate and interrupts `RoverMachine.ts`; boot ROM `rom.ts`). The engine uses it
-  only with `new SimulationEngine({ cpu: 'pdp11' })` until slice 6.
-- M15 slice 4: the ROM's routines (`ROM_ROUTINES` in `src/core/machine/rom.ts`) become
-  predefined symbols; system names live in `names.ts`. Shipped PDP-11 code (default firmware,
-  lessons) is in `src/core/programs.ts`, next to the Rover-ASM `programs.ts` until
-  slice 6; every template there must assemble and is run by `tests/blue11-programs.test.ts`.
-- M15 slice 5: the UI serves both cores through `src/ui/toolchain.ts` (`engine.pdp11` picks);
-  a PDP-11 world starts from Admin → *New PDP-11 world* or `?cpu=pdp11`. The PDP-11 Reference is
-  `src/ui/ReferenceBlue11.ts` (a new instruction needs a row in `INSTR_DOC`; a test checks). UI code
-  reads the machine only through `registers`, `stackWords`, `peek` and `ioSnapshot` (never
-  `read`: `TICKL` has a side effect).
+- `src/blue11/` is a **standalone library** (CPU, assembler, disassembler): nothing in it may
+  import from the game (a test enforces it); Rover-specific things (memory map, I/O page,
+  gate, ROM) live outside it. API: `src/blue11/README.md`; rules for changing it:
+  `src/blue11/AGENTS.md`. `simulator.html` (`src/simulator/`) is its standalone page; its
+  examples are tested.
+- Rover's side of the computer lives in `src/core/machine/`: the I/O page `iopage.ts`, the
+  bus, protection, gate, interrupts and saves `RoverMachine.ts`, the boot ROM and routines
+  `rom.ts` (`ROM_ROUTINES` become predefined symbols), system names `names.ts`, all
+  predefined symbols `symbols.ts`. Design: `docs/BLUE11_CPU.md`, `docs/BLUE11_IO.md`.
+- The UI reaches the computer through `src/ui/toolchain.ts` (language, assembling, templates,
+  listing). UI code reads the machine only through `registers`, `stackWords`, `peek` and
+  `ioSnapshot` (never `read`: `TICKL` has a side effect).
 - Shapes are drawn only in `src/render/VectorFactory.ts` (keeps M8 visual work local).
 - New or changed visuals go into `preview.html` (`src/preview/`) first; the owner reviews
   screenshots before they replace what the game renders.
-- Shipped firmware (`src/core/programs.ts`) must compile and is covered by tests.
+- Shipped code (`src/core/programs.ts`: default firmware, firmware templates, lessons) must
+  assemble, fit its region and run to its expected result: `tests/blue11-programs.test.ts`.
+- Photos are packed little-endian (the first pixel in a byte's low bits; `src/core/photos.ts`).
 
 - **New simulation state must be saved:** add it to `src/core/SaveManager.ts`. The
   round-trip test (save mid-run, load, continue == uninterrupted run) catches omissions
-  that affect the simulation. Bump `SAVE_VERSION` and add a migration for format changes.
+  that affect the simulation. Bump `SAVE_VERSION` and add a migration for format changes
+  (v21 started over: saves from before the Blue-11 raise `OldSaveError`, no migrations).
 - Storyteller randomness only through `EventDirector.rng` (seeded, saved).
 
 ## Gotchas
-- Names are case-insensitive: a label `beat` clashes with `CONST BEAT`.
-- Actuator state (solar array, dish, lights) is physical and survives reboots;
+- **Numbers are octal** in Blue-11 assembly: `14` is twelve, `14.` is fourteen. Easy to get
+  wrong in tests and templates.
+- Names are case-insensitive and at most six characters; predefined names (registers, ROM
+  routines like `STEP`, `SCAN`, `SLEEP`, `PLOT`, codes like `E.BUSY`) are reserved: a label
+  `step:` is an assembler error.
+- ROM routines take R0, R1 (R2 kept) and answer in R0 with the flags set; they may change R0
+  and R1. Tests keep their results in R2–R5.
+- Actuator state (solar array, dish, lights, display) is physical and survives reboots;
   firmware must not assume a fresh state.
-- M14: there are no hardware instructions. Device start writes set `@STATUS` (accepted?),
-  `WAIT @port` on a device copies its result (how it ended); other instructions don't
-  (except `DIV`/`MOD` by 0 and `CALL PROGRAM`).
-- ROM routine names (`STEP`, `SCAN`, `SLEEP`, `PLOT`, …), `PROGRAM` and `WAIT` are reserved:
-  a label `step:` or `wait:` is a compile error. ROM helpers may change `r0` and `r1`.
+- A device start is refused or accepted in the same instruction (`ERR` and `xxER`); there is
+  no shared status. Wait for `DONE`, then read `ERR`.
+- A hard reboot takes 3 ticks of boot ROM before the firmware's first instruction: tests
+  that count ticks use `boot()` or wait for a condition (`tests/helpers/rover.ts`).
+- I/O registers are unsigned except the bearings, `HDG` and the signed telemetry (`X`, `Y`,
+  `TEMP`, `SUNEL`, `DROPX`, `DROPY`): writing −5 to a lamp clamps 177773 to 4.

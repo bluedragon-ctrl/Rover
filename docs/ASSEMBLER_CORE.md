@@ -1,5 +1,9 @@
 # M14 — Assembler core (design draft)
 
+> **Historical (M14).** This design is for Rover-ASM, which M15 slice 6 replaced with the
+> Blue-11 ([`BLUE11_CPU.md`](BLUE11_CPU.md), SPEC §5). Kept for the reasoning behind the device
+> model, which the Blue-11 kept.
+
 Status: **design approved by the owner** (2026-11-14, §12). **Slice 2 (memory, §7) is
 built** (SPEC §5.8): RAM, `VAR`, brackets, `DATA` / `LDF`, the data address space, Mk-I
 512 B Flash / 64 B RAM, upload 6 energy per byte, save v17. **Slice 3 is built** (SPEC
