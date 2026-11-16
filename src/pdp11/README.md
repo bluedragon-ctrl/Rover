@@ -20,7 +20,7 @@ test fails if a block here isn't in it. If you change an example, change both.
 8. [Host recipes](#host-recipes): keyboard, coverage, system calls, breakpoints, snapshots, disassembly
 9. [Disassembler, ISA tables, CodeMirror](#disassembler-isa-tables-codemirror)
 10. [Pitfalls](#pitfalls)
-11. [Working on the library](#working-on-the-library)
+11. [Working on the library](#working-on-the-library) (→ `AGENTS.md`)
 
 ## Which layer to use
 
@@ -113,20 +113,52 @@ Expressions are evaluated strictly left to right (no precedence; `< >` groups) w
 `(R)+`, `-(R)`, `X(R)`, `@`-forms of each, `#n`, `@#addr`, and a bare `addr` (PC-relative).
 Registers `R0`–`R7`, `SP`, `PC`.
 
-**Directives:** `.WORD .BYTE .ASCII .ASCIZ .BLKW .BLKB .EVEN .ODD .END` (`.TITLE` and
-other listing directives are ignored). Not supported: macros, conditional assembly,
-`.PSECT`, linking.
+**Directives:** `.WORD .BYTE .ASCII .ASCIZ .BLKW .BLKB .EVEN .ODD .END`. The listing
+directives `.TITLE .SBTTL .IDENT .ENABL .DSABL .LIST .NLIST .PAGE` are accepted and ignored.
 
-**MACRO-11 behaviours that surprise newcomers (all supported):**
+### MACRO-11 compatibility
+
+A **subset of DEC's MACRO-11** (RT-11 / RSX-11) with the same syntax and meaning: programs
+inside the subset assemble on a real MACRO-11 too, and listings read the same. Each claim
+is tested in `tests/pdp11/macro11.test.ts` and `macro11-compat.test.ts`.
+
+**The same as MACRO-11:**
+- Statement format `label: OPCODE operands ; comment`, case-insensitive, commas with or
+  without spaces.
+- Octal by default, `10.` decimal, `^D ^O ^B`, `^C`, `'A`, `"AB`.
+- Strict left-to-right evaluation, no precedence (`1+2*3` is 9), `< >` groups.
+- `NAME = expr`, `NAME = %n`, the location counter `.` (`. = . + 10`, `BR .+4`). `LABEL::`
+  and `NAME == expr` (the global forms) are accepted as `:` and `=`; there is no linker.
+- Local labels `n$` between two ordinary labels; all eight addressing modes with the PC
+  forms `#n`, `@#a`, `LABEL`, `@LABEL`.
+- `.END expr` sets the start address and ends the source.
 - An expression where the instruction goes is an implicit `.WORD`: `TABLE: CMD1, CMD2`,
-  `1234`. But an instruction name first on a line is always the instruction, and a name
+  `1234`. An instruction name first on a line is always the instruction, and a name
   followed by operands (`MOVV R0, R1`) is "unknown instruction", not data.
 - Instruction names are symbols whose value is their opcode: `MOV #NOP, PATCH` stores
-  000240. A user symbol with the same name wins, with a warning.
-- Flag operations combine with `!`: `CLC!CLV` = 000243 (the disassembler writes them this
-  way). **Deliberate difference:** mixing clears and sets (`CLC!SEV`) is an error; MACRO-11
-  would quietly turn it into a set.
-- `SOB` only jumps backwards (1–63 words); branches reach −128…+127 words.
+  000240. A user symbol of the same name wins (with a warning).
+- Flag operations combine with `!`: `CLC!CLV` = 000243 (the disassembler writes them so).
+- `SOB` jumps backwards 1–63 words; branches reach −128…+127 words.
+
+**Different from MACRO-11 (deliberately):**
+- **Names longer than six characters are an error** with `names: 'dec'`. MACRO-11 keeps
+  the first six silently, so `COUNTER1` and `COUNTER2` would be one symbol there.
+  `names: 'long'` allows any length and `_`, which MACRO-11 does not.
+- **Values that don't fit are errors** (`.BYTE 400`, a branch out of range, `TRAP 400`);
+  MACRO-11 flags them in the listing (`T`, `A`) and assembles anyway.
+- **Mixing clear and set flag operations** (`CLC!SEV`) is an error; MACRO-11 would quietly
+  make it a set.
+- **Predefined symbols** (`options.symbols`) stand in for the system macro library
+  (`.MCALL`): a label with such a name is an error, `NAME = expr` may reassign one.
+- **One absolute section** from `origin`: no relocation, no object file; the output is the
+  memory image.
+- Errors and warnings are values with line and column, not listing flags. `^X` hex exists
+  only with the `hex` option.
+
+**Not supported** (always an error, never silently ignored): macros (`.MACRO .MCALL .IRP
+.REPT .NARG`), conditional assembly (`.IF .IIF`), sections and linking (`.PSECT .CSECT
+.ASECT .GLOBL .LIMIT`), `.RADIX`, `.RAD50` and `^R`, `.REM`, `.PRINT`, floating point
+(`.FLT2 .FLT4`, FP11 instructions), and the instructions missing from the CPU (below).
 
 **Warnings** today: a value cut to 16 bits in `NAME = expr`; a symbol named like an
 instruction.
@@ -195,11 +227,61 @@ off, `JMP`/`JSR` to a register), `'bpt' 'trace'` (14), `'iot'` (20), `'emt' 'tra
 34, `detail` = the number), `'interrupt'`. (`'reserved'` is in the type but not produced.)
 Constants: `VEC` (trap vectors), `PSW` (bit masks), `PSW_ADDRESS` (`177776`).
 
-**Behaviour matches the real machine:** `MOVB` to a register sign-extends; byte
-autoincrement/decrement on SP or PC steps by 2; writes to the PSW can't set T; `RTI`
-with T set traps at once, `RTT` one instruction later; `RESET` calls `bus.reset()`;
-`JSR PC, @(SP)+` pops the target before pushing (11/40 order). Not implemented: `MARK`,
-`SPL`, `MFPI`/`MTPI`, `MFPS`/`MTPS`, floating point, memory management.
+**Instruction set** (`INSTRUCTIONS`, `BY_NAME`, `decodeOp(word)` describe each one):
+
+| Group | Instructions |
+| :--- | :--- |
+| Double operand | `MOV(B) CMP(B) BIT(B) BIC(B) BIS(B) ADD SUB XOR` |
+| Single operand | `CLR(B) COM(B) INC(B) DEC(B) NEG(B) TST(B) ASR(B) ASL(B) ROR(B) ROL(B) ADC(B) SBC(B) SWAB SXT` |
+| Branches | `BR BNE BEQ BPL BMI BVC BVS BCC BCS BGE BLT BGT BLE BHI BLOS BHIS BLO` |
+| Jumps, subroutines | `JMP JSR RTS SOB` |
+| Traps, control | `TRAP EMT BPT IOT RTI RTT WAIT HALT RESET NOP` |
+| Flags | `CLC CLV CLZ CLN CCC SEC SEV SEZ SEN SCC`, combinable (`CLC!CLV`) |
+| EIS (option) | `MUL DIV ASH ASHC` |
+
+**Cycle model `per-bus-access`:** every trip to memory costs 1 cycle: the instruction
+word, each extra word (immediate, address, index), each operand read and each operand
+write. Work inside the CPU is free, except EIS: `MUL` +4, `DIV` +8, `ASH`/`ASHC` +1.
+
+| Operand | As source | As destination |
+| :--- | :--- | :--- |
+| `R` | 0 | 0 |
+| `(R)`, `(R)+`, `-(R)` | 1 | read and/or write |
+| `@(R)+`, `@-(R)` | 2 (pointer + read) | 1 + read and/or write |
+| `X(R)`, `LABEL` | 2 (index word + read) | 1 + read and/or write |
+| `@X(R)`, `@LABEL` | 3 | 2 + read and/or write |
+| `#n` | 1 | – |
+| `@#a` | 2 | 1 + read and/or write |
+
+A destination is only written by `MOV(B)`, `CLR(B)`, `SXT`; only read by `CMP(B)`,
+`BIT(B)`, `TST(B)`; read and written by the rest. Examples (tested in
+`readme-examples.test.ts`): `MOV R1, R2` 1, `MOV #5, R0` 2, `CLR (R1)` 2, `MOVB (R1)+,
+(R2)+` 3, `MOV @2(R1), R0` 4, `INC @#COUNT` 4; branches, `SOB`, `WAIT`, `HALT` 1;
+`JSR PC, X` 3, `RTS PC` 2, `RTI` 3; interrupt entry 4, `TRAP` 5 (1 + entry).
+
+**Behaviour matches the real machine:** `MOVB` to a register sign-extends (other byte
+instructions leave the high byte alone); byte autoincrement/decrement on SP or PC steps
+by 2; writes to the PSW can't set T; `RTI` with T set traps at once, `RTT` one instruction
+later; `RESET` calls `bus.reset()`; `JSR PC, @(SP)+` pops the target before pushing
+(11/40 order).
+
+**Where it departs from the real machine:** `JMP`/`JSR` to a register traps to 10 (the
+models differed; 10 is the illegal-instruction vector). Not implemented: `MARK`, `SPL`,
+`MFPI`/`MTPI`, `MFPS`/`MTPS`, floating point, memory management. With `protectModes` the
+mode rules are the PDP-11/45's, without its memory management: protect memory yourself by
+refusing writes in `bus.write`.
+
+**Hosting the CPU yourself** (your own `Bus`, as Rover does):
+- Give `run` a budget per step of your program (a frame, a tick) and subtract
+  `RunResult.cycles`: it may overshoot by one instruction.
+- You decide when devices interrupt: call `cpu.interrupt` from your own device logic,
+  e.g. at the start of a frame. A DEC-style register has `DONE` in bit 7 and `IE` in bit
+  6, so programs can test DONE with `TSTB`/`BPL`; `DL11` and `KW11L` in `devices.ts` are
+  complete examples.
+- Serve traps yourself with `onTrap` (system calls, a supervisor, faults in a sandbox).
+- Two programs on one CPU (supervisor and user): keep two `CpuState`s and swap them with
+  `save()` / `load()`; `onModeChange` reports mode changes and `protectModes` stops a
+  user-mode program from writing the PSW or raising its own mode.
 
 ## DeviceMachine and devices
 
@@ -373,12 +455,5 @@ for (let a = asm.origin; a < asm.origin + asm.bytes.length;) {
 
 ## Working on the library
 
-| Change | Where | Tests |
-| :--- | :--- | :--- |
-| An instruction | `isa.ts` (name, opcode, format), `cpu.ts` (`exec`), `disassembler.ts` if a new format | `tests/pdp11/cpu.test.ts`; the table test in `assembler.test.ts` assembles and disassembles every entry |
-| Assembler syntax, directives, warnings | `assembler.ts` | `assembler.test.ts`, `macro11-compat.test.ts` |
-| A bus or device feature | `devices.ts`; `machine.ts` for `SimpleMachine` | `devices.test.ts`, `review-fixes.test.ts` |
-| Docs / examples | this file and `readme-examples.test.ts` together | `readme-examples.test.ts` |
-
-Keep the library free of game code. Rover's memory map, I/O page, ROM and gate live in
-`src/core/machine/`. `npm test` must stay green, including `boundary.test.ts`.
+Rules, file map and the change checklist for contributors (people and AI agents) are in
+[`AGENTS.md`](AGENTS.md).
