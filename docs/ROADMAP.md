@@ -849,6 +849,12 @@ window with a fixed dish?
 
 ## Backlog / ideas
 
+- **Blue-11 upgrades: deferred until the rover works and has been playtested (owner,
+  2026-11-16).** Memory boards (core 4 / 8 KB, [`BLUE11_CPU.md`](BLUE11_CPU.md) §6.1) and the
+  EIS option (hardware `MUL` / `DIV` / `ASH` / `ASHC`, §9.2) are designed but stay out of the
+  catalogue; the M15 slice 6 catalogue (overclock, recorder, amplifier, camera, cargo,
+  battery, solar, radar, armor, seismic) is what playtests use. Revisit with the playtest
+  results, together with the cycle budget and core size (§16 questions 1–2).
 - **Local rare fauna and flora (planned, owner request 2026-11-13).** Rare native life to
   discover, so the planet gives the player much more to explore than rocks and fossils.
   Builds on the M9 science pipeline (photos, spectra, gallery flagging, first-of-a-kind
@@ -956,3 +962,4 @@ window with a fixed dish?
 | 2026-11-16 | `claude/amazing-heisenberg-0hfxsi` (5) | Salvaged from the abandoned PR 40 (package move not taken: `BLUE11_CPU.md` §14.3 keeps a folder until a second project needs it): MACRO-11 compatibility section (same / different / not supported) with its claim tests (`syntax.test.ts`), cycle table (corrected: `CLR`/`SXT` write only, `TRAP` 5) and instruction set table in the README, hosting advice, `src/blue11/AGENTS.md` (+ `CLAUDE.md` importing it) as contributor rules; cycle examples tested. Documentation and tests only. |
 | 2026-11-16 | `ccr-1e5e736c-64ollq` | M15 slice 5: UI for the PDP-11 core behind Admin → New PDP-11 world / `?cpu=pdp11`: Code tab through `ui/toolchain.ts` (MACRO-11 editor with warnings, templates, core regions, octal listing), admin debugger (octal registers, PSW / NZVC, disassembly, stack, I/O page via side-effect-free `peek` / `ioSnapshot`), PDP-11 register and stack dumps (kinds 5–8; `BPT` / `HALT` report themselves) decoded in Comms and the dump box, framed TX / recorder messages in Comms, double-resolution photos in the Gallery, Reference (Instructions, Modes, Flags, I/O page, ROM, Symbols, Radio); 21 new tests. Rover-ASM game unchanged. |
 | 2026-11-16 | `m15-slice6-blue11` | M15 slice 6, M15 complete: the Blue-11 is the only core (`cpu` option, URL and Admin switch gone; `CpuStatus` on the unit); Rover-ASM deleted (compiler, VM, ISA, migrations, M14 ROM and templates, `ports.ts`, editor language, listing, Reference, UI branches, dump kinds 1–4); balance folded into the chassis (64 cycles, 2 KB recorder, 4 B/tick), upgrades `CPU_96`/`CPU_128`, `REC_4K`/`REC_8K`, `LINK_6` (flash/RAM/register/trace upgrades removed); save v21 with `OldSaveError` and a plain message for older saves; little-endian photos (ROM `PLOT`); Reference Tools and Image tabs rewritten; owner rename to **Blue-11** / Blue-11 assembly (`src/blue11/`, `BLUE11_*.md`, simulator page, all player-visible text); SPEC v2.0 (§2–§3.9, §5 rewritten), CLAUDE.md rewritten; game-rule tests ported to Blue-11 code (`tests/helpers/rover.ts`), 382 tests. |
+| 2026-11-16 | `roadmap-upgrades-deferred` | Owner decision: memory boards and EIS (the designed Blue-11 upgrades) wait until the rover works and has been playtested; ROADMAP backlog, SPEC §3.7 / §5.4, `BLUE11_CPU.md` §14.7. Docs only. |
