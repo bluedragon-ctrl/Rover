@@ -154,6 +154,20 @@ describe('Reference', () => {
       expect(r.errors.map((e) => e.message), `${name}: ${code}`).toEqual([]);
     }
   });
+
+  it('every Modes and Flags example assembles', async () => {
+    const { MODE_DOC, PC_MODE_DOC, MODE_PATTERNS, FLAG_DOC } = await import('../src/ui/ReferenceBlue11');
+    const { assemble } = await import('../src/blue11');
+    const { predefinedSymbols } = await import('../src/core/machine/symbols');
+    const { createDefaultRegistry } = await import('../src/core/WorldRegistry');
+    const symbols = predefinedSymbols(createDefaultRegistry());
+    const examples = [...MODE_DOC, ...PC_MODE_DOC, ...FLAG_DOC].map((d) => d.example[0]).concat(MODE_PATTERNS.map(([c]) => c));
+    expect(examples.length).toBe(22);
+    for (const ex of examples) {
+      const r = assemble(`${ex.split(' · ').join('\n')}\nCOUNT: .WORD 0\nPTR: .WORD COUNT\nTABLE: .WORD 1, 2\n`, { symbols });
+      expect(r.errors.map((e) => e.message), ex).toEqual([]);
+    }
+  });
 });
 
 describe('double-resolution photos in the Gallery', () => {

@@ -195,60 +195,115 @@ function instructionsHtml(): string {
   );
 }
 
+/**
+ * The addressing modes for a student: number, how it is written, name, what the operand is,
+ * an example and what it does. Exported so a test can assemble every example.
+ */
+export const MODE_DOC: { mode: string; syntax: string; name: string; does: string; example: [string, string] }[] = [
+  { mode: '0', syntax: 'R', name: 'register', does: 'the value is in the register itself', example: ['MOV R1, R2', 'copy R1 into R2'] },
+  { mode: '1', syntax: '(R)', name: 'register deferred', does: 'the register holds an address (a pointer); the operand is the word at that address', example: ['CLR (R1)', 'clear the word R1 points at; R1 stays the same'] },
+  { mode: '2', syntax: '(R)+', name: 'autoincrement', does: 'like (R), then the register moves on to the next word (+2; +1 for a byte instruction). Walks through a list', example: ['MOV (R1)+, R0', 'R0 = the word at R1, then R1 = R1 + 2'] },
+  { mode: '3', syntax: '@(R)+', name: 'autoincrement deferred', does: 'the register points at a list of addresses: use the word at the address found there, then the register moves on +2', example: ['JMP @(R1)+', 'jump to the address stored at R1; R1 = R1 + 2'] },
+  { mode: '4', syntax: '-(R)', name: 'autodecrement', does: 'first the register moves back one word (−2; −1 for a byte), then the word it points at is used. With SP this pushes onto the stack', example: ['MOV R0, -(SP)', 'push R0 onto the stack'] },
+  { mode: '5', syntax: '@-(R)', name: 'autodecrement deferred', does: 'the register moves back 2, then the address stored there is used. Rare', example: ['TST @-(R2)', 'R2 = R2 − 2, test the word whose address is at R2'] },
+  { mode: '6', syntax: 'X(R)', name: 'index', does: 'the word at address R + X, where X is a number written in front. For the Nth byte of a table, or a field of a record', example: ['MOV 2(R1), R0', 'R0 = the word 2 bytes after the one R1 points at'] },
+  { mode: '7', syntax: '@X(R)', name: 'index deferred', does: 'the address stored at R + X is used', example: ['INC @2(R1)', 'add 1 to the word whose address is at R1 + 2'] },
+];
+
+/** Modes written with the PC (R7): the ones you use most. */
+export const PC_MODE_DOC: { syntax: string; name: string; does: string; example: [string, string] }[] = [
+  { syntax: '#n', name: 'immediate', does: 'the number n itself. Forget the # and you get the word at address n instead!', example: ['MOV #3, R1', 'R1 = 3'] },
+  { syntax: '@#a', name: 'absolute', does: 'the word at the fixed address a. Use it for device registers', example: ['MOV @#BAT, R0', 'R0 = the battery level'] },
+  { syntax: 'LABEL', name: 'relative', does: 'the word at LABEL: a variable in your own code', example: ['INC COUNT', 'COUNT = COUNT + 1'] },
+  { syntax: '@LABEL', name: 'relative deferred', does: 'LABEL holds an address; the word at that address is used', example: ['MOV @PTR, R0', 'R0 = the word PTR points at'] },
+];
+
+/** Everyday combinations of modes. */
+export const MODE_PATTERNS: [string, string][] = [
+  ['MOV R0, -(SP)', 'push R0: save it on the stack'],
+  ['MOV (SP)+, R0', 'pop: take the top of the stack back into R0'],
+  ['MOV #TABLE, R1 · MOV (R1)+, R0', 'point R1 at a table, then read it one word at a time'],
+  ['MOVB (R1)+, R0', 'the same, one byte at a time (text, cargo)'],
+  ['MOV @#BAT, R0', 'read a device register'],
+  ['MOV #IE, @#LKS', 'write a device register (here: switch on the clock interrupt)'],
+];
+
 function modesHtml(): string {
-  const modes: [string, string, string, string, string][] = [
-    ['0', 'R', 'register', 'the register itself', 'MOV R1, R2'],
-    ['1', '(R)', 'register deferred', 'the word R points at', 'CLR (R1)'],
-    ['2', '(R)+', 'autoincrement', 'the word R points at, then R += 2 (1 for a byte)', 'MOV (R1)+, R0'],
-    ['3', '@(R)+', 'autoincrement deferred', 'R points at an address; R += 2', 'JMP @(R1)+'],
-    ['4', '-(R)', 'autodecrement', 'R −= 2 first, then the word it points at (a push)', 'MOV R0, -(SP)'],
-    ['5', '@-(R)', 'autodecrement deferred', 'R −= 2, then the address it points at', 'TST @-(R2)'],
-    ['6', 'X(R)', 'index', 'the word at R + X (X follows the instruction)', 'MOV 2(R1), R0'],
-    ['7', '@X(R)', 'index deferred', 'the address stored at R + X', 'INC @HEALTH(R2)'],
-  ];
-  const pc: [string, string, string, string][] = [
-    ['#n', 'immediate (mode 2 on PC)', 'the number n, stored after the instruction', 'MOV #3, R1'],
-    ['@#a', 'absolute (mode 3 on PC)', 'the word at address a: device registers', 'MOV @#BAT, R0'],
-    ['LABEL', 'relative (mode 6 on PC)', 'the word at LABEL, wherever the code is', 'INC COUNT'],
-    ['@LABEL', 'relative deferred (mode 7 on PC)', 'the address stored at LABEL', 'JMP @VECTOR'],
-  ];
-  return `<p class="small">Every operand is a register and a mode (3 bits each). The operand's machine code is <code>mode reg</code>
-    in octal, so <code>MOV (R1)+, R0</code> is <code>01 21 00</code> = <code>012100</code>.</p>
-    <h4>The eight modes</h4><table>${modes.map(([m, s, n, d, e]) => `<tr><td><code>${s}</code> <small class="dim">${m}</small></td><td class="small"><b>${n}</b>: ${d}</td><td class="small"><code>${e}</code></td></tr>`).join('')}</table>
-    <h4>On the PC</h4><table>${pc.map(([s, n, d, e]) => `<tr><td><code>${s}</code></td><td class="small"><b>${n}</b>: ${d}</td><td class="small"><code>${e}</code></td></tr>`).join('')}</table>
-    <h4>Cycles per operand</h4>
+  const ex = ([c, t]: [string, string]) => `<span class="dim">e.g. <code>${esc(c)}</code> ; ${esc(t)}</span>`;
+  return `<p class="small">An <b>operand</b> is where an instruction finds its value or puts its result. The <b>mode</b> says
+    how to find it: in a register, in memory at an address the register holds, at a fixed address, or as a plain number.
+    You choose the mode by how you write the operand: <code>R1</code>, <code>(R1)</code>, <code>#5</code>, <code>COUNT</code>…</p>
+    <p class="small dim">A register holding an address is called a <b>pointer</b>: it "points at" a word in memory. Words are 2 bytes,
+    so the next word is at the address + 2.</p>
+    <h4>The ones you use most</h4><table>${PC_MODE_DOC.map((m) => `<tr><td><code>${m.syntax}</code></td><td class="small"><b>${m.name}</b>: ${esc(m.does)}<br>${ex(m.example)}</td></tr>`).join('')}</table>
+    <h4>With a register</h4><table>${MODE_DOC.map((m) => `<tr><td><code>${m.syntax}</code> <small class="dim">${m.mode}</small></td><td class="small"><b>${m.name}</b>: ${esc(m.does)}<br>${ex(m.example)}</td></tr>`).join('')}</table>
+    <h4>Everyday patterns</h4><table>${MODE_PATTERNS.map(([c, t]) => `<tr><td class="small"><code>${esc(c)}</code> <span class="dim">; ${esc(t)}</span></td></tr>`).join('')}</table>
+    <p class="small dim">Examples joined by · are separate lines. Under the hood the first four are the register modes used on
+    the PC (R7): <code>#n</code> is <code>(PC)+</code>, <code>@#a</code> is <code>@(PC)+</code>, <code>LABEL</code> is <code>X(PC)</code>,
+    <code>@LABEL</code> is <code>@X(PC)</code>. In machine code each operand is 6 bits, the mode and the register as two octal digits:
+    <code>MOV (R1)+, R0</code> is <code>01 21 00</code> = <code>012100</code>.</p>
+    <h4>What each operand costs in cycles</h4>
+    <p class="small">Every tick the CPU has a budget of cycles; each memory access costs one. An instruction costs 1 for its own
+    word, plus for each operand:</p>
     <table>
-      <tr><td><code>R</code></td><td class="small">0 extra cycles</td></tr>
-      <tr><td><code>(R) (R)+ -(R)</code></td><td class="small">1 (the read or write)</td></tr>
-      <tr><td><code>@(R)+ @-(R) X(R) LABEL @#a</code></td><td class="small">2 (an address or index word, then the operand)</td></tr>
+      <tr><td><code>R</code></td><td class="small">0: registers are free</td></tr>
+      <tr><td><code>(R) (R)+ -(R)</code></td><td class="small">1: the read or the write</td></tr>
+      <tr><td><code>#n</code></td><td class="small">1: the number stored after the instruction</td></tr>
+      <tr><td><code>@(R)+ @-(R) X(R) LABEL @#a</code></td><td class="small">2: an address or index word, then the operand</td></tr>
       <tr><td><code>@X(R) @LABEL</code></td><td class="small">3</td></tr>
-      <tr><td><code>#n</code></td><td class="small">1</td></tr>
     </table>
-    <p class="small dim">Plus 1 for the instruction word. A destination that is read and written (<code>INC</code>, <code>ADD</code>) costs its write too; <code>MOV</code> and <code>CLR</code> only write, <code>CMP</code>, <code>BIT</code>, <code>TST</code> only read.</p>`;
+    <p class="small dim">A destination that is read and then written (<code>INC</code>, <code>ADD</code>) pays for both;
+    <code>MOV</code> and <code>CLR</code> only write it, <code>CMP</code>, <code>BIT</code>, <code>TST</code> only read it.
+    So keep busy values in registers: <code>INC R0</code> costs 1, <code>INC COUNT</code> costs 4.</p>`;
 }
 
+/** Examples for the four condition flags (a test assembles them). */
+export const FLAG_DOC: { flag: string; bit: number; name: string; does: string; example: [string, string] }[] = [
+  { flag: 'N', bit: 3, name: 'negative', does: 'the result is negative: its top bit (bit 15; bit 7 for a byte) is 1', example: ['MOV #-3, R0', 'N = 1'] },
+  { flag: 'Z', bit: 2, name: 'zero', does: 'the result is 0', example: ['MOV #1, R0 · DEC R0', 'R0 = 0, so Z = 1'] },
+  { flag: 'V', bit: 1, name: 'overflow', does: 'a signed result did not fit in −32768…32767 (e.g. two positives added up to a "negative")', example: ['MOV #77777, R0 · INC R0', '32767 + 1 does not fit: V = 1'] },
+  { flag: 'C', bit: 0, name: 'carry', does: 'an unsigned result did not fit in 0…177777, a subtraction or CMP had to borrow, or the bit a shift pushed out', example: ['MOV #177777, R0 · ADD #1, R0', 'R0 = 0 with a carry: C = 1 (and Z = 1)'] },
+];
+
 function flagsHtml(): string {
-  return `<p class="small">Most instructions set four condition flags in the <code>PSW</code> from their result; branches test them.
-    The debugger and register dumps show them as <code>NZVC</code> (capital = set).</p>
-    <h4>Condition flags</h4><table>
-      <tr><td><code>N</code> <small class="dim">bit 3</small></td><td class="small">negative: bit 15 (bit 7 for a byte) of the result is 1</td></tr>
-      <tr><td><code>Z</code> <small class="dim">bit 2</small></td><td class="small">zero: the result is 0</td></tr>
-      <tr><td><code>V</code> <small class="dim">bit 1</small></td><td class="small">overflow: a signed result did not fit (100000 + 100000)</td></tr>
-      <tr><td><code>C</code> <small class="dim">bit 0</small></td><td class="small">carry: an unsigned result carried out (or a subtraction borrowed); the bit shifted out</td></tr>
-    </table>
-    <h4>The rest of the PSW</h4><table>
-      <tr><td><code>T</code> <small class="dim">bit 4</small></td><td class="small">trace: trap to 014 after each instruction (single step)</td></tr>
-      <tr><td><code>priority</code> <small class="dim">bits 7–5</small></td><td class="small">interrupts at this level or below wait (7 = none). The program runs at 0</td></tr>
-      <tr><td><code>mode</code> <small class="dim">bits 15–12</small></td><td class="small">current and previous mode: 00 kernel (firmware), 11 user (program)</td></tr>
-    </table>
+  const ex = ([c, t]: [string, string]) => `<span class="dim">e.g. <code>${esc(c)}</code> ; ${esc(t)}</span>`;
+  return `<p class="small">After most instructions the CPU remembers four facts about the result: the <b>condition flags</b>
+    N, Z, V and C, each 0 or 1. A <b>branch</b> looks at them to decide whether to jump. That is how you make an <i>if</i> or a
+    loop: compute something (or ask with <code>CMP</code> / <code>TST</code>), then branch on the answer.
+    The Instructions tab shows which flags each instruction changes; the debugger and register dumps show them as
+    <code>NZVC</code> (a capital letter = 1).</p>
+    <h4>The four flags</h4><table class="keycol">${FLAG_DOC.map((f) => `<tr><td><code>${f.flag}</code> <small class="dim">bit ${f.bit}</small></td><td class="small"><b>${f.name}</b>: ${esc(f.does)}<br>${ex(f.example)}</td></tr>`).join('')}</table>
+    <h4>Signed or unsigned?</h4>
+    <p class="small">The same 16 bits can be read two ways. <b>Unsigned</b>: 0 to 177777 (0–65535), never negative.
+    <b>Signed</b>: 0 to 77777 are positive, 100000 to 177777 are −32768 to −1, so <code>177777</code> is 65535 or −1.
+    The CPU does not care; <i>you</i> choose by the branch you use after <code>CMP</code>. Signed for things that can be
+    negative (positions <code>X</code>, <code>Y</code>, <code>TEMP</code>, differences); unsigned for counts, sizes and addresses.</p>
     <h4>Which branch after CMP A, B</h4><table>
-      <tr><td><code>A = B</code></td><td class="small"><code>BEQ</code> · ≠ <code>BNE</code></td></tr>
-      <tr><td><code>A &gt; B</code></td><td class="small">signed <code>BGT</code> · unsigned <code>BHI</code></td></tr>
-      <tr><td><code>A ≥ B</code></td><td class="small">signed <code>BGE</code> · unsigned <code>BHIS</code></td></tr>
-      <tr><td><code>A &lt; B</code></td><td class="small">signed <code>BLT</code> · unsigned <code>BLO</code></td></tr>
-      <tr><td><code>A ≤ B</code></td><td class="small">signed <code>BLE</code> · unsigned <code>BLOS</code></td></tr>
+      <tr><td class="small">jump if</td><td class="small">signed</td><td class="small">unsigned</td></tr>
+      <tr><td><code>A = B</code></td><td class="small" colspan="2"><code>BEQ</code> (and <code>BNE</code> for A ≠ B)</td></tr>
+      <tr><td><code>A &gt; B</code></td><td class="small"><code>BGT</code></td><td class="small"><code>BHI</code></td></tr>
+      <tr><td><code>A ≥ B</code></td><td class="small"><code>BGE</code></td><td class="small"><code>BHIS</code></td></tr>
+      <tr><td><code>A &lt; B</code></td><td class="small"><code>BLT</code></td><td class="small"><code>BLO</code></td></tr>
+      <tr><td><code>A ≤ B</code></td><td class="small"><code>BLE</code></td><td class="small"><code>BLOS</code></td></tr>
     </table>
-    <p class="small dim">CMP computes A − B (source minus destination), the other way round from SUB. ROM routines return with the flags of R0, so <code>BNE</code> right after <code>JSR PC, STEP</code> catches every error.</p>`;
+    <p class="small dim">Careful: <code>CMP A, B</code> works out A − B (source minus destination), the other way round from
+    <code>SUB</code>. Read <code>CMP R0, #5</code> · <code>BGT</code> as "is R0 greater than 5?".</p>
+    <h4>An if, step by step</h4>
+<pre class="small">        CMP  R0, #5     ; compare R0 with 5
+        BGE  1$         ; R0 ≥ 5: skip the next line
+        INC  R0         ; runs only when R0 &lt; 5
+1$:     ...</pre>
+    <h4>Good to know</h4><table>
+      <tr><td class="small">Branches, <code>JMP</code>, <code>JSR</code>, <code>RTS</code> and <code>SOB</code> leave the flags alone,
+      so you can branch several times on one result.</td></tr>
+      <tr><td class="small"><code>MOV</code> sets N and Z too: <code>MOV @#BAT, R0</code> · <code>BEQ EMPTY</code> works without a <code>TST</code>.</td></tr>
+      <tr><td class="small">ROM routines return with the flags of R0, so <code>BNE</code> right after <code>JSR PC, STEP</code> catches every error.</td></tr>
+    </table>
+    <h4>The rest of the PSW <small class="dim">(advanced: firmware and interrupts)</small></h4><table class="keycol">
+      <tr><td><code>T</code> <small class="dim">bit 4</small></td><td class="small"><b>trace</b>: trap to 014 after each instruction, to single-step</td></tr>
+      <tr><td><code>priority</code> <small class="dim">bits 7–5</small></td><td class="small">interrupts at this level or lower must wait (7 = none get through). Programs run at 0</td></tr>
+      <tr><td><code>mode</code> <small class="dim">bits 15–12</small></td><td class="small">current and previous mode: 00 kernel (firmware), 11 user (program)</td></tr>
+    </table>`;
 }
 
 /** I/O page groups: address range → title. Device blocks come from DEVICE_BLOCKS. */
