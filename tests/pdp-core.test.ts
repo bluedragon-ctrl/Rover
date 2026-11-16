@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { BALANCE, PDP11 } from '../src/core/balance';
+import { PDP11 } from '../src/core/balance';
 import { BootReason, decodeFrame } from '../src/core/downlink';
 import { IO_REGISTERS, ProgFault, Why } from '../src/core/machine/iopage';
 import { ROM, ROM_ENTRY } from '../src/core/machine/rom';
 import { isDecName, predefinedSymbols } from '../src/core/machine/symbols';
 import { MsgType, parseStream, freshParser } from '../src/core/messages';
-import { deserialize, serialize } from '../src/core/SaveManager';
+import { deserialize, OldSaveError, SAVE_VERSION, SaveError, serialize } from '../src/core/SaveManager';
 import { SimulationEngine } from '../src/core/SimulationEngine';
 import { CpuState, Layer, ProgState, Status } from '../src/core/types';
 import type { Unit } from '../src/core/Unit';
@@ -24,7 +24,7 @@ function flat(e: SimulationEngine, r = 12): void {
 }
 
 function rover(firmware: string, program?: string, seed = 3, setup?: (u: Unit, e: SimulationEngine) => void): { e: SimulationEngine; u: Unit } {
-  const e = new SimulationEngine({ seed, cpu: 'pdp11' });
+  const e = new SimulationEngine({ seed });
   const u = e.spawnUnit('t');
   flat(e);
   setup?.(u, e);
@@ -38,7 +38,7 @@ function rover(firmware: string, program?: string, seed = 3, setup?: (u: Unit, e
 function booted(e: SimulationEngine, u: Unit): number {
   for (let t = 1; t <= 20; t++) {
     e.advanceTick();
-    if (u.machine!.cpu.r[7] < PDP11.romBase || u.vm.state !== CpuState.RUNNING) return t;
+    if (u.machine.cpu.r[7] < PDP11.romBase || u.cpu.state !== CpuState.RUNNING) return t;
   }
   throw new Error('never booted');
 }
@@ -48,8 +48,8 @@ const run = (e: SimulationEngine, n: number, link = false) => {
     e.advanceTick();
   }
 };
-const fwRegs = (u: Unit) => u.machine!.registers('firmware').r;
-const peek = (u: Unit, addr: number) => u.machine!.read(addr, false);
+const fwRegs = (u: Unit) => u.machine.registers('firmware').r;
+const peek = (u: Unit, addr: number) => u.machine.read(addr, false);
 const label = (e: SimulationEngine, u: Unit, src: string, name: string, slot: 'firmware' | 'program' = 'firmware') => e.assembleFor(u, src, slot).asm.symbols.get(name)!;
 
 /** Firmware: run the program again and again (whatever ends it), counting runs in R5. */
@@ -95,7 +95,7 @@ describe('boot ROM (PDP11_CPU.md §10)', () => {
   it('assembles at 160000 and boots the firmware at 000200 with R0 = top of core', () => {
     expect(ROM.ok).toBe(true);
     expect(ROM_ENTRY.BOOT).toBe(PDP11.romBase);
-    const e0 = new SimulationEngine({ seed: 1, cpu: 'pdp11' });
+    const e0 = new SimulationEngine({ seed: 1 });
     const u0 = e0.spawnUnit('t');
     e0.upload(u0, 'START:  HALT', factory);
     expect(booted(e0, u0)).toBeLessThanOrEqual(5); // a few ticks of boot time
@@ -105,11 +105,11 @@ describe('boot ROM (PDP11_CPU.md §10)', () => {
     expect(fwRegs(u)[3]).toBe(PDP11.programBase); // the firmware stack starts below the program
     expect(peek(u, 0o4)).toBeGreaterThanOrEqual(PDP11.romBase); // vectors filled
     expect(peek(u, 0o177546) & 0o100).toBe(0o100); // line clock IE on
-    expect(u.machine!.cpu.priority).toBe(0);
+    expect(u.machine.cpu.priority).toBe(0);
   });
 
   it('a firmware bus error makes the ROM reboot the rover (boot reason: fault)', () => {
-    const e = new SimulationEngine({ seed: 3, cpu: 'pdp11' });
+    const e = new SimulationEngine({ seed: 3 });
     const u = e.spawnUnit('t');
     const logs: string[] = [];
     e.events.on('LOG', (l) => logs.push(l.message));
@@ -123,16 +123,16 @@ describe('boot ROM (PDP11_CPU.md §10)', () => {
   it('BPT in the firmware halts the CPU; Continue resumes after it', () => {
     const { e, u } = rover('START:  BPT\n        MOV #GREEN, @#IND1\n1$:     WAIT\n        BR 1$');
     run(e, 2);
-    expect(u.vm.state).toBe(CpuState.HALTED);
+    expect(u.cpu.state).toBe(CpuState.HALTED);
     expect(u.indicators[0]).toBe(0);
     expect(e.command(u, 'CONTINUE')).toBeNull();
     run(e, 2);
-    expect(u.vm.state).toBe(CpuState.RUNNING);
+    expect(u.cpu.state).toBe(CpuState.RUNNING);
     expect(u.indicators[0]).toBe(2);
   });
 
   it('firmware too big for its region or not starting at 000200 is refused', () => {
-    const e = new SimulationEngine({ seed: 1, cpu: 'pdp11' });
+    const e = new SimulationEngine({ seed: 1 });
     const u = e.spawnUnit('t');
     expect(e.upload(u, `. = . + 2000\n HALT`, factory).errors[0].message).toMatch(/must end below 002000/);
     expect(e.upload(u, `D1: .WORD 0\nS: HALT\n.END S`, factory).errors[0].message).toMatch(/first word/);
@@ -260,9 +260,9 @@ describe('the gate (PDP11_CPU.md §7)', () => {
     expect((peek(u, 0o177000) >> 1) & 7).toBe(Why.TIME);
     run(e, 10);
     expect(fwRegs(u)[5]).toBeGreaterThan(3);
-    const r1 = u.machine!.registers('program').r[1];
+    const r1 = u.machine.registers('program').r[1];
     run(e, 4);
-    expect(u.machine!.registers('program').r[1]).toBeGreaterThan(r1); // kept counting, never restarted
+    expect(u.machine.registers('program').r[1]).toBeGreaterThan(r1); // kept counting, never restarted
   });
 
   it('the gate is refused when the program is not ready', () => {
@@ -288,7 +288,7 @@ describe('the gate (PDP11_CPU.md §7)', () => {
     expect(ok.state).toBe(ProgState.PROG_DONE);
     expect(ok.u.progResult).toBe(peek(ok.u, 0o200)); // reading the firmware is allowed
     expect(ok.u.indicators[1]).toBe(2);
-    expect(ok.u.imgEdited).toBe(true);
+    expect(ok.u.img[0]).toBe(0o123);
   });
 
   it('faults: odd address, no memory, illegal instruction, stack overflow, with PRGPC', () => {
@@ -483,7 +483,6 @@ START:  MOV  #4, @#DRVCNT
     run(b0, 137, true);
     expect(b0.units[0].slice).toBeGreaterThanOrEqual(0); // saved inside a program run
     const b = deserialize(JSON.parse(JSON.stringify(serialize(b0))));
-    expect(b.pdp11).toBe(true);
     run(b, 263, true);
     expect(serialize(b)).toEqual(serialize(a));
   });
@@ -493,21 +492,26 @@ START:  MOV  #4, @#DRVCNT
     const u0 = b0.units[0];
     for (let t = 0; t < 300 && u0.slice < 0; t++) run(b0, 1, true);
     // one instruction at a time until the clock handler runs in the program's time
-    for (let i = 0; i < 200 && u0.machine!.context !== 'handler'; i++) b0.stepInstruction(u0);
-    expect(u0.machine!.context).toBe('handler');
+    for (let i = 0; i < 200 && u0.machine.context !== 'handler'; i++) b0.stepInstruction(u0);
+    expect(u0.machine.context).toBe('handler');
     const b = deserialize(JSON.parse(JSON.stringify(serialize(b0))));
-    b.units[0].machine!.run(); // finish this tick in both, then run on
-    u0.machine!.run();
+    b.units[0].machine.run(); // finish this tick in both, then run on
+    u0.machine.run();
     run(b, 200, true);
     run(b0, 200, true);
     expect(serialize(b)).toEqual(serialize(b0));
   });
 
-  it('Rover-ASM engines are unchanged by the switch', () => {
+  it('saves from before v21 (Rover-ASM) are not loaded: OldSaveError, start a new world', () => {
     const e = new SimulationEngine({ seed: 1 });
-    expect(e.pdp11).toBe(false);
-    expect(e.spawnUnit('x').machine).toBeNull();
-    expect(serialize(e).cpu).toBeUndefined();
-    expect(BALANCE.watchdogTicks).toBeGreaterThan(0);
+    e.spawnUnit('x');
+    const snap = serialize(e);
+    expect(snap.version).toBe(SAVE_VERSION);
+    for (const v of [1, 18, 20]) {
+      expect(() => deserialize({ ...snap, version: v })).toThrow(OldSaveError);
+      expect(() => deserialize({ ...snap, version: v })).toThrow(/new world/);
+    }
+    expect(() => deserialize({ ...snap, version: SAVE_VERSION + 1 })).toThrow(/newer/);
+    expect(() => deserialize({ foo: 1 })).toThrow(SaveError);
   });
 });

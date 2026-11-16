@@ -1,16 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { BALANCE } from '../src/core/balance';
-import { FETCH_SUPPLY } from '../src/core/programs';
-import { deserialize, migrate, SAVE_VERSION, serialize } from '../src/core/SaveManager';
+import { PDP_ALLIN_FETCH as FETCH_SUPPLY } from '../src/core/programs-pdp11';
+import { deserialize, serialize } from '../src/core/SaveManager';
 import { SimulationEngine } from '../src/core/SimulationEngine';
 import { Layer, Status } from '../src/core/types';
 import { UPGRADE_BY_ID, UPGRADES } from '../src/core/upgrades';
 import { T } from '../src/core/WorldRegistry';
+import { fw, HANG, reg } from './helpers/rover';
 
 const run = (e: SimulationEngine, n: number) => {
   for (let i = 0; i < n; i++) e.advanceTick();
 };
-function rover(src = 'CALL SLEEP 100000', seed = 5) {
+function rover(src = `START:${HANG}`, seed = 5) {
   const e = new SimulationEngine({ seed });
   const u = e.spawnUnit('t');
   expect(e.upload(u, src, { factory: true }).errors).toEqual([]);
@@ -27,20 +28,20 @@ function orderAndLand(e: SimulationEngine, id: string) {
 function grab(e: SimulationEngine, d: { x: number; y: number }) {
   const u = e.units[0];
   expect(e.admin.teleport(u, d.x, d.y - 1)).toBe(true);
-  e.upload(u, 'CALL ACT TOOL_1 NORTH\nMOV r0 @STATUS\nCALL SLEEP 100000', { factory: true });
-  run(e, 5);
-  return u.vm.regs[0];
+  e.upload(u, fw('MOV  #NORTH, R0', 'MOV  #F.T1, R1', 'JSR  PC, ACT', 'MOV  R0, R2'), { factory: true });
+  run(e, 10);
+  return reg(u, 2);
 }
 
 describe('buying upgrades', () => {
   it('needs credits and prerequisites, and cannot be bought twice', () => {
     const { e, u } = rover();
-    expect(e.buyUpgrade(u, 'FLASH_48')).toMatch(/credits/);
+    expect(e.buyUpgrade(u, 'REC_4K')).toMatch(/credits/);
     e.credits = 500;
-    expect(e.buyUpgrade(u, 'FLASH_64')).toMatch(/needs Flash 768 B/);
-    expect(e.buyUpgrade(u, 'FLASH_48')).toBeNull();
-    expect(e.credits).toBe(500 - UPGRADE_BY_ID.FLASH_48.cost);
-    expect(e.buyUpgrade(u, 'FLASH_48')).toBe('on its way');
+    expect(e.buyUpgrade(u, 'REC_8K')).toMatch(/needs Recorder 4 KB/);
+    expect(e.buyUpgrade(u, 'REC_4K')).toBeNull();
+    expect(e.credits).toBe(500 - UPGRADE_BY_ID.REC_4K.cost);
+    expect(e.buyUpgrade(u, 'REC_4K')).toBe('on its way');
   });
 
   it('the crate lands 3–6 tiles away after the flight time, on a clear visible tile', () => {
@@ -60,7 +61,7 @@ describe('buying upgrades', () => {
 });
 
 describe('picking up installs immediately', () => {
-  it('cargo, registers and flash grow; works even with full cargo', () => {
+  it('cargo and the recorder grow; works even with full cargo', () => {
     const { e, u } = rover();
     u.cargo.fill(T.SAMPLE);
     expect(grab(e, orderAndLand(e, 'CARGO_6'))).toBe(Status.OK);
@@ -68,36 +69,17 @@ describe('picking up installs immediately', () => {
     expect(u.chassis.cargoSlots).toBe(6);
     expect(e.drops).toEqual([]);
     expect(e.stats.upgradesInstalled).toBe(1);
-
-    expect(e.compileFor(u, 'MOV r5 1').errors.length).toBe(1);
-    grab(e, orderAndLand(e, 'REGS_6'));
-    expect(u.vm.regs.length).toBe(6);
-    expect(u.prog.regs.length).toBe(6); // the program context grows too (M10)
-    expect(e.compileFor(u, 'MOV r5 1').errors).toEqual([]);
-
-    const long = Array.from({ length: 160 }, () => 'ADD r0 100').join('\n'); // 640 B
-    expect(e.compileFor(u, long).errors.length).toBe(1);
-    grab(e, orderAndLand(e, 'FLASH_48'));
-    expect(e.compileFor(u, long).errors).toEqual([]);
-
-    // M14: RAM grows (in place: installing keeps its contents; grab() itself reboots to run its code)
-    const vars = 'VAR big 100\nSTB [big+99] 7';
-    expect(e.compileFor(u, vars).errors.length).toBe(1);
-    grab(e, orderAndLand(e, 'RAM_128'));
-    expect(u.ram.length).toBe(128);
-    expect(e.compileFor(u, vars).errors).toEqual([]);
-    u.ram[5] = 42;
-    UPGRADE_BY_ID.RAM_256.apply(u.chassis, u);
-    expect(u.ram.length).toBe(256);
-    expect(u.ram[5]).toBe(42);
+    grab(e, orderAndLand(e, 'REC_4K'));
+    expect(u.recorderBytes).toBe(4096);
   });
 
   it('other rovers do not get the base chassis modified', () => {
     const { e, u } = rover();
-    grab(e, orderAndLand(e, 'CPU_6'));
-    expect(u.chassis.cyclesPerTick).toBe(12);
+    grab(e, orderAndLand(e, 'CPU_96'));
+    expect(u.chassis.cyclesPerTick).toBe(96);
+    expect(e.cyclesPerTick(u)).toBe(96);
     const other = e.spawnUnit('b', 20, 20);
-    expect(other.chassis.cyclesPerTick).toBe(8);
+    expect(other.chassis.cyclesPerTick).toBe(64);
   });
 
   it('battery, solar and armor upgrades change the physics', () => {
@@ -121,9 +103,9 @@ describe('picking up installs immediately', () => {
     e.admin.teleport(u, 0, 0);
     e.world.setTile(1, 0, Layer.OBSTACLE, T.CLIFF_WALL);
     e.world.setTile(9, 0, Layer.OBSTACLE, T.SILICON_ORE);
-    e.upload(u, 'CALL ACT TOOL_3 EAST\nMOV r0 @SEISMIC_TYPE\nMOV r1 @SEISMIC_DIST\nCALL SLEEP 100000', { factory: true });
-    run(e, 8);
-    expect([u.vm.regs[0], u.vm.regs[1]]).toEqual([T.SILICON_ORE, 9]);
+    e.upload(u, fw('MOV  #EAST, R0', 'MOV  #F.T3, R1', 'JSR  PC, ACT', 'MOV  @#SEITYP, R2', 'MOV  @#SEIDST, R3'), { factory: true });
+    run(e, 15);
+    expect([reg(u, 2), reg(u, 3)]).toEqual([T.SILICON_ORE, 9]);
   });
 });
 
@@ -144,31 +126,19 @@ describe('fetch template & persistence', () => {
     expect(u.chassis.sensorRange).toBe(8);
   });
 
-  it('upgrades and pending drops survive save/load; v1 saves migrate', () => {
+  it('upgrades and pending drops survive save/load', () => {
     const { e, u } = rover();
-    grab(e, orderAndLand(e, 'REGS_6'));
-    u.vm.regs[5] = 42;
+    grab(e, orderAndLand(e, 'REC_4K'));
     e.credits = 100;
     e.buyUpgrade(u, 'CARGO_6');
     const l = deserialize(JSON.parse(JSON.stringify(serialize(e))));
-    expect(l.units[0].upgrades).toEqual(['REGS_6']);
-    expect(l.units[0].vm.regs[5]).toBe(42);
+    expect(l.units[0].upgrades).toEqual(['REC_4K']);
+    expect(l.units[0].recorderBytes).toBe(4096);
     expect(l.drops.length).toBe(1);
     expect(l.stats.upgradesInstalled).toBe(1);
     run(l, BALANCE.supplyDropTicks);
     expect(l.drops[0].landed).toBe(true);
 
-    const v1 = serialize(rover().e) as unknown as Record<string, unknown>;
-    v1.version = 1;
-    delete v1.drops;
-    delete v1.nextDropId;
-    for (const us of v1.units as Record<string, unknown>[]) {
-      delete us.upgrades;
-      delete us.seismic;
-    }
-    const m = migrate(v1);
-    expect(m.version).toBe(SAVE_VERSION);
-    expect(deserialize(v1).units[0].upgrades).toEqual([]);
   });
 
   it('every upgrade in the catalogue can be installed', () => {

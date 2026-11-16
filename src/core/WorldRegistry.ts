@@ -4,9 +4,9 @@ export type TileShape = 'floor' | 'rough' | 'vent' | 'wall' | 'crystal' | 'mound
 
 export interface TileDef {
   id: number;
-  /** Becomes a Rover-ASM constant. */
+  /** Internal name (code and tests; `byName`). */
   constName: string;
-  /** M15: the PDP-11 core's predefined symbol (DEC style, at most six characters). */
+  /** The predefined symbol in the rover's assembly language (DEC style, at most six characters). */
   shortName: string;
   name: string;
   layer: Layer;
@@ -19,7 +19,7 @@ export interface TileDef {
   moveEnergy?: number;
   /** Terrain only: hull damage on entering. */
   hazardDamage?: number;
-  /** 0 none, 1 mild, 2 severe. Reported by @GROUND_HAZARD. */
+  /** 0 none, 1 mild, 2 severe. Reported by `GNDHAZ`. */
   hazardLevel?: number;
   /** Obstacle/actor layers: blocks the drive. */
   blocksMove?: boolean;
@@ -67,19 +67,13 @@ export class WorldRegistry {
     return [...this.byId.values()];
   }
 
-  /** M15: predefined symbols for the MACRO-11 assembler (six-character tile names). */
+  /** Predefined symbols for the assembler (six-character tile names). */
   shortConstants(): Record<string, number> {
     const out: Record<string, number> = { NONE: 0 };
     for (const d of this.byId.values()) out[d.shortName.toUpperCase()] = d.id;
     return out;
   }
 
-  /** Constants injected into the compiler. */
-  constants(): Record<string, number> {
-    const out: Record<string, number> = { NONE: 0 };
-    for (const d of this.byId.values()) out[d.constName.toUpperCase()] = d.id;
-    return out;
-  }
 }
 
 export const T = {

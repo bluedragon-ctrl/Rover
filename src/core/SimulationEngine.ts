@@ -1,4 +1,4 @@
-import { BALANCE, CHASSIS_MK1, MEMORY_MAP, type ChassisDef } from './balance';
+import { BALANCE, CHASSIS_MK1, PDP11, type ChassisDef } from './balance';
 import { ChunkedWorld } from './ChunkedWorld';
 import { EventBus } from './EventBus';
 import { MapGenerator } from './MapGenerator';
@@ -6,13 +6,10 @@ import { EventDirector } from './EventDirector';
 import { hash3 } from './rng';
 import {
   BootReason,
-  DumpKind,
-  encodeCpuDump,
   encodeCpu11Dump,
   encodeStack11Dump,
   STACK11_WORDS,
   encodeLog,
-  encodeStackDump,
   GALLERY_KEEP,
   isPhoto,
   Level,
@@ -28,16 +25,14 @@ import { UPGRADE_BY_ID } from './upgrades';
 import type { SquallDamage } from './events';
 import { TOOLS, type ToolDef } from './tools';
 import { ambientTemp, Environment, signalStrength, solarGain, wrapDeg, angleDiff, type SunState } from './Environment';
-import { getPort, writePortClamped, type DevicePort, type PortContext } from './ports';
 import { CpuState, DIR_VEC, Layer, Preempt, ProgState, Status } from './types';
 import { resetDevices, toolDevice, Unit, type Capture, type Device } from './Unit';
-import { productPayload, toHex } from './imaging';
-import { compile, FIRMWARE_ONLY_PORTS, PROGRAM_GATE, romProgram, ROM_BASE, type CompileResult, type Slot } from './vm/Compiler';
-import type { RoverVM, VmHost } from './vm/RoverVM';
+import { productPayload, productSize, toHex } from './imaging';
 import { HORIZON_COLUMNS, HORIZON_V, isAnomaly, PHOTO_FORMATS_2X, photoBytes, type HorizonView } from './photos';
 import { coneOffsets, shapeContains, type SensorShape } from './sensors';
 import { createDefaultRegistry, T, type WorldRegistry } from './WorldRegistry';
-import { assembleImage, RoverMachine, type ImageResult, type MachineHost } from './machine/RoverMachine';
+import { assembleImage, RoverMachine, type ImageResult, type MachineHost, type MachineSlot } from './machine/RoverMachine';
+import type { DeviceStart, IoContext } from './machine/iopage';
 import { MESSAGES_KEEP, MsgType, parseStream, freshParser, type ParserState, type ReceivedMessage } from './messages';
 
 /** M15: a photo from SNDIMG being put back together at mission control (saved). */
@@ -48,16 +43,13 @@ export interface PhotoAssembly {
   data: number[];
   cap: Capture | null;
 }
-import { PDP11 } from './balance';
+
+/** A code slot: the firmware or the program (SPEC §3.9.1). */
+export type Slot = MachineSlot;
 
 export interface EngineOptions {
   seed: number;
   registry?: WorldRegistry;
-  /**
-   * M15: which computer the rovers have. 'rover-asm' (default) is today's game; 'pdp11' is
-   * the PDP-11 core (docs/PDP11_CPU.md), behind this switch until slice 6.
-   */
-  cpu?: 'rover-asm' | 'pdp11';
 }
 
 export interface SupplyDrop {
@@ -99,17 +91,18 @@ export const SENT_KEEP = 100;
  */
 export type LogCategory = 'world' | 'sent' | 'rover';
 
-export interface UploadResult extends CompileResult {
-  /** M15: the MACRO-11 result (PDP-11 core; `program` stays null there, success = no errors and not rejected). */
-  assembled?: ImageResult;
+export interface UploadResult {
+  /** The assembler's result. */
+  assembled: ImageResult;
+  /** Assembler errors (empty on success). */
+  errors: Array<{ line: number; message: string }>;
+  /** Bytes of the image. */
+  bytes: number;
   /** Energy charged for the upload (0 if rejected or free). */
   cost: number;
-  /** Set when the program compiled but the rover could not accept it. */
+  /** Set when the code assembled but the rover could not accept it. */
   rejected?: string;
 }
-
-/** M14: progress ports whose device result `WAIT` copies into @STATUS. */
-const WAIT_DEVICE: Readonly<Record<string, Device>> = { DRIVE: 'drive', RADAR: 'radar', TOOL: 'tool', REPAIR: 'repair', CAM: 'cam', SEND: 'send', ERASE: 'erase' };
 
 /**
  * Headless, deterministic simulation. No DOM, no Three.js, no wall-clock time.
@@ -167,7 +160,7 @@ export class SimulationEngine {
   gallery: ReceivedProduct[] = [];
   /** Mission control: what it sent over the uplink (newest last, last SENT_KEEP). */
   sent: SentRecord[] = [];
-  readonly portCtx: PortContext;
+  readonly ioCtx: IoContext;
   /** M15: mission control's messages from the TX device (newest last, last MESSAGES_KEEP; saved). */
   messages: ReceivedMessage[] = [];
   /** M15: mission control's message parser per rover (saved). */
@@ -185,7 +178,7 @@ export class SimulationEngine {
     this.sun = this.env.sun(0);
     this.orbitAzimuth = this.env.orbitAzimuth(0);
     const self = this;
-    this.portCtx = {
+    this.ioCtx = {
       get tick() {
         return self.tick;
       },
@@ -211,46 +204,38 @@ export class SimulationEngine {
     return this.opts.seed;
   }
 
-  /** M15: the rovers have the PDP-11 core. */
-  get pdp11(): boolean {
-    return this.opts.cpu === 'pdp11';
-  }
-
   /** CPU cycles per tick of a rover's computer. */
   cyclesPerTick(u: Unit): number {
-    return u.machine ? u.chassis.cyclesPerTick * PDP11.cyclesPerRoverCycle : u.chassis.cyclesPerTick;
+    return u.chassis.cyclesPerTick;
   }
 
   private attachMachine(u: Unit): void {
-    if (!this.pdp11) return;
     this.machineHost ??= {
-      ctx: this.portCtx,
+      ctx: this.ioCtx,
       reboot: (unit, reason, why) => {
         this.hardReboot(unit, reason);
         this.log(unit, 'warn', why ? `CPU fault: ${why}. The ROM rebooted the rover.` : `Firmware asked for a reboot (reason ${reason}).`, 'rover');
-        this.events.emit('UNIT_STATE', { unitId: unit.id, state: unit.vm.state });
+        this.events.emit('UNIT_STATE', { unitId: unit.id, state: unit.cpu.state });
       },
       halt: (unit, fault) => {
         if (fault) {
-          unit.vm.fault(fault, BALANCE.watchdogTicks);
+          unit.cpu.fault(fault, BALANCE.watchdogTicks);
           this.log(unit, 'error', `CPU FAULT: ${fault}. Watchdog reboot in ${BALANCE.watchdogTicks} ticks.`, 'rover');
         } else {
-          unit.vm.halt();
+          unit.cpu.halt();
           this.queueBreakDump(unit, 'firmware'); // HALT, or BPT (the ROM handler halts): it reports itself
         }
-        this.events.emit('UNIT_STATE', { unitId: unit.id, state: unit.vm.state });
+        this.events.emit('UNIT_STATE', { unitId: unit.id, state: unit.cpu.state });
       },
       programFault: (unit, why) => this.log(unit, 'error', `Program FAULT: ${why}. Control returns to the firmware.`, 'rover'),
       programHalted: (unit) => this.queueBreakDump(unit, 'program'),
     };
     u.machine = new RoverMachine(u, this.machineHost);
-    u.photoFormats = PHOTO_FORMATS_2X; // owner decision: photos at double resolution (PDP11_CPU.md §6.3)
-    u.img = new Uint8Array(0);
   }
 
-  /** M15: assemble a slot for this rover (MACRO-11, predefined symbols). */
+  /** Assemble a slot for this rover (predefined symbols, the slot's region of core). */
   assembleFor(u: Unit, source: string, slot: Slot = 'firmware'): ImageResult {
-    return assembleImage(source, slot, this.registry, u.machine?.coreBytes);
+    return assembleImage(source, slot, this.registry, u.machine.coreBytes);
   }
 
   spawnUnit(name: string, x = 0, y = 0, chassis: ChassisDef = CHASSIS_MK1): Unit {
@@ -289,19 +274,6 @@ export class SimulationEngine {
     return this.units.find((u) => u.x === x && u.y === y);
   }
 
-  /**
-   * Compile for a slot; the other slot's bytes count against the shared flash (SPEC §3.9.1)
-   * and its VARs against the shared RAM (M14). The installed firmware compiles for the RAM
-   * top it was flashed with, so its VARs keep their addresses after a RAM upgrade.
-   */
-  compileFor(unit: Unit, source: string, slot: Slot = 'firmware', opts: { fresh?: boolean } = {}): CompileResult {
-    const otherBytes = slot === 'firmware' ? unit.programBytes : unit.firmwareBytes;
-    const otherRam = slot === 'firmware' ? unit.programRam : unit.firmwareRam;
-    const installed = slot === 'firmware' && !opts.fresh && unit.fwRamTop && source === unit.sourceCode;
-    const ramTop = installed ? unit.fwRamTop : unit.chassis.ramBytes;
-    return compile(source, unit.chassis, this.registry.constants(), { slot, otherBytes, otherRam, ramTop });
-  }
-
   signalOf(u: Unit): number {
     return Math.floor((signalStrength(u.antennaAngle, this.orbitAzimuth) * u.antennaHealth) / 100);
   }
@@ -322,12 +294,12 @@ export class SimulationEngine {
     return shapeContains(this.viewShape(u), dx, dy);
   }
 
-  /** SCAN (radar) range in tiles: any direction, day or night (@SENSOR_RANGE). */
+  /** Radar range in tiles: any direction, day or night (`RADRNG`). */
   sensorRange(u: Unit): number {
     return u.chassis.sensorRange;
   }
 
-  /** Turn in place (@HEADING write). Costs a little energy; no-op if already facing `dir`. */
+  /** Turn in place (`HDG` write). Costs a little energy; no-op if already facing `dir`. */
   private turn(u: Unit, dir: number): void {
     if (!u.powered || dir === u.heading) return;
     this.drain(u, BALANCE.turnEnergy);
@@ -357,7 +329,7 @@ export class SimulationEngine {
 
   /**
    * Uplink a console command. Dumps snapshot the CPU now and queue the reply ahead of the
-   * log; Continue ends a BRK halt (a running rover just ignores it). Returns why it was
+   * log; Continue ends a breakpoint halt (a running rover just ignores it). Returns why it was
    * rejected, or null. Mission control learns the CPU state only from the reply.
    */
   command(u: Unit, cmd: UplinkCommand, slot: Slot = 'firmware'): string | null {
@@ -365,7 +337,7 @@ export class SimulationEngine {
     const cost = this.commandCost(u);
     const target: Slot = cmd === 'RUN_AGAIN' ? 'program' : slot;
     let err: string | null = null;
-    if (!u.powered) err = `rover is ${u.vm.state}: it cannot receive commands`;
+    if (!u.powered) err = `rover is ${u.cpu.state}: it cannot receive commands`;
     else if (isDump && u.link.sys.length >= BALANCE.dumpQueueMax) err = `${BALANCE.dumpQueueMax} dumps are already waiting for the downlink`;
     else if (cmd === 'RUN_AGAIN' && !this.hasProgram(u)) err = 'no program in flash';
     else if (u.energy <= cost) err = `needs ${(cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(u)}`;
@@ -375,19 +347,13 @@ export class SimulationEngine {
     }
     u.energy -= cost;
     const prog = slot === 'program';
-    const vm = prog ? u.prog : u.vm;
     if (cmd === 'DUMP') this.queueRegisterDump(u, slot);
-    else if (cmd === 'DUMP_STACKS' && u.machine) {
+    else if (cmd === 'DUMP_STACKS') {
       const s = u.machine.stackWords(slot, STACK11_WORDS);
       u.link.sys.push({ bytes: encodeStack11Dump(s.sp, s.words, prog), taken: this.tick });
-    } else if (cmd === 'DUMP_STACKS') {
-      u.link.sys.push({ bytes: encodeStackDump(vm.dataStack, vm.callStack, prog ? DumpKind.PROG_STACKS : DumpKind.STACKS), taken: this.tick });
     } else if (cmd === 'RUN_AGAIN') this.restartProgram(u);
-    else if (!prog) vm.resume();
-    else if (u.progState === ProgState.PROG_HALTED) {
-      if (!u.machine) u.prog.resume();
-      u.progState = ProgState.PROG_READY;
-    }
+    else if (!prog) u.cpu.resume();
+    else if (u.progState === ProgState.PROG_HALTED) u.progState = ProgState.PROG_READY;
     const costMsg = cost ? ` (${(cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(u)})` : '';
     const slotMsg = isDump || cmd === 'CONTINUE' ? ` (${slot})` : '';
     this.log(u, 'info', `Uplink: ${UPLINK_COMMAND_NAMES[cmd]}${slotMsg} sent${costMsg}.`, 'sent');
@@ -395,17 +361,11 @@ export class SimulationEngine {
     return null;
   }
 
-  /** Queue a register dump of one slot, taken now (uplinked DUMP, or BRK: SPEC §3.8.4). */
+  /** Queue a register dump of one slot, taken now (uplinked DUMP, or a breakpoint: SPEC §3.8.4). */
   private queueRegisterDump(u: Unit, slot: Slot): void {
     const prog = slot === 'program';
-    if (u.machine) {
-      const { r, psw } = u.machine.registers(slot);
-      u.link.sys.push({ bytes: encodeCpu11Dump({ state: prog ? u.progState : u.vm.state, psw, r }, prog), taken: this.tick });
-      return;
-    }
-    const vm = prog ? u.prog : u.vm;
-    const d = { ip: vm.nextIp, status: vm.status, state: prog ? u.progState : vm.state, regs: vm.regs, dsDepth: vm.dataStack.length, csDepth: vm.callStack.length };
-    u.link.sys.push({ bytes: encodeCpuDump(d, prog ? DumpKind.PROG_CPU : DumpKind.CPU), taken: this.tick });
+    const { r, psw } = u.machine.registers(slot);
+    u.link.sys.push({ bytes: encodeCpu11Dump({ state: prog ? u.progState : u.cpu.state, psw, r }, prog), taken: this.tick });
   }
 
   /** A stop at a breakpoint sends a register dump unasked (dropped if the dump queue is full). */
@@ -421,62 +381,22 @@ export class SimulationEngine {
   // ---------------------------------------------------------------- program slot (M10)
 
   hasProgram(u: Unit): boolean {
-    if (u.machine) return u.machine.hasProgram;
-    return (u.prog.program?.instrs.length ?? 0) > 0;
+    return u.machine.hasProgram;
   }
 
-  /**
-   * The program returns to the firmware (M14 §5.1): the firmware continues after its
-   * CALL PROGRAM, in this tick if cycles are left. Devices the program started keep running.
-   */
+  /** The program returns to the firmware: now, or when the firmware's handler returns. Devices it started keep running. */
   private endSlice(u: Unit, state: ProgState): void {
-    if (u.slice < 0) return;
-    if (u.machine) return u.machine.requestExit(state);
-    u.slice = -1;
-    u.progState = state;
-    if (u.vm.ip === PROGRAM_GATE) u.vm.ip = u.vm.callStack.pop() ?? 0;
-    u.vm.unblock();
-  }
-
-  /** Firmware CALL PROGRAM: enter the program if it is ready, for @SLICE ticks (0 = no limit). */
-  private callProgram(u: Unit): boolean {
-    if (u.slice >= 0 || u.progState !== ProgState.PROG_READY || !this.hasProgram(u)) return false;
-    u.progState = ProgState.PROG_RUNNING;
-    u.preempted = 0;
-    u.slice = u.sliceSet;
-    u.vm.block();
-    this.wakeIfReady(u, u.prog); // suspended in a WAIT whose device has finished meanwhile
-    return true;
-  }
-
-  /**
-   * A BLOCKED context sleeps in `WAIT @port`: wake it when the port reads 0 (the WAIT then
-   * runs again, finds 0 and copies the device's result into @STATUS). Call only for u.cpu.
-   */
-  private wakeIfReady(u: Unit, cpu: RoverVM): void {
-    if (cpu.state !== CpuState.BLOCKED || cpu !== u.cpu) return;
-    const code = cpu.ip >= ROM_BASE ? romProgram() : cpu.program;
-    const k = code?.indexAt.get(cpu.ip);
-    const ins = k === undefined ? undefined : code!.instrs[k];
-    const port = ins?.op === 'WAIT' && ins.args[0].k === 'port' ? ins.args[0].name : null;
-    if (!port || (getPort(port)?.read?.(u, this.portCtx) ?? 0) === 0) cpu.unblock();
+    if (u.slice >= 0) u.machine.requestExit(state);
   }
 
   /** Fresh program context (restart from the top); ends a running slice (its devices keep running). */
   private restartProgram(u: Unit): void {
-    if (u.machine) {
-      if (!u.machine.restartProgram()) return; // when the firmware's handler returns
-      u.progResult = 0;
-      u.progState = this.hasProgram(u) ? ProgState.PROG_READY : ProgState.PROG_NONE;
-      return;
-    }
-    if (u.slice >= 0) this.endSlice(u, ProgState.PROG_READY);
-    u.prog.reboot();
+    if (!u.machine.restartProgram()) return; // when the firmware's handler returns
     u.progResult = 0;
     u.progState = this.hasProgram(u) ? ProgState.PROG_READY : ProgState.PROG_NONE;
   }
 
-  /** Firmware write to @PROG_STATE: PROG_NONE acknowledges, PROG_READY restarts (SPEC §3.9.2). */
+  /** Firmware write to `PRGST`: P.NONE acknowledges, P.RDY restarts (SPEC §3.9.2). */
   private setProgState(u: Unit, v: number): void {
     if (!this.hasProgram(u)) return;
     if (v === ProgState.PROG_NONE) u.progState = ProgState.PROG_NONE;
@@ -487,30 +407,20 @@ export class SimulationEngine {
   private hardReboot(u: Unit, reason: number): void {
     u.slice = -1;
     u.action = null;
-    resetDevices(u); // M14: latched arguments, results, radar, image send / erase
+    resetDevices(u); // latched arguments, results, radar, image erase
     // Control registers are CPU state: the watchdog is disarmed, fault protection off.
     u.wdt = 0;
     u.preemptMask = 0;
     u.batAlarm = 0;
     u.preempted = 0;
-    u.ramMemory().fill(0); // M14: RAM is zero after a hard reboot
-    u.vm.reboot();
-    if (u.machine) {
-      // M15 safe mode bookkeeping (BOOTCS, BOOTCT): the boot ROM decides (PDP11_CPU.md §10).
-      u.bootReason = reason;
-      u.faultBoots = u.faultBoots.filter((t) => t > this.tick - PDP11.safeModeTicks);
-      if (reason === BootReason.WATCHDOG || reason === BootReason.WDT_TIMEOUT || reason === BootReason.FAULT) u.faultBoots.push(this.tick);
-    }
-    u.machine?.hardReboot(); // M15: core reloaded from the images, the CPU at the boot ROM
+    u.cpu.reboot();
+    // Safe mode bookkeeping (BOOTCS, BOOTCT): the boot ROM decides (PDP11_CPU.md §10).
+    u.bootReason = reason;
+    u.faultBoots = u.faultBoots.filter((t) => t > this.tick - PDP11.safeModeTicks);
+    if (reason === BootReason.WATCHDOG || reason === BootReason.WDT_TIMEOUT || reason === BootReason.FAULT) u.faultBoots.push(this.tick);
+    u.machine.hardReboot(); // core reloaded from the images, the CPU at the boot ROM
     this.restartProgram(u);
     this.booted(u, reason);
-  }
-
-  /** Save migration (M14): the rover's code was rewritten for a new language version; restart it. */
-  rebootAfterUpdate(u: Unit): void {
-    if (!u.powered) return;
-    this.hardReboot(u, BootReason.UPDATE);
-    this.log(u, 'warn', 'Software update: the game rewrote this rover\'s code for the new language and rebooted it.', 'rover');
   }
 
   /** Power loss or destruction: the slice is gone with the CPU (the reboot resets the program). */
@@ -523,96 +433,31 @@ export class SimulationEngine {
    * An empty source erases the program.
    */
   uploadProgram(unit: Unit, source: string, opts: { factory?: boolean } = {}): UploadResult {
-    if (unit.machine) return this.uploadImage(unit, source, 'program', opts);
-    const res: UploadResult = { ...this.compileFor(unit, source, 'program'), cost: 0 };
-    if (!res.program) return res;
-    if (!opts.factory) {
-      const cost = this.programUploadCost(unit, res.flashUsed);
-      if (!unit.powered) res.rejected = `Rover is ${unit.vm.state}: it cannot receive a program.`;
-      else if (unit.energy <= cost)
-        res.rejected = `Upload needs ${(cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(unit)}; rover has ${(unit.energy / 1000).toFixed(1)}%.`;
-      if (res.rejected) {
-        this.recordSent({ unitId: unit.id, tick: this.tick, kind: 'PROGRAM', slot: 'program', bytes: res.flashUsed, cost: 0, rejected: res.rejected });
-        return res;
-      }
-      unit.energy -= cost;
-      res.cost = cost;
-    }
-    unit.programSource = source;
-    unit.programBytes = res.flashUsed;
-    unit.programRam = { low: res.ramLow, high: res.ramHigh };
-    unit.prog.program = res.program;
-    this.restartProgram(unit);
-    const costMsg = res.cost ? `, cost ${(res.cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(unit)}` : '';
-    const flash = `${unit.firmwareBytes} + ${res.flashUsed}/${unit.chassis.flashBytes} bytes`;
-    const cat: LogCategory = opts.factory ? 'world' : 'sent';
-    if (this.hasProgram(unit)) this.log(unit, 'info', `Program uploaded (${flash}${costMsg}). It starts with the firmware's next RUN.`, cat);
-    else this.log(unit, 'info', `Program erased (${flash}${costMsg}).`, cat);
-    if (!opts.factory) this.recordSent({ unitId: unit.id, tick: this.tick, kind: 'PROGRAM', slot: 'program', bytes: res.flashUsed, cost: res.cost });
-    return res;
+    return this.uploadImage(unit, source, 'program', opts);
   }
 
   /**
-   * Compile and flash new firmware over the uplink; hard reboot on success.
+   * Assemble and flash new firmware over the uplink; hard reboot on success.
    * `factory` installs firmware for free (new rovers, admin tools).
    */
   upload(unit: Unit, source: string, opts: { factory?: boolean } = {}): UploadResult {
-    if (unit.machine) return this.uploadImage(unit, source, 'firmware', opts);
-    const res: UploadResult = { ...this.compileFor(unit, source, 'firmware', { fresh: true }), cost: 0 }; // assembled for today's RAM
-    if (!res.program) return res;
-    if (!opts.factory) {
-      const cost = this.uploadCost(unit, res.flashUsed);
-      if (!unit.powered) res.rejected = `Rover is ${unit.vm.state}: it cannot receive firmware.`;
-      else if (unit.energy <= cost)
-        res.rejected = `Upload needs ${(cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(unit)}; rover has ${(unit.energy / 1000).toFixed(1)}%.`;
-      if (res.rejected) {
-        this.recordSent({ unitId: unit.id, tick: this.tick, kind: 'FIRMWARE', slot: 'firmware', bytes: res.flashUsed, cost: 0, rejected: res.rejected });
-        return res;
-      }
-      unit.energy -= cost;
-      res.cost = cost;
-    }
-    unit.sourceCode = source;
-    unit.firmwareBytes = res.flashUsed;
-    unit.firmwareRam = { low: res.ramLow, high: res.ramHigh };
-    unit.fwRamTop = unit.chassis.ramBytes;
-    unit.vm.program = res.program;
-    this.hardReboot(unit, BootReason.UPLOAD);
-    unit.cyclesLeft = 0;
-    const costMsg = res.cost ? `, cost ${(res.cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(unit)}` : '';
-    const prog = unit.programBytes ? ` + program ${unit.programBytes}` : '';
-    this.log(unit, 'info', `Firmware flashed (${res.flashUsed}${prog}/${unit.chassis.flashBytes} bytes${costMsg}). Rebooting.`, opts.factory ? 'world' : 'sent');
-    if (!opts.factory) this.recordSent({ unitId: unit.id, tick: this.tick, kind: 'FIRMWARE', slot: 'firmware', bytes: res.flashUsed, cost: res.cost });
-    return res;
+    return this.uploadImage(unit, source, 'firmware', opts);
   }
 
   /**
-   * M15: upload a MACRO-11 image. Firmware: flashed, hard reboot. Program: written into core
-   * at once and restarted, no reboot (SPEC §3.9.3). Same costs as Rover-ASM uploads.
+   * Upload an image. Firmware: flashed, hard reboot. Program: written into core at once and
+   * restarted, no reboot (SPEC §3.9.3).
    */
   private uploadImage(unit: Unit, source: string, slot: Slot, opts: { factory?: boolean }): UploadResult {
-    const m = unit.machine!;
+    const m = unit.machine;
     const r = this.assembleFor(unit, source, slot);
     const bytes = r.asm.bytes.length;
-    const res: UploadResult = {
-      program: null,
-      errors: r.errors.map((e) => ({ line: e.line, message: e.message })),
-      flashUsed: bytes,
-      lineBytes: {},
-      logTags: {},
-      regNames: {},
-      lineAddr: {},
-      ramUsed: 0,
-      ramLow: 0,
-      ramHigh: 0,
-      cost: 0,
-      assembled: r,
-    };
+    const res: UploadResult = { assembled: r, errors: r.errors.map((e) => ({ line: e.line, message: e.message })), bytes, cost: 0 };
     if (!r.image) return res;
     const kind = slot === 'firmware' ? 'FIRMWARE' : 'PROGRAM';
     if (!opts.factory) {
       const cost = slot === 'firmware' ? this.uploadCost(unit, bytes) : this.programUploadCost(unit, bytes);
-      if (!unit.powered) res.rejected = `Rover is ${unit.vm.state}: it cannot receive ${slot === 'firmware' ? 'firmware' : 'a program'}.`;
+      if (!unit.powered) res.rejected = `Rover is ${unit.cpu.state}: it cannot receive ${slot === 'firmware' ? 'firmware' : 'a program'}.`;
       else if (unit.energy <= cost)
         res.rejected = `Upload needs ${(cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(unit)}; rover has ${(unit.energy / 1000).toFixed(1)}%.`;
       if (res.rejected) {
@@ -672,17 +517,11 @@ export class SimulationEngine {
    */
   stepInstruction(unit: Unit, maxTicks = 10_000): boolean {
     for (let guard = 0; guard < maxTicks; guard++) {
-      if (unit.machine) {
-        if (unit.vm.state === CpuState.RUNNING && unit.cyclesLeft > 0 && unit.machine.run(1) > 0) return true;
-      } else if (unit.cpu.state === CpuState.RUNNING && unit.cyclesLeft > 0) {
-        this.runCpu(unit, 1);
-        return true;
-      }
+      if (unit.cpu.state === CpuState.RUNNING && unit.cyclesLeft > 0 && unit.machine.run(1) > 0) return true;
       // Finish this tick for everyone else, then start a new one.
       for (const u of this.units) if (u !== unit) this.runCpu(u, Infinity);
       this.beginTick();
-      if (!unit.powered || unit.vm.state === CpuState.FAULT || unit.vm.state === CpuState.HALTED) return false;
-      if (!unit.machine && unit.slice >= 0 && (unit.prog.state === CpuState.FAULT || unit.prog.state === CpuState.HALTED)) return false;
+      if (!unit.powered || unit.cpu.state === CpuState.FAULT || unit.cpu.state === CpuState.HALTED) return false;
     }
     return false;
   }
@@ -708,13 +547,8 @@ export class SimulationEngine {
       this.revealAround(u);
       this.updatePreempt(u, integrity, announced);
       this.updateSlice(u);
-      if (u.machine) {
-        if (u.powered) u.machine.tickStart();
-        u.cyclesLeft = u.vm.state === CpuState.RUNNING ? this.cyclesPerTick(u) : 0;
-        continue;
-      }
-      this.wakeIfReady(u, u.cpu);
-      u.cyclesLeft = u.cpu.state === CpuState.RUNNING ? u.chassis.cyclesPerTick : 0;
+      if (u.powered) u.machine.tickStart();
+      u.cyclesLeft = u.cpu.state === CpuState.RUNNING ? this.cyclesPerTick(u) : 0;
     }
     for (const d of this.drops) if (!d.landed && d.landTick === this.tick) this.landDrop(d);
     if (this.tick % 100 === 0) this.world.evictStale(BALANCE.chunkEvictAfterTicks);
@@ -723,9 +557,8 @@ export class SimulationEngine {
   }
 
   /**
-   * The slice timer at the start of a tick (M14 §5.1): when a limited slice runs out, the
-   * timer interrupt returns control to the firmware. A program asleep in WAIT is simply
-   * suspended there; its devices keep running. A slice of 0 has no limit.
+   * The slice timer at the start of a tick: when a limited run (`SLICE`) is used up, control
+   * returns to the firmware (`W.TIME`); the program's devices keep running. 0 has no limit.
    */
   private updateSlice(u: Unit): void {
     if (u.slice <= 0) return;
@@ -735,21 +568,21 @@ export class SimulationEngine {
   }
 
   /**
-   * @WDT (SPEC §3.9.5): counts down while the firmware runs or waits; BRK (HALTED) freezes it
+   * `WDT` (SPEC §3.9.5): counts down while the firmware runs or waits; a halt freezes it
    * like a debugger does, a FAULT leaves it to the fault reset. At 0: hard reboot.
    */
   private updateWatchdog(u: Unit): void {
-    if (u.wdt <= 0 || (u.vm.state !== CpuState.RUNNING && u.vm.state !== CpuState.BLOCKED)) return;
+    if (u.wdt <= 0 || (u.cpu.state !== CpuState.RUNNING && u.cpu.state !== CpuState.BLOCKED)) return;
     if (--u.wdt > 0) return;
     this.hardReboot(u, BootReason.WDT_TIMEOUT);
-    this.log(u, 'warn', 'Watchdog timeout: the firmware did not kick @WDT in time. Rebooting.', 'rover');
-    this.events.emit('UNIT_STATE', { unitId: u.id, state: u.vm.state });
+    this.log(u, 'warn', 'Watchdog timeout: the firmware did not kick WDT in time. Rebooting.', 'rover');
+    this.events.emit('UNIT_STATE', { unitId: u.id, state: u.cpu.state });
   }
 
   /**
-   * Fault protection (SPEC §3.9.2): a condition armed in @PREEMPT interrupts the program now,
-   * between instructions. It stays PROG_READY, so the next CALL PROGRAM resumes it; its
-   * devices keep running (the firmware decides: @DRIVE_N 0 stops the wheels).
+   * Fault protection (SPEC §3.9.2): a condition armed in `PREMPT` ends the program's run now,
+   * between instructions. It stays P.RDY, so the next gate resumes it; its devices keep
+   * running (the firmware decides: `DRVCNT` 0 stops the wheels).
    */
   private updatePreempt(u: Unit, integrityBefore: number, announced: boolean): void {
     if (u.slice < 0 || !u.preemptMask) return;
@@ -766,35 +599,8 @@ export class SimulationEngine {
   }
 
   private runCpu(u: Unit, maxInstructions: number): void {
-    if (u.machine) {
-      if (u.vm.state === CpuState.RUNNING) u.machine.run(maxInstructions);
-      else u.cyclesLeft = 0;
-      return;
-    }
-    let n = 0;
-    while (u.cyclesLeft > 0 && n < maxInstructions) {
-      const cpu = u.cpu;
-      if (cpu.state !== CpuState.RUNNING) break;
-      const r = cpu.step(this.hostFor(u), BALANCE.watchdogTicks);
-      n++;
-      u.cyclesLeft--;
-      if (r === 'endTick') u.cyclesLeft = 0;
-      const after = cpu.state as CpuState; // step() may have changed it
-      if (cpu === u.prog && u.slice >= 0) {
-        if (after === CpuState.FAULT) {
-          this.log(u, 'error', `Program FAULT: ${cpu.faultReason}. Control returns to the firmware.`, 'rover');
-          this.endSlice(u, ProgState.PROG_FAULT);
-        } else if (after === CpuState.HALTED) this.endSlice(u, ProgState.PROG_HALTED);
-      }
-      // BRK reports itself: the rover sends a register dump of the halted slot unasked
-      // (dropped if the dump queue is full). Only BRK halts a CPU.
-      if (after === CpuState.HALTED && u.link.sys.length < BALANCE.dumpQueueMax) this.queueRegisterDump(u, cpu === u.prog ? 'program' : 'firmware');
-    }
-    if (u.cpu.state !== CpuState.RUNNING) u.cyclesLeft = 0;
-    if (u.vm.state === CpuState.FAULT && u.vm.watchdog === BALANCE.watchdogTicks) {
-      this.log(u, 'error', `CPU FAULT: ${u.vm.faultReason}. Watchdog reboot in ${BALANCE.watchdogTicks} ticks.`, 'rover');
-      this.events.emit('UNIT_STATE', { unitId: u.id, state: u.vm.state });
-    }
+    if (u.cpu.state === CpuState.RUNNING) u.machine.run(maxInstructions);
+    else u.cyclesLeft = 0;
   }
 
   private revealAround(u: Unit): void {
@@ -808,7 +614,7 @@ export class SimulationEngine {
 
   /** Solar, actuators, lights and passive drain. Runs before actions each tick. */
   private updatePower(u: Unit): void {
-    if (u.vm.state === CpuState.DESTROYED) return;
+    if (u.cpu.state === CpuState.DESTROYED) return;
     const B = BALANCE;
 
     // Solar charging works even when powered off: that is how a dead rover recovers.
@@ -829,12 +635,12 @@ export class SimulationEngine {
     // Dust settles on an open array; folding it (a completed stow) shakes some off.
     if (u.solarDeploy > 0 && u.solarDust < 100 && this.tick % B.dustTicks === 0) u.solarDust++;
 
-    if (u.vm.state === CpuState.POWER_OFF) {
+    if (u.cpu.state === CpuState.POWER_OFF) {
       if (u.energy * 100 >= B.coldBootPercent * u.chassis.batteryCapacity) {
-        u.vm.state = CpuState.RUNNING;
+        u.cpu.state = CpuState.RUNNING;
         this.hardReboot(u, BootReason.COLD_BOOT);
         this.log(u, 'warn', 'Solar cold boot: battery recovered, firmware restarted.', 'rover');
-        this.events.emit('UNIT_STATE', { unitId: u.id, state: u.vm.state });
+        this.events.emit('UNIT_STATE', { unitId: u.id, state: u.cpu.state });
       }
       return;
     }
@@ -863,7 +669,7 @@ export class SimulationEngine {
 
   /** Micrometeorites: light hull wear (more while driving), dish wear, heavy damage to an exposed array. */
   private applySquall(u: Unit, d: SquallDamage): void {
-    if (u.vm.state === CpuState.DESTROYED || this.cheats.invulnerable) return;
+    if (u.cpu.state === CpuState.DESTROYED || this.cheats.invulnerable) return;
     const t = this.tick;
     if (d.hullEvery) {
       const base = d.hullEvery * u.chassis.hullArmor;
@@ -959,7 +765,7 @@ export class SimulationEngine {
       sy: shot.y,
       lit: this.photoLit(u, dir),
       noise: { tick: this.tick, seq: u.link.seq },
-      ...(u.machine ? { x2: true } : {}),
+      x2: true,
       ...(shot.horizon ? { horizon: shot.horizon } : {}),
       ...(this.anomalyAt(shot.subject, shot.x, shot.y) ? { anomaly: true } : {}),
     };
@@ -968,37 +774,10 @@ export class SimulationEngine {
     mem.set(productPayload(this.seed, { ...cap, seq: 0, tick: 0, credits: 0 }));
     u.capture = cap;
     u.snapMode = mode;
-    u.imgEdited = false;
     this.stats.photosTaken++;
   }
 
-  /**
-   * @SEND type (SPEC §3.8.7): image memory → a photo product in the recorder, for
-   * BALANCE.sendEnergy (ERR_LOW_POWER without it). The first send
-   * of the capture's type carries the capture (RAW, or EDITED after an STB); any other is DRAWN.
-   */
-  private send(u: Unit, type: number): Status {
-    const mem = u.imageMemory();
-    const n = isPhoto(type) ? photoBytes(type) : 0;
-    if (!n || n > mem.length) return Status.ERR_INVALID;
-    if (u.link.recFree(u.recorderBytes) < productFrameBytes(type)) return Status.ERR_FULL;
-    if (u.energy < BALANCE.sendEnergy) return Status.ERR_LOW_POWER;
-    const cap = u.capture?.type === type ? u.capture : null;
-    let p: Omit<ProductDesc, 'seq' | 'tick'>;
-    if (cap) {
-      const { noise, ...photo } = cap;
-      p = { ...photo, noise, credits: 0, ...(u.imgEdited ? { level: Level.EDITED, data: toHex(mem.subarray(0, n)) } : {}) };
-      u.capture = null;
-    } else {
-      p = { type, subject: 0, x: u.x, y: u.y, lit: false, credits: 0, level: Level.DRAWN, data: toHex(mem.subarray(0, n)) };
-    }
-    this.recordProduct(u, p);
-    this.drain(u, BALANCE.sendEnergy);
-    if (u.powered) u.imgOp = { kind: 'send', ticksLeft: BALANCE.sendTicks };
-    return Status.OK;
-  }
-
-  /** @ERASE (SPEC §3.8.7): zero image memory and drop the capture, on request only. */
+  /** The erase (`F.ERAS`, SPEC §3.8.7): zero image memory and drop the capture, on request only. */
   private erase(u: Unit): Status {
     if (u.energy < BALANCE.eraseEnergy) return Status.ERR_LOW_POWER;
     u.clearImageMemory();
@@ -1022,7 +801,7 @@ export class SimulationEngine {
     if (!isPhoto(g.type)) return 'only photos can be flagged';
     if (g.level === Level.DRAWN) return 'drawn picture: no camera photo';
     if (g.flag) return 'already flagged';
-    if (g.received < productFrameBytes(g.type)) return 'photo not complete';
+    if (g.received < productSize(g)) return 'photo not complete';
     if (!g.lit) return 'dark photo';
     if (!g.anomaly) {
       g.flag = 'miss';
@@ -1062,23 +841,21 @@ export class SimulationEngine {
   }
 
   private updateUnitPhysics(u: Unit): void {
-    const vm = u.vm;
-    if (vm.state === CpuState.DESTROYED) return;
+    const cpu = u.cpu;
+    if (cpu.state === CpuState.DESTROYED) return;
 
-    if (vm.state === CpuState.FAULT) {
-      if (--vm.watchdog <= 0) {
+    if (cpu.state === CpuState.FAULT) {
+      if (--cpu.watchdog <= 0) {
         this.hardReboot(u, BootReason.WATCHDOG);
         this.log(u, 'warn', 'Watchdog reboot.', 'rover');
-        this.events.emit('UNIT_STATE', { unitId: u.id, state: vm.state });
+        this.events.emit('UNIT_STATE', { unitId: u.id, state: cpu.state });
       }
       return;
     }
 
-    if (vm.state === CpuState.POWER_OFF) return;
+    if (cpu.state === CpuState.POWER_OFF) return;
 
-    // M14 devices (docs/ASSEMBLER_CORE.md §4): each one progresses on its own.
-    if (u.vm.timer > 0) u.vm.timer--;
-    if (u.prog.timer > 0) u.prog.timer--;
+    // Devices: each one progresses on its own.
     if (u.radarTicks > 0 && --u.radarTicks === 0) this.radarSweep(u);
     if (u.imgOp && --u.imgOp.ticksLeft <= 0) u.imgOp = null;
 
@@ -1117,14 +894,14 @@ export class SimulationEngine {
     if (st !== Status.OK) this.finishAction(u, 'drive', st);
   }
 
-  /** The chassis' work is done: the device's result waits for `WAIT @port`. */
+  /** The chassis' work is done: DONE, and the device's result in its error register. */
   private finishAction(u: Unit, dev: Device, status: Status): void {
     u.action = null;
     u.results[dev] = status;
     if (status !== Status.OK) this.events.emit('UNIT_STATUS', { unitId: u.id, status });
   }
 
-  /** The radar sweep ends: the first rover / obstacle / item in range answers (@RADAR_HIT, @RADAR_DIST). */
+  /** The radar sweep ends: the first rover / obstacle / item in range answers (`RADHIT`, `RADDST`). */
   private radarSweep(u: Unit): void {
     const dir = u.radarDir;
     const range = this.sensorRange(u);
@@ -1144,12 +921,6 @@ export class SimulationEngine {
     u.radarDist = dist;
     u.results.radar = Status.OK;
     this.events.emit('SCAN_PULSE', { unitId: u.id, x: u.x, y: u.y, dir, dist: dist || range, hit });
-  }
-
-  /** @STATUS of the context that runs now (each slot has its own). */
-  private setStatus(u: Unit, status: Status): void {
-    u.cpu.status = status;
-    if (status !== Status.OK) this.events.emit('UNIT_STATUS', { unitId: u.id, status });
   }
 
   /** Start moving one tile. Returns OK if the move began. */
@@ -1277,12 +1048,12 @@ export class SimulationEngine {
   private drain(u: Unit, amount: number): void {
     u.energy = Math.max(0, u.energy - amount);
     if (u.energy === 0 && u.powered) {
-      u.vm.state = CpuState.POWER_OFF;
+      u.cpu.state = CpuState.POWER_OFF;
       u.action = null;
       u.cyclesLeft = 0;
       this.abortSlice(u);
       this.log(u, 'error', 'Battery depleted. Rover powered off.', 'rover');
-      this.events.emit('UNIT_STATE', { unitId: u.id, state: u.vm.state });
+      this.events.emit('UNIT_STATE', { unitId: u.id, state: u.cpu.state });
     }
   }
 
@@ -1290,12 +1061,12 @@ export class SimulationEngine {
     if (this.cheats.invulnerable) return;
     u.hull = Math.max(0, u.hull - amount);
     if (u.hull === 0) {
-      u.vm.state = CpuState.DESTROYED;
+      u.cpu.state = CpuState.DESTROYED;
       u.action = null;
       u.cyclesLeft = 0;
       this.abortSlice(u);
       this.log(u, 'error', 'Hull breached. Rover destroyed.', 'rover');
-      this.events.emit('UNIT_STATE', { unitId: u.id, state: u.vm.state });
+      this.events.emit('UNIT_STATE', { unitId: u.id, state: u.cpu.state });
     }
   }
 
@@ -1303,59 +1074,9 @@ export class SimulationEngine {
     this.events.emit('LOG', { unitId: u.id, level, message, category });
   }
 
-  // ---------------------------------------------------------------- hardware
-
-  private hostFor(u: Unit): VmHost {
-    return {
-      readPort: (name) => getPort(name)?.read?.(u, this.portCtx) ?? 0,
-      writePort: (name, v) => {
-        const p = getPort(name);
-        // Firmware-only ports: the compiler refuses program writes; the ROM's (CALL RUN) are ignored.
-        if (p && !(u.cpu === u.prog && FIRMWARE_ONLY_PORTS.has(p.name))) writePortClamped(p, u, v, this.portCtx);
-      },
-      waitResult: (port) => {
-        const dev = WAIT_DEVICE[port];
-        return dev ? u.results[dev] : undefined;
-      },
-      callProgram: () => this.callProgram(u),
-      // M14 data address space (docs/ASSEMBLER_CORE.md §7.1): RAM, image memory, cargo.
-      load: (addr) => {
-        const ram = u.ramMemory();
-        if (addr >= MEMORY_MAP.RAM && addr < MEMORY_MAP.RAM + ram.length) return ram[addr - MEMORY_MAP.RAM];
-        const img = u.imageMemory();
-        if (addr >= MEMORY_MAP.IMG && addr < MEMORY_MAP.IMG + img.length) return img[addr - MEMORY_MAP.IMG];
-        if (addr >= MEMORY_MAP.CARGO && addr < MEMORY_MAP.CARGO + u.cargo.length) return u.cargo[addr - MEMORY_MAP.CARGO] & 255;
-        return undefined;
-      },
-      store: (addr, value) => {
-        const ram = u.ramMemory();
-        if (addr >= MEMORY_MAP.RAM && addr < MEMORY_MAP.RAM + ram.length) {
-          ram[addr - MEMORY_MAP.RAM] = value & 255;
-          return null;
-        }
-        const img = u.imageMemory();
-        if (addr >= MEMORY_MAP.IMG && addr < MEMORY_MAP.IMG + img.length) {
-          img[addr - MEMORY_MAP.IMG] = value & 255;
-          u.imgEdited = true;
-          return null;
-        }
-        if (addr >= MEMORY_MAP.CARGO && addr < MEMORY_MAP.CARGO + u.cargo.length) return 'Cargo is read-only';
-        return 'No memory';
-      },
-      log: (tag, value) => {
-        u.link.enqueue(encodeLog(tag, value), u.chassis.logFifoBytes);
-      },
-      end: (value) => {
-        if (u.slice < 0) return;
-        u.progResult = value;
-        this.endSlice(u, ProgState.PROG_DONE);
-      },
-    };
-  }
-
   // ---------------------------------------------------------------- downlink
 
-  /** After a hard reboot: @LOG_LOST restarts, and the boot frame `LOG 15 reason` is queued. */
+  /** After a hard reboot: the log's lost count restarts, and the boot frame (system tag 15, the reason) is queued. */
   private booted(u: Unit, reason: number): void {
     u.link.lost = 0;
     u.link.enqueue(encodeLog(SYSTEM_TAG, reason), u.chassis.logFifoBytes);
@@ -1486,21 +1207,18 @@ export class SimulationEngine {
   }
 
   /**
-   * A write to a device port (M14, docs/ASSEMBLER_CORE.md §4): start the device, or say why
-   * not in @STATUS (and in the device's result, so a WAIT right after reports it too).
-   * Drive, tools, repair and camera share the chassis: one at a time (ERR_BUSY).
+   * A device start from the I/O page (GO in a device block): start the device, or say why not
+   * in its result (`xxER`, with ERR in its CSR). Drive, tools, repair and camera share the
+   * chassis: one at a time (E.BUSY).
    */
-  private device(u: Unit, port: DevicePort, v: number): void {
+  private device(u: Unit, start: DeviceStart, v: number): void {
     const validDir = (d: number) => d >= 0 && d <= 3;
-    const done = (dev: Device | null, st: Status) => {
-      if (dev) u.results[dev] = st;
-      this.setStatus(u, st);
+    const done = (dev: Device, st: Status) => {
+      u.results[dev] = st;
+      if (st !== Status.OK) this.events.emit('UNIT_STATUS', { unitId: u.id, status: st });
     };
     const busy = u.action !== null;
-    switch (port) {
-      case 'TIMER':
-        u.cpu.timer = Math.max(0, v);
-        return done(null, Status.OK);
+    switch (start) {
       case 'DRIVE_N': {
         u.driveN = v;
         const a = u.action;
@@ -1538,13 +1256,10 @@ export class SimulationEngine {
       case 'CAM':
         if (busy) return done('cam', Status.ERR_BUSY);
         return done('cam', this.startTool(u, TOOLS.CAMERA, v, u.camMode));
-      case 'SEND':
-      case 'ERASE': {
-        const dev = port === 'SEND' ? 'send' : 'erase';
-        // The image memory is the camera's: not while it exposes, one transfer at a time.
-        if (u.imgOp || (u.action?.kind === 'TOOL' && u.action.tool === 'CAMERA')) return done(dev, Status.ERR_BUSY);
-        return done(dev, port === 'SEND' ? this.send(u, v || u.snapMode) : this.erase(u));
-      }
+      case 'ERASE':
+        // The image memory is the camera's: not while it exposes, one erase at a time.
+        if (u.imgOp || (u.action?.kind === 'TOOL' && u.action.tool === 'CAMERA')) return done('erase', Status.ERR_BUSY);
+        return done('erase', this.erase(u));
     }
   }
 
@@ -1553,8 +1268,8 @@ export class SimulationEngine {
   readonly admin = {
     forceCharge: (u: Unit) => {
       u.energy = u.chassis.batteryCapacity;
-      if (u.vm.state === CpuState.POWER_OFF) {
-        u.vm.state = CpuState.RUNNING;
+      if (u.cpu.state === CpuState.POWER_OFF) {
+        u.cpu.state = CpuState.RUNNING;
         this.hardReboot(u, BootReason.ADMIN);
         this.log(u, 'warn', 'ADMIN: battery recharged, cold boot.');
       } else this.log(u, 'warn', 'ADMIN: battery recharged.');
@@ -1564,8 +1279,8 @@ export class SimulationEngine {
       u.solarHealth = 100;
       u.antennaHealth = 100;
       u.solarDust = 0;
-      if (u.vm.state === CpuState.DESTROYED) {
-        u.vm.state = CpuState.RUNNING;
+      if (u.cpu.state === CpuState.DESTROYED) {
+        u.cpu.state = CpuState.RUNNING;
         this.hardReboot(u, BootReason.ADMIN);
       }
       this.log(u, 'warn', 'ADMIN: hull repaired.');
@@ -1576,7 +1291,6 @@ export class SimulationEngine {
       u.y = y;
       u.action = null;
       u.motion = null;
-      if (u.cpu.state === CpuState.BLOCKED) u.cpu.unblock();
       this.revealAround(u);
       this.log(u, 'warn', `ADMIN: teleported to (${x}, ${y}).`);
       return true;
@@ -1592,7 +1306,7 @@ export class SimulationEngine {
       u.antennaHealth = 100;
       u.solarDust = 0;
       u.temp = ambientTemp(this.sun.light);
-      u.vm.state = CpuState.RUNNING;
+      u.cpu.state = CpuState.RUNNING;
       this.hardReboot(u, BootReason.ADMIN);
       this.revealAround(u);
       this.log(u, 'warn', 'ADMIN: respawned at origin.');

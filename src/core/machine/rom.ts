@@ -366,7 +366,7 @@ DIRTO:  MOV  R2, -(SP)
 
 ; PLOT: set pixel (x = R0, y = R1) of a 64x64 2-bpp photo (modes 1 and 2) to grey R2
 ; (0 black ... 3 white; R2 is kept). A row is 16 bytes, four pixels a byte, the leftmost
-; in the top bits. R0 = OK, or E.INV (nothing drawn) if x or y is outside 0-63.
+; in the low bits (little-endian, like the words). R0 = OK, or E.INV (nothing drawn) if x or y is outside 0-63.
 PLOT:   CMP  R0, #63.
         BHI  9$                 ; unsigned: negative numbers are too big as well
         CMP  R1, #63.
@@ -383,9 +383,8 @@ PLOT:   CMP  R0, #63.
         ADD  R3, R1
         ADD  #IMGBAS, R1        ; R1 = the byte's address
         BIC  #177774, R0        ; x MOD 4: which pixel of the byte
-        MOV  #3, R3
-        SUB  R0, R3
-        ASL  R3                 ; R3 = (3 - x MOD 4) x 2: how far to shift
+        MOV  R0, R3
+        ASL  R3                 ; R3 = (x MOD 4) x 2: how far to shift
         MOV  #3, R0             ; R0 = mask, R4 = grey, both still in the low bits
         MOV  R2, R4
         BIC  #177774, R4

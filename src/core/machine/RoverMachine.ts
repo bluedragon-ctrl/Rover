@@ -15,7 +15,7 @@ import { BUS_ERROR, Cpu, PSW_ADDRESS, assemble, type AssembleResult, type Bus, t
 import { PDP11 } from '../balance';
 import { TX_BOOT } from '../downlink';
 import { freshParser, parseStream, type ParserState } from '../messages';
-import type { PortContext } from '../ports';
+
 import { ProgState } from '../types';
 import type { Capture, Unit } from '../Unit';
 import type { WorldRegistry } from '../WorldRegistry';
@@ -36,6 +36,7 @@ import {
   Why,
   type DevKey,
   IO_REGISTERS,
+  type IoContext,
   type IoHost,
   type IoRegister,
   type IoState,
@@ -85,7 +86,7 @@ export function assembleImage(source: string, slot: MachineSlot, registry: World
 
 /** What the machine asks of the engine. */
 export interface MachineHost {
-  readonly ctx: PortContext;
+  readonly ctx: IoContext;
   /** Hard reboot (the `REBOOT` register, after the instruction). */
   reboot(u: Unit, reason: number, why: string): void;
   /** `HALT` (or a double fault) in the firmware: the whole CPU stops. */
@@ -259,7 +260,6 @@ export class RoverMachine implements Bus {
       const a = addr - PDP11.imageBase;
       img[a] = value & 0xff;
       if (!byte) img[a + 1] = (value >> 8) & 0xff;
-      this.u.imgEdited = true;
       return true;
     }
     if (addr >= PDP11.romBase && addr < PDP11.romBase + ROM_BYTES.length) return this.refuse('pro');

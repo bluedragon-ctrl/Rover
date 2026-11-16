@@ -6,19 +6,17 @@ import { oct6, pdpListing, pdpRegions, toolchain } from '../src/ui/toolchain';
 // M15 slice 5: the Code tab's view of the PDP-11 core (headless parts).
 
 function setup() {
-  const e = new SimulationEngine({ seed: 1, cpu: 'pdp11' });
+  const e = new SimulationEngine({ seed: 1 });
   const u = e.spawnUnit('t');
   return { e, u, tc: toolchain(e) };
 }
 
 describe('PDP-11 toolchain for the Code tab', () => {
-  it('picks MACRO-11 templates and octal addresses for a PDP-11 engine', () => {
+  it('picks the templates and octal addresses', () => {
     const { tc } = setup();
-    expect(tc.pdp).toBe(true);
     expect(tc.templates('program')).toBe(PDP_PROGRAM_TEMPLATES);
     expect(tc.templates('firmware')).toBe(PDP_FIRMWARE_TEMPLATES);
     expect(tc.addr(0o2000, 'program')).toBe('002000');
-    expect(toolchain(new SimulationEngine({ seed: 1 })).pdp).toBe(false);
   });
 
   it('builds every template; sizes fit the regions', () => {
@@ -80,19 +78,18 @@ describe('PDP-11 toolchain for the Code tab', () => {
 
 describe('Comms on the PDP-11 core', () => {
   it('names log tags from the L. symbols and finds the lines that use them', async () => {
-    const { pdpDictionary } = await import('../src/ui/comms');
+    const { slotDictionary } = await import('../src/ui/comms');
     const { u, tc } = setup();
     const src = 'L.X = 5   ; tag\nSTART:  MOV #L.X, R0\n        JSR PC, LOG\n        HALT';
-    const d = pdpDictionary(tc.build(u, src, 'program'));
+    const d = slotDictionary(tc.build(u, src, 'program'));
     expect(d.tags[5]).toEqual({ names: ['L.X'], lines: [2] });
-    expect(d.pdp).toBe(true);
   });
 
   it('describes framed messages and explains their bytes', async () => {
-    const { describeMessage, messageFields, pdpDictionary, emptyDictionary } = await import('../src/ui/comms');
+    const { describeMessage, messageFields, slotDictionary, emptyDictionary } = await import('../src/ui/comms');
     const { MsgType } = await import('../src/core/messages');
     const { u, tc } = setup();
-    const d = { firmware: pdpDictionary(tc.build(u, PDP_DEFAULT_FIRMWARE, 'firmware')), program: { ...emptyDictionary(), pdp: true } };
+    const d = { firmware: slotDictionary(tc.build(u, PDP_DEFAULT_FIRMWARE, 'firmware')), program: emptyDictionary() };
     const log = { unitId: 1, tick: 3, type: MsgType.LOG, body: [1, 0xff, 0xff], status: 'ok' as const };
     expect(describeMessage(log, d)).toBe('L.BAT = -1');
     const f = messageFields(log, d);
@@ -107,19 +104,19 @@ describe('Comms on the PDP-11 core', () => {
   });
 
   it('explains PDP-11 dumps byte by byte; BPT dumps count as sent by a breakpoint', async () => {
-    const { frameFields, describeFrame, sentByBrk, pdpDictionary, emptyDictionary, romRoutineAt } = await import('../src/ui/comms');
+    const { frameFields, describeFrame, sentByBreakpoint, slotDictionary, emptyDictionary, romRoutineAt } = await import('../src/ui/comms');
     const { encodeCpu11Dump, encodeStack11Dump } = await import('../src/core/downlink');
     const { ROM_EXPORTS } = await import('../src/core/machine/rom');
     const { ProgState } = await import('../src/core/types');
     const { u, tc } = setup();
-    const d = { firmware: { ...emptyDictionary(), pdp: true }, program: pdpDictionary(tc.build(u, PDP_FIRST_STEPS, 'program')) };
+    const d = { firmware: emptyDictionary(), program: slotDictionary(tc.build(u, PDP_FIRST_STEPS, 'program')) };
     const bytes = encodeCpu11Dump({ state: ProgState.PROG_HALTED, psw: 0o170004, r: [1, 2, 3, 4, 5, 6, 0o3774, 0o2002] }, true);
     const fields = frameFields(bytes, d);
     expect(fields.flatMap((x) => x.bytes)).toEqual(bytes);
     expect(fields.find((x) => x.name === 'PSW')?.value).toBe('170004 nZvc');
     expect(fields.find((x) => x.name === 'PC')?.note).toMatch(/after the BPT on line 16/);
     const frame = { unitId: 1, tick: 9, bytes, gap: 0, taken: 8 };
-    expect(sentByBrk(frame, [])).toBe(true);
+    expect(sentByBreakpoint(frame, [])).toBe(true);
     expect(describeFrame(frame, d)).toMatch(/^PROGRAM DUMP \(snapshot t8\): PC 002002 \(L17\) · PROG_HALTED · PSW 170004 nZvc · R0=000001/);
     const st = encodeStack11Dump(0o1774, [7, 0o2014]);
     expect(frameFields(st, d).flatMap((x) => x.bytes)).toEqual(st);

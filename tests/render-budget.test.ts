@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { CHUNK } from '../src/core/ChunkedWorld';
 import { SimulationEngine } from '../src/core/SimulationEngine';
+import { T } from '../src/core/WorldRegistry';
 import { ChunkPool } from '../src/render/ChunkPool';
 import { FrameStats, percentile } from '../src/render/FrameStats';
 import { TileLighting } from '../src/render/TileLighting';
@@ -144,7 +145,7 @@ describe('wall ridges', () => {
     const eng = new SimulationEngine({ seed: 1 });
     const pool = new ChunkPool(eng, new THREE.Group(), new TileLighting());
     // Find a chunk with a wall on its east edge whose east neighbour (next chunk) is a wall.
-    const wall = eng.registry.constants().CLIFF_WALL;
+    const wall = T.CLIFF_WALL;
     let found: [number, number] | null = null;
     for (let cx = 1; cx < 12 && !found; cx++)
       for (let y = 0; y < CHUNK && !found; y++) {

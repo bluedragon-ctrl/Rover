@@ -2,10 +2,10 @@ import { BALANCE } from '../core/balance';
 import { BOOT_REASON_NAMES, decodeDump, decodeFrame, hex, PRODUCT_NAMES, SYSTEM_TAG, type ReceivedFrame, type ReceivedProduct } from '../core/downlink';
 import type { SimulationEngine } from '../core/SimulationEngine';
 import type { Unit } from '../core/Unit';
-import { costText, describeMessage, DictionaryCache, fieldsHtml, frameFields, messageFields, replyTo, sentByBrk, sentText, snapKindOf, tagName, tagSource, type Dictionaries } from './comms';
+import { costText, describeMessage, DictionaryCache, fieldsHtml, frameFields, messageFields, replyTo, sentByBreakpoint, sentText, snapKindOf, tagName, tagSource, type Dictionaries } from './comms';
 import { MsgType, type ReceivedMessage } from '../core/messages';
 import { PDP11 } from '../core/balance';
-import type { Slot } from '../core/vm/Compiler';
+import type { Slot } from '../core/SimulationEngine';
 import { hint } from './hint';
 import { productSize } from '../core/imaging';
 
@@ -13,24 +13,8 @@ const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replac
 
 type Filter = 'all' | 'sent' | 'log' | 'snap' | 'system' | 'science';
 
+/** The program's output is framed messages. */
 const HELP = (fifo: number, rate: number) => `Everything that went between mission control and the rover, oldest first.
-  <br><br><b class="up">▲ Sent</b> (up): code uploads and requests from the <b>Code</b> tab. They need the dish to reach the
-  orbiter and cost a little battery.
-  <br><b class="down">▼ Received</b> (down), what the rover sends:
-  <br>· <b>LOG</b>: your <code>LOG tag value</code> lines. Names like <code>T_BAT</code> come from the <code>CONST</code>s in the
-  code you uploaded; <code>fw L55</code> = firmware line 55. Repeats are merged (×12).
-  <br>· <b>DUMP</b>: the registers or stacks you asked for (Code tab, <i>Dump program state</i>), or that a <code>BRK</code>
-  sent by itself, byte by byte. Underlined values (<code>fw L55</code>, addresses) open that line in the Code tab.
-  <br>· <b>✗</b>: something you tried to send that the rover could not take (no power, battery, queue full).
-  <br>· <b>SYS</b>: the rover itself, e.g. after a reboot.
-  <br>· <b>SCI</b>: photos and spectra (shown in the <b>Gallery</b>).
-  <br><br><b>Decode bytes</b> explains every byte of LOG and system messages too. All formats: <b>Reference → Radio</b>.
-  <br><br>The rover sends dumps first, then the log, then science, ${rate} B per tick at full signal and nothing below
-  signal ${BALANCE.linkMinSignal}. Log messages wait in a ${fifo} B queue; when it is full new ones are <b>lost</b>.
-  <br><br>Goals, weather and supplies are in <b>Mission events</b> at the bottom.`;
-
-/** M15: the same help for the PDP-11 core, where the program's output is framed messages. */
-const HELP_11 = (fifo: number, rate: number) => `Everything that went between mission control and the rover, oldest first.
   <br><br><b class="up">▲ Sent</b> (up): code uploads and requests from the <b>Code</b> tab. They need the dish to reach the
   orbiter and cost a little battery.
   <br><b class="down">▼ Received</b> (down), what the rover sends:
@@ -85,7 +69,7 @@ export class CommsPanel {
     el.classList.add('comms-panel');
     el.innerHTML = `
       <section class="panel-box link-box">
-        <header><span><b>Radio link</b>${hint(engine.pdp11 ? HELP_11(PDP11.txFifoBytes, (ch?.linkBytesPerTick ?? BALANCE.linkBytesPerTick) * PDP11.linkScale) : HELP(ch?.logFifoBytes ?? 32, ch?.linkBytesPerTick ?? BALANCE.linkBytesPerTick))}</span></header>
+        <header><span><b>Radio link</b>${hint(HELP(PDP11.txFifoBytes, ch?.linkBytesPerTick ?? BALANCE.linkBytesPerTick))}</span></header>
         <div id="comms-link"></div>
       </section>
       <section class="panel-box grow">
@@ -156,15 +140,9 @@ export class CommsPanel {
     return `
       <div class="link-row"><span class="dir down">▼ down</span>${meter}<span class="${ok ? '' : 'warn'}">signal ${sig}${ok ? '' : ` · needs ${min}: nothing arrives`}</span></div>
       <div class="link-row small dim"><span class="dir"></span>
-        ${
-          u.machine
-            ? `<span title="Message bytes waiting in the real-time FIFO (TX). Bytes that do not fit are lost.">TX ${link.tx.length}/${PDP11.txFifoBytes} B</span> ·
+        <span title="Message bytes waiting in the real-time FIFO (TX). Bytes that do not fit are lost.">TX ${link.tx.length}/${PDP11.txFifoBytes} B</span> ·
         <span title="Photos and other messages waiting in the recorder (sent after TX)">recorder ${link.recUsed}/${u.recorderBytes} B</span> ·
-        <span class="${link.txLost ? 'warn' : ''}" title="TX bytes dropped since the last reboot (TXLOST)">lost ${link.txLost} B</span>`
-            : `<span title="LOG messages waiting on the rover. When the queue is full, new ones are lost.">log queue ${link.used}/${u.chassis.logFifoBytes} B</span> ·
-        <span title="Photos and spectra waiting on the rover (sent after the log)">science ${link.recUsed}/${u.recorderBytes} B</span> ·
-        <span class="${link.lost ? 'warn' : ''}" title="LOG messages dropped since the last reboot (@LOG_LOST)">lost ${link.lost}</span>`
-        }</div>
+        <span class="${link.txLost ? 'warn' : ''}" title="TX bytes dropped since the last reboot (TXLOST)">lost ${link.txLost} B</span></div>
       <div class="link-row small dim"><span class="dir up">▲ up</span>
         <span>${cost ? `each request ≈ ${costText(cost)}` : 'requests free (admin)'} · send code and requests from the <b>Code</b> tab</span></div>`;
   }
@@ -223,9 +201,9 @@ export class CommsPanel {
     const base = { tick: f.tick, order, unitId: f.unitId };
     const dump = decodeDump(f.bytes);
     if (dump) {
-      const what = `${dump.slot === 'program' ? 'Program' : 'Firmware'} ${dump.kind === 1 || dump.kind === 3 ? 'registers' : dump.kind === 4 ? 'stack' : 'stacks'}`;
-      const brk = sentByBrk(f, this.engine.sent);
-      const at = f.taken === undefined ? '' : brk ? ` <span class="warn">· sent by ${dump.kind === 3 ? 'BPT' : 'BRK'} at t${f.taken}</span>` : ` <span class="dim">· dumped on the rover at t${f.taken}</span>`;
+      const what = `${dump.slot === 'program' ? 'Program' : 'Firmware'} ${dump.kind === 'regs' ? 'registers' : 'stack'}`;
+      const brk = sentByBreakpoint(f, this.engine.sent);
+      const at = f.taken === undefined ? '' : brk ? ` <span class="warn">· sent by BPT at t${f.taken}</span>` : ` <span class="dim">· dumped on the rover at t${f.taken}</span>`;
       return {
         ...base,
         cls: 'snap',
@@ -307,9 +285,7 @@ export class CommsPanel {
       rows.push(
         items.length || this.filter !== 'all'
           ? '<div class="dim empty">Nothing of this kind yet.</div>'
-          : this.engine.pdp11
-            ? '<div class="dim empty">Nothing yet. Upload code or dump the registers in the <b>Code</b> tab (▲); the rover sends the messages your code writes (▼, the default firmware logs <code>L.BAT</code>, the battery, while idle) whenever the dish reaches the orbiter.</div>'
-            : '<div class="dim empty">Nothing yet. Upload code or dump the registers in the <b>Code</b> tab (▲); the rover sends what your code <code>LOG</code>s (▼, the default firmware logs <code>T_BAT</code>, the battery, while idle) whenever the dish reaches the orbiter.</div>',
+          : '<div class="dim empty">Nothing yet. Upload code or dump the registers in the <b>Code</b> tab (▲); the rover sends the messages your code writes (▼, the default firmware logs <code>L.BAT</code>, the battery, while idle) whenever the dish reaches the orbiter.</div>',
       );
     return rows;
   }

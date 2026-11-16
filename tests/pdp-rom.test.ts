@@ -23,7 +23,7 @@ function flat(e: SimulationEngine, r = 12): void {
 }
 
 function rover(firmware: string, program?: string, setup?: (u: Unit, e: SimulationEngine) => void, seed = 5): { e: SimulationEngine; u: Unit } {
-  const e = new SimulationEngine({ seed, cpu: 'pdp11' });
+  const e = new SimulationEngine({ seed });
   const u = e.spawnUnit('t');
   flat(e);
   setup?.(u, e);
@@ -37,7 +37,7 @@ const run = (e: SimulationEngine, n: number, link = false) => {
     e.advanceTick();
   }
 };
-const regs = (u: Unit) => u.machine!.registers('firmware').r;
+const regs = (u: Unit) => u.machine.registers('firmware').r;
 const HANG = '\n9$:     WAIT\n        BR   9$';
 /** Firmware: call a routine with R0/R1/R2, keep R0 in R3, R1 in R4, the PSW's NZVC in R5. */
 const call = (name: string, r0: string, r1 = '0', r2 = '0') => `
@@ -70,7 +70,7 @@ describe('ROM (PDP11_CPU.md §10)', () => {
   });
 
   it('routine names are reserved: a label STEP is an error', () => {
-    const e = new SimulationEngine({ seed: 1, cpu: 'pdp11' });
+    const e = new SimulationEngine({ seed: 1 });
     const u = e.spawnUnit('t');
     expect(e.assembleFor(u, 'STEP:   HALT', 'program').errors.length).toBeGreaterThan(0);
   });
@@ -109,7 +109,7 @@ describe('helpers', () => {
     expect(p.r2).toBe(3); // kept
     const img = p.u.imageMemory();
     expect(img.length).toBe(1024); // Mk-I: modes 1 and 2, 64x64 at 2 bpp
-    expect(img[2 * 16 + 1]).toBe(0b00110000); // x = 5: byte 1, second pixel from the left
+    expect(img[2 * 16 + 1]).toBe(0b00001100); // x = 5: byte 1, pixel 1 of the byte: little-endian, bits 3-2
     expect(result('PLOT', '64.', '0', '3').r0).toBe(Status.ERR_INVALID);
     expect(result('PLOT', '-1', '0', '3').r0).toBe(Status.ERR_INVALID);
   });
@@ -248,7 +248,7 @@ ${edit}
   it('a reboot in the middle of a photo: ground drops it (no gallery entry)', () => {
     const small = (r: Unit, e: SimulationEngine) => {
       lit(r, e);
-      r.chassis.recorderBytes = 512; // x 2 = 1 KB: the recorder fills after 7 of the 8 chunks
+      r.chassis.recorderBytes = 1024; // the recorder fills after 7 of the 8 chunks
     };
     const { e, u } = rover(snapSend(), undefined, small);
     run(e, 200); // no link
@@ -291,8 +291,8 @@ describe('safe mode (PDP11_CPU.md §10, from M14 §6.3)', () => {
     const { e, u } = rover(CRASH);
     run(e, 40, true);
     expect(u.safeMode).toBe(true);
-    expect(u.machine!.cpu.r[7]).toBeGreaterThanOrEqual(ROM_ENTRY.SAFEFW);
-    expect(u.vm.state).toBe(CpuState.RUNNING);
+    expect(u.machine.cpu.r[7]).toBeGreaterThanOrEqual(ROM_ENTRY.SAFEFW);
+    expect(u.cpu.state).toBe(CpuState.RUNNING);
     run(e, 200, true);
     expect(u.faultBoots.length).toBe(PDP11.safeModeBoots); // no more crashes
     expect(u.indicators[0]).toBe(1); // red

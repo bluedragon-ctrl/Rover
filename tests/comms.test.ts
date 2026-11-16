@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { deserialize, migrate, SAVE_VERSION, serialize } from '../src/core/SaveManager';
+import { deserialize, serialize } from '../src/core/SaveManager';
 import { SENT_KEEP, SimulationEngine } from '../src/core/SimulationEngine';
 import type { Unit } from '../src/core/Unit';
-import { DumpKind, encodeCpuDump, encodeLog, encodeStackDump } from '../src/core/downlink';
+import { encodeCpu11Dump, encodeLog, encodeStack11Dump } from '../src/core/downlink';
 import { ProgState } from '../src/core/types';
-import { dumpRunning, emptyDictionary, fieldsHtml, frameFields, sentByBrk, latestSnapshot, pendingRequests, replyTo, sentText, snapshotOutdated, type Dictionaries } from '../src/ui/comms';
+import { dumpRunning, emptyDictionary, fieldsHtml, frameFields, sentByBreakpoint, latestSnapshot, pendingRequests, replyTo, sentText, snapshotOutdated, type Dictionaries } from '../src/ui/comms';
+import { fw, sleep } from './helpers/rover';
 
 /** Keep the dish on the orbiter (full signal) before every tick. */
 function run(e: SimulationEngine, ticks: number): void {
@@ -14,8 +15,8 @@ function run(e: SimulationEngine, ticks: number): void {
   }
 }
 
-const FW = 'CONST T 2\nloop: LOG T @TICK\nCALL RUN 5\nCALL SLEEP 4\nJMP loop';
-const PROG = 'CONST P 3\nLOG P 1\nCALL SLEEP 2\nEND 1';
+const FW = `START:\n1$:     MOV  #2, R0\n        MOV  @#TICKL, R1\n        JSR  PC, LOG\n        MOV  #5, R0\n        JSR  PC, RUN\n        ${sleep(4)}\n        BR   1$`;
+const PROG = `START:  MOV  #3, R0\n        MOV  #1, R1\n        JSR  PC, LOG\n        ${sleep(2)}\n        MOV  #1, R0\n        HALT`;
 
 function rover(seed = 3): { e: SimulationEngine; u: Unit; logs: { message: string; category?: string }[] } {
   const e = new SimulationEngine({ seed });
@@ -23,7 +24,7 @@ function rover(seed = 3): { e: SimulationEngine; u: Unit; logs: { message: strin
   const logs: { message: string; category?: string }[] = [];
   e.events.on('LOG', (m) => logs.push(m));
   e.upload(u, FW, { factory: true });
-  run(e, 1);
+  run(e, 4); // booted
   return { e, u, logs };
 }
 
@@ -70,7 +71,7 @@ describe('Mission control sent record (M11 Comms)', () => {
 
   it('rover-internal messages are tagged rover, world messages world', () => {
     const { e, u, logs } = rover();
-    e.uploadProgram(u, 'POP r0');
+    e.uploadProgram(u, 'START:  MOV  #1, @#200\n        HALT'); // writes the firmware: a protection fault
     run(e, 12);
     expect(logs.find((l) => l.message.startsWith('Program FAULT'))?.category).toBe('rover');
     e.admin.forceRepair(u);
@@ -91,9 +92,9 @@ describe('Pairing requests with copies', () => {
     run(e, 60);
     const r = replyTo(regs, e.received)!;
     expect(r.dump.slot).toBe('program');
-    expect(r.dump.kind).toBe(1);
+    expect(r.dump.kind).toBe('regs');
     expect(r.taken).toBe(regs.tick);
-    expect(replyTo(stacks, e.received)?.dump.kind).toBe(2);
+    expect(replyTo(stacks, e.received)?.dump.kind).toBe('stack');
     expect(pendingRequests(e.sent, e.received, u.id, 'program', 'regs')).toEqual([]);
     // Nothing of the other slot / kind is mixed up.
     expect(latestSnapshot(e.received, u.id, 'firmware', 'regs')).toBeNull();
@@ -116,14 +117,14 @@ describe('Pairing requests with copies', () => {
   it('player-facing names say what is dumped from which slot', () => {
     const r = { unitId: 1, tick: 1, slot: 'program' as const, cost: 0 };
     expect(sentText({ ...r, kind: 'DUMP' })).toBe("Dump the program's registers");
-    expect(sentText({ ...r, kind: 'DUMP_STACKS', slot: 'firmware' })).toBe("Dump the firmware's stacks");
+    expect(sentText({ ...r, kind: 'DUMP_STACKS', slot: 'firmware' })).toBe("Dump the firmware's stack");
   });
 });
 
 describe('Byte-by-byte decoding (Comms "Decode bytes", Reference → Radio)', () => {
   const d: Dictionaries = {
     firmware: emptyDictionary(),
-    program: { tags: { 2: { names: ['T_BAT'], lines: [5] } }, regs: { 0: ['dir'], 1: ['seen'] }, lineAt: (a) => (a === 0x26 ? 18 : 0) },
+    program: { tags: { 2: { names: ['L.BAT'], lines: [5] } }, lineAt: (a) => (a === 0o2026 ? 18 : 0) },
   };
   const joined = (b: number[]) => frameFields(b, d).flatMap((f) => f.bytes);
 
@@ -133,23 +134,23 @@ describe('Byte-by-byte decoding (Comms "Decode bytes", Reference → Radio)', ()
       encodeLog(3, null),
       encodeLog(1, -70000),
       encodeLog(15, 2),
-      encodeCpuDump({ ip: 0x26, status: 0, state: ProgState.PROG_RUNNING, regs: [3, 255, -1, 0], dsDepth: 1, csDepth: 0 }, DumpKind.PROG_CPU),
-      encodeCpuDump({ ip: 5, status: 0, state: 'HALTED', regs: [1, 2, 3, 4, 5, 6, 7, 8], dsDepth: 0, csDepth: 0 }),
-      encodeStackDump([5, -2], [0x1a, 0x30], DumpKind.PROG_STACKS),
-      encodeStackDump([], []),
+      encodeCpu11Dump({ state: ProgState.PROG_RUNNING, psw: 0o170000, r: [3, 255, 0xffff, 0, 0, 0, 0o3770, 0o2026] }, true),
+      encodeCpu11Dump({ state: 'HALTED', psw: 0, r: [1, 2, 3, 4, 5, 6, 7, 8] }),
+      encodeStack11Dump(0o3770, [5, 0o2030], true),
+      encodeStack11Dump(0o2000, []),
     ];
     for (const b of frames) expect(joined(b)).toEqual(b);
   });
 
-  it('names registers by ALIAS, decodes signed values, addresses and lines', () => {
-    const f = frameFields(encodeCpuDump({ ip: 0x26, status: 0, state: ProgState.PROG_RUNNING, regs: [3, 255, -1, 0], dsDepth: 1, csDepth: 0 }, DumpKind.PROG_CPU), d);
+  it('decodes words low byte first, in octal with the signed decimal, the PC with its line', () => {
+    const f = frameFields(encodeCpu11Dump({ state: ProgState.PROG_RUNNING, psw: 0o170000, r: [3, 255, 0xffff, 0, 0, 0, 0o3770, 0o2026] }, true), d);
     const row = (name: string) => f.find((x) => x.name === name)!;
     expect(row('kind').value).toBe('program registers');
-    expect(row('next')).toMatchObject({ bytes: [0x00, 0x26], value: 'prog:0x026 → line 18' });
+    expect(row('PC')).toMatchObject({ bytes: [0o26, 0o4], value: '002026 → line 18', goto: { slot: 'program', line: 18 } });
     expect(row('state').value).toBe('PROG_RUNNING');
-    expect(row('r1 seen')).toMatchObject({ bytes: [0, 0, 0, 0xff], value: '255' });
-    expect(row('r2')).toMatchObject({ bytes: [0xff, 0xff, 0xff, 0xff], value: '-1' });
-    expect(row('r2').note).toMatch(/negative/);
+    expect(row('R1')).toMatchObject({ bytes: [0xff, 0], value: '000377' });
+    expect(row('R2')).toMatchObject({ bytes: [0xff, 0xff], value: '177777' });
+    expect(row('R2').note).toMatch(/^-1\./);
   });
 
   it('Comms explains each header layout once: LOG and system share one, dumps have their own', () => {
@@ -159,18 +160,18 @@ describe('Byte-by-byte decoding (Comms "Decode bytes", Reference → Radio)', ()
     expect(comment(encodeLog(2, 812))).toBe(true);
     expect(comment(encodeLog(2, 811))).toBe(false);
     expect(comment(encodeLog(15, 2))).toBe(false);
-    const dump = encodeStackDump([], [], DumpKind.PROG_STACKS);
+    const dump = encodeStack11Dump(0o2000, [], true);
     expect(dumpComment(dump)).toBe(true);
     expect(dumpComment(dump)).toBe(false);
     // The header value (tag, size) stays on every row.
-    expect(fieldsHtml(frameFields(encodeLog(2, 811), d), seen)).toContain('LOG tag 2 T_BAT, 2-byte value');
+    expect(fieldsHtml(frameFields(encodeLog(2, 811), d), seen)).toContain('LOG tag 2 L.BAT, 2-byte value');
     // Without a set (Reference) every comment is shown.
     expect(fieldsHtml(frameFields(encodeLog(2, 811), d))).toContain('value size');
   });
 
   it('LOG and boot messages: header bits, tag names, values, boot reasons', () => {
     const log = frameFields(encodeLog(2, 812), d);
-    expect(log[0].value).toBe('LOG tag 2 T_BAT, 2-byte value');
+    expect(log[0].value).toBe('LOG tag 2 L.BAT, 2-byte value');
     expect(log[0].note).toContain('0|0010|10|0');
     expect(log[1]).toMatchObject({ bytes: [0x03, 0x2c], value: '812' });
     expect(frameFields(encodeLog(15, 2), d)[1].value).toBe('2 = rebooted: watchdog');
@@ -196,42 +197,33 @@ describe('Saving the sent record', () => {
     expect(replyTo(a.sent[1], a.received)).not.toBeNull();
   });
 
-  it('migrates v12 saves to an empty sent record', () => {
-    const { e } = rover();
-    const v12 = serialize(e) as unknown as Record<string, unknown>;
-    v12.version = 12;
-    delete v12.sent;
-    expect(SAVE_VERSION).toBeGreaterThanOrEqual(13);
-    expect(migrate(v12).sent).toEqual([]);
-    expect(deserialize(v12).sent).toEqual([]);
-  });
 });
 
-describe('BRK reports itself (SPEC §3.8.4)', () => {
-  it('a BRK in the firmware sends a register dump unasked; Comms labels it sent by BRK', () => {
+describe('a breakpoint reports itself (SPEC §3.8.4)', () => {
+  it('a BPT in the firmware sends a register dump unasked; Comms labels it a breakpoint', () => {
     const e = new SimulationEngine({ seed: 4 });
     const u = e.spawnUnit('t');
-    e.upload(u, 'MOV r0 7\nBRK\nMOV r0 8', { factory: true });
+    e.upload(u, fw('MOV  #7, R0', 'BPT', 'MOV  #10, R0'), { factory: true });
     run(e, 40);
     const f = e.received.find((x) => x.taken !== undefined)!;
     expect(f).toBeDefined();
-    expect(sentByBrk(f, e.sent)).toBe(true);
-    const fields = frameFields(f.bytes, { firmware: { tags: {}, regs: {}, lineAt: (a) => (a === 3 ? 2 : a === 4 ? 3 : 0) }, program: emptyDictionary() });
-    expect(fields.find((x) => x.name === 'state')).toMatchObject({ value: 'HALTED', note: expect.stringContaining('stopped by BRK') });
-    expect(fields.find((x) => x.name === 'next')).toMatchObject({ note: 'the instruction after the BRK on line 2', goto: { slot: 'firmware', line: 3 } });
-    expect(fields.find((x) => x.name === 'r0')!.value).toBe('7');
-    // Asking for a dump of the halted firmware is not "sent by BRK".
+    expect(sentByBreakpoint(f, e.sent)).toBe(true);
+    const fields = frameFields(f.bytes, { firmware: emptyDictionary(), program: emptyDictionary() });
+    expect(fields.find((x) => x.name === 'state')).toMatchObject({ value: 'HALTED', note: expect.stringContaining('stopped by HALT or BPT') });
+    expect(fields.find((x) => x.name === 'PC')!.note).toMatch(/in the ROM/); // the ROM's BPT handler halted the CPU
+    expect(fields.find((x) => x.name === 'R0')!.value).toBe('000007');
+    // Asking for a dump of the halted firmware is not a breakpoint's.
     e.command(u, 'DUMP', 'firmware');
     run(e, 40);
-    expect(sentByBrk(e.received.filter((x) => x.taken !== undefined).at(-1)!, e.sent)).toBe(false);
+    expect(sentByBreakpoint(e.received.filter((x) => x.taken !== undefined).at(-1)!, e.sent)).toBe(false);
   });
 
-  it('a BRK in the program dumps the program (PROG_HALTED); a finished program has no meaningful next', () => {
+  it('a BPT in the program dumps the program (PROG_HALTED); a finished program has no meaningful PC', () => {
     const { e, u } = rover();
-    e.uploadProgram(u, 'MOV r1 5\nBRK\nEND 1');
+    e.uploadProgram(u, 'START:  MOV  #5, R1\n        BPT\n        HALT');
     run(e, 60);
     const f = e.received.find((x) => x.taken !== undefined)!;
-    expect(sentByBrk(f, e.sent)).toBe(true);
+    expect(sentByBreakpoint(f, e.sent)).toBe(true);
     const fields = frameFields(f.bytes, { firmware: emptyDictionary(), program: emptyDictionary() });
     expect(fields.find((x) => x.name === 'state')!.value).toBe('PROG_HALTED');
     expect(dumpRunning('PROG_HALTED')).toBe(true);
@@ -240,10 +232,9 @@ describe('BRK reports itself (SPEC §3.8.4)', () => {
   });
 
   it('a dump of a program that is not running says so and links nowhere', () => {
-    const b = encodeCpuDump({ ip: 0, status: 4, state: ProgState.PROG_NONE, regs: [0, 0, 0, 0], dsDepth: 0, csDepth: 0 }, DumpKind.PROG_CPU);
-    const f = frameFields(b, { firmware: emptyDictionary(), program: { tags: {}, regs: {}, lineAt: () => 7 } });
-    expect(f.find((x) => x.name === 'next')).toMatchObject({ value: 'prog:0x000 (not running)', goto: undefined });
-    expect(f.find((x) => x.name === '@STATUS')).toMatchObject({ value: 'ERR_BLOCKED', note: 'the drive hit an obstacle' });
+    const b = encodeCpu11Dump({ state: ProgState.PROG_NONE, psw: 0, r: [0, 0, 0, 0, 0, 0, 0, 0o2000] }, true);
+    const f = frameFields(b, { firmware: emptyDictionary(), program: { tags: {}, lineAt: () => 7 } });
+    expect(f.find((x) => x.name === 'PC')).toMatchObject({ value: '002000 (not running)', goto: undefined });
     expect(fieldsHtml(f, undefined, true)).not.toContain('data-goto');
   });
 });

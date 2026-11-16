@@ -6,9 +6,8 @@
  * Kept as the review page for later Code tab / Comms changes.
  */
 import '../style.css';
-import { DEFAULT_FIRMWARE, PROGRAM_TEMPLATES } from '../core/programs';
-import { SimulationEngine, type UplinkCommand } from '../core/SimulationEngine';
-import type { Slot } from '../core/vm/Compiler';
+import { PDP_DEFAULT_FIRMWARE, PDP_PROGRAM_TEMPLATES } from '../core/programs-pdp11';
+import { SimulationEngine, type Slot, type UplinkCommand } from '../core/SimulationEngine';
 import { CodeWorkspace } from '../ui/CodeWorkspace';
 import { CommsPanel } from '../ui/CommsPanel';
 import { hint, MISSION_EVENTS_HELP } from '../ui/hint';
@@ -22,9 +21,9 @@ export function mountUiLab(el: HTMLElement, q: URLSearchParams): void {
     if (m.category !== 'sent') events.push(`<div class="${m.level}">[t${e.tick}] ${m.message}</div>`);
   });
   events.push(`<div class="info">[t0] World seed 42. (Goals, weather and supplies appear here.)</div>`);
-  e.upload(u, DEFAULT_FIRMWARE, { factory: true });
+  e.upload(u, PDP_DEFAULT_FIRMWARE, { factory: true });
   const name = q.get('program') ?? 'Explorer';
-  const program = PROGRAM_TEMPLATES[name] ?? PROGRAM_TEMPLATES.Explorer;
+  const program = PDP_PROGRAM_TEMPLATES[name] ?? PDP_PROGRAM_TEMPLATES.Explorer;
   const run = (n: number) => {
     for (let i = 0; i < n; i++) e.advanceTick();
   };

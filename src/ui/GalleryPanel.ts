@@ -123,22 +123,15 @@ export class GalleryPanel {
   onFlag?: (g: ReceivedProduct, err: string | null) => void;
 
   constructor(el: HTMLElement, private engine: SimulationEngine) {
-    const note11 = `<p class="small dim">The spectrometer (<code>JSR PC, ACT</code> with <code>F.T2</code> in <code>R1</code>, a cargo slot in <code>R0</code>) records a 16-band spectrum and the mast camera
+    el.innerHTML = `<div class="toolbar small"><span class="dim" id="gallery-status"></span></div>
+      <div id="gallery-list"></div>
+      <p class="small dim">The spectrometer (<code>JSR PC, ACT</code> with <code>F.T2</code> in <code>R1</code>, a cargo slot in <code>R0</code>) records a 16-band spectrum and the mast camera
       (<code>JSR PC, SNAP</code>) takes a 64×64 photo (128×128 in mode 4) into image memory; <code>JSR PC, SNDIMG</code> frames it as
       <code>T.IMG</code> messages in the recorder, changed by your program or not (<code>MOVB</code> into image memory at <code>100000</code>).
       The downlink sends the recorder after the real-time messages; mission control puts the chunks back together and pays
       when the last one arrives (lit photos 1, +5 for the first of a subject type; dark photos and drawn pictures nothing). Rare
       cliff walls and samples hide an <b>anomaly</b> that only a photo shows: <i>Flag anomaly</i> on the complete, lit photo
       (+${BALANCE.anomalyFlagCredits} for a new one, −${BALANCE.anomalyWrongFlag} for a wrong flag; one flag per photo).</p>`;
-    el.innerHTML = `<div class="toolbar small"><span class="dim" id="gallery-status"></span></div>
-      <div id="gallery-list"></div>
-      ${engine.pdp11 ? note11 : ''}<p class="small dim"${engine.pdp11 ? ' hidden' : ''}>The spectrometer (<code>ACT TOOL_2 slot</code>) records a 16-band spectrum (18 B) and the mast camera
-      (<code>SNAP dir [mode]</code>) takes a 32×32 photo into image memory; <code>SEND</code> records it (258 B) in the science
-      recorder, changed by your program or not (<code>LDB</code> / <code>STB</code>). The downlink sends them after the log FIFO is
-      empty; photos fill in row by row, and credits are paid when the last byte arrives (lit photos 1, +5 for the first of a
-      subject type; dark photos and drawn pictures nothing). Rare cliff walls and samples hide an <b>anomaly</b> that only a photo shows: if you spot
-      one, <i>Flag anomaly</i> on the complete, lit photo (+${BALANCE.anomalyFlagCredits} for a new one, −${BALANCE.anomalyWrongFlag} for a wrong flag;
-      one flag per photo).</p>`;
     this.list = el.querySelector('#gallery-list')!;
     // Hex views: built only when opened, and kept open across re-renders ('toggle' does not bubble).
     this.list.addEventListener(

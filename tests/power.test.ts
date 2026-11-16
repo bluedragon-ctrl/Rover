@@ -1,17 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { BALANCE } from '../src/core/balance';
 import { angleDiff, cos1000, Environment, signalStrength, sin1000, solarGain } from '../src/core/Environment';
-import { DEMO_EXPLORER, FACTORY_IDLE } from '../src/core/programs';
+import { MsgType, SOH, ETX } from '../src/core/messages';
+import { PDP_ALLIN_EXPLORER as DEMO_EXPLORER, PDP_DEFAULT_FIRMWARE as FACTORY_IDLE } from '../src/core/programs-pdp11';
 import { SimulationEngine } from '../src/core/SimulationEngine';
 import { CpuState, Layer, Status } from '../src/core/types';
+import { factory, fw, HANG, reg } from './helpers/rover';
 
-const factory = { factory: true };
-
-it('shipped firmware compiles', () => {
-  const eng = new SimulationEngine({ seed: 1 });
-  const u = eng.spawnUnit('t');
-  for (const src of [FACTORY_IDLE, DEMO_EXPLORER]) expect(eng.compileFor(u, src).errors).toEqual([]);
-});
+const IDLE = `START:${HANG}`;
+/** Open the array and point it at the sun, then idle. */
+const DEPLOY = `START:  MOV  #1, @#SOLOPN\n1$:     MOV  @#SUNAZ, @#SOLANG\n        WAIT\n        BR   1$`;
 
 describe('Environment', () => {
   it('has integer trig and angle helpers', () => {
@@ -52,11 +50,10 @@ describe('solar array & motors', () => {
   it('deploys over time, slews, charges, and blocks STEP until stowed', () => {
     const eng = new SimulationEngine({ seed: 1 });
     const u = eng.spawnUnit('t');
-    eng.upload(u, 'MOV @SOLAR_OPEN 1\nMOV @SOLAR_ANGLE @SUN_AZIMUTH\nCALL STEP NORTH 1\nMOV r0 @STATUS\nCALL SLEEP 1000', factory);
+    eng.upload(u, fw('MOV  #1, @#SOLOPN', 'MOV  @#SUNAZ, @#SOLANG', 'MOV  #NORTH, R0', 'MOV  #1, R1', 'JSR  PC, STEP', 'MOV  R0, R2'), factory);
     u.energy = 50_000;
-    eng.advanceTick(); // STEP refused, ends the tick
-    eng.advanceTick();
-    expect(u.vm.regs[0]).toBe(Status.ERR_DEPLOYED);
+    for (let i = 0; i < 6; i++) eng.advanceTick(); // boot, then STEP is refused at once
+    expect(reg(u, 2)).toBe(Status.ERR_DEPLOYED);
     for (let i = 0; i < 80; i++) eng.advanceTick();
     expect(u.solarDeployed).toBe(true);
     expect(u.solarAngle).toBe(u.solarTarget);
@@ -69,24 +66,24 @@ describe('solar array & motors', () => {
   it('cold-boots from solar after a power-off if the array was deployed', () => {
     const eng = new SimulationEngine({ seed: 1 });
     const u = eng.spawnUnit('t');
-    eng.upload(u, FACTORY_IDLE, factory);
+    eng.upload(u, DEPLOY, factory);
     for (let i = 0; i < 100; i++) eng.advanceTick();
     expect(u.solarDeployed).toBe(true);
     u.energy = 1;
     eng.advanceTick();
     eng.advanceTick();
     // Either already dead or about to be; drain until off.
-    for (let i = 0; i < 5 && u.vm.state !== CpuState.POWER_OFF; i++) {
+    for (let i = 0; i < 5 && u.cpu.state !== CpuState.POWER_OFF; i++) {
       u.energy = 0;
       eng.advanceTick();
     }
     u.energy = 0;
     (eng as unknown as { drain: (u: unknown, n: number) => void }).drain(u, 1);
-    expect(u.vm.state).toBe(CpuState.POWER_OFF);
+    expect(u.cpu.state).toBe(CpuState.POWER_OFF);
     let booted = false;
     for (let i = 0; i < 3000 && !booted; i++) {
       eng.advanceTick();
-      booted = u.vm.state !== CpuState.POWER_OFF;
+      booted = u.cpu.state !== CpuState.POWER_OFF;
     }
     expect(booted).toBe(true);
     expect(u.batteryPercent).toBeGreaterThanOrEqual(BALANCE.coldBootPercent);
@@ -95,25 +92,25 @@ describe('solar array & motors', () => {
   it('stays dead if the array was stowed', () => {
     const eng = new SimulationEngine({ seed: 1 });
     const u = eng.spawnUnit('t');
-    eng.upload(u, 'CALL SLEEP 100', factory);
+    eng.upload(u, IDLE, factory);
     u.energy = 3;
     for (let i = 0; i < 3000; i++) eng.advanceTick();
-    expect(u.vm.state).toBe(CpuState.POWER_OFF);
+    expect(u.cpu.state).toBe(CpuState.POWER_OFF);
   });
 });
 
 describe('comms', () => {
-  it('@TX_DATA is LOG 0; the factory firmware aligns the dish and logs a heartbeat', () => {
+  it('the ROM\'s LOG queues a T.LOG message; the default firmware aligns the dish and logs a heartbeat', () => {
     const eng = new SimulationEngine({ seed: 1 });
     const u = eng.spawnUnit('t');
-    eng.upload(u, 'LOG 0 1\nMOV r0 @STATUS\nCALL SLEEP 1000', factory);
-    eng.advanceTick();
-    expect(u.vm.regs[0]).toBe(Status.OK); // queued, even without signal
-    expect(u.link.fifo.at(-1)!.bytes).toEqual([0x02, 0x01]);
+    eng.upload(u, fw('CLR  R0', 'MOV  #1, R1', 'JSR  PC, LOG', 'MOV  R0, R2'), factory);
+    for (let i = 0; i < 6; i++) eng.advanceTick();
+    expect(reg(u, 2)).toBe(Status.OK); // queued, even without signal
+    expect(u.link.tx.slice(-7)).toEqual([SOH, MsgType.LOG, 3, 0, 1, 0, ETX]);
     eng.upload(u, FACTORY_IDLE, factory);
     for (let i = 0; i < 300; i++) eng.advanceTick();
     expect(eng.signalOf(u)).toBeGreaterThan(90);
-    expect(eng.received.some((f) => f.bytes[0] >> 3 === 1)).toBe(true); // T_BAT heartbeat
+    expect(eng.messages.some((m) => m.type === MsgType.LOG && m.body[0] === 1)).toBe(true); // L.BAT heartbeat
     expect(eng.director.completed.has('first_contact')).toBe(true);
   });
 
@@ -125,11 +122,11 @@ describe('comms', () => {
     u.antennaAngle = (eng.orbitAzimuth + 180) % 360;
     const bad = eng.uploadCost(u, 80);
     expect(bad).toBe(good * 10);
-    u.energy = eng.uploadCost(u, 4) - 1; // CALL SLEEP 1 = 4 bytes
-    const r = eng.upload(u, 'CALL SLEEP 1');
+    u.energy = eng.uploadCost(u, 4) - 1; // WAIT, BR: 4 bytes
+    const r = eng.upload(u, IDLE);
     expect(r.rejected).toMatch(/battery/);
     u.antennaAngle = eng.orbitAzimuth;
-    const ok = eng.upload(u, 'CALL SLEEP 1');
+    const ok = eng.upload(u, IDLE);
     expect(ok.rejected).toBeUndefined();
     expect(ok.cost).toBe(eng.uploadCost(u, 4));
   });
@@ -139,7 +136,7 @@ describe('night & fog', () => {
   it('at night the operator view shrinks to the ring; the headlight adds a cone; radar is unaffected', () => {
     const eng = new SimulationEngine({ seed: 1 });
     const u = eng.spawnUnit('t');
-    eng.upload(u, 'CALL SLEEP 10000', factory);
+    eng.upload(u, IDLE, factory);
     while (eng.sun.elevation > 0) eng.advanceTick();
     expect(eng.viewShape(u)).toEqual({ radius: BALANCE.nightSensorRange, cone: -1 });
     u.headlight = 1;
@@ -159,10 +156,10 @@ describe('night & fog', () => {
     void Layer;
   });
 
-  it('explorer drives off after replacing the factory firmware (panels deployed)', () => {
+  it('explorer drives off after replacing a firmware that left the array open', () => {
     const eng = new SimulationEngine({ seed: 12345 });
     const u = eng.spawnUnit('t');
-    eng.upload(u, FACTORY_IDLE, factory);
+    eng.upload(u, DEPLOY, factory);
     for (let i = 0; i < 300; i++) eng.advanceTick();
     expect(u.solarDeployed).toBe(true);
     expect(eng.upload(u, DEMO_EXPLORER).rejected).toBeUndefined();
@@ -181,9 +178,9 @@ describe('night & fog', () => {
       minBat = Math.min(minBat, u.batteryPercent);
       cells.add(`${u.x},${u.y}`);
     }
-    expect(u.vm.state).not.toBe(CpuState.FAULT);
+    expect(u.cpu.state).not.toBe(CpuState.FAULT);
     expect(cells.size).toBeGreaterThan(50);
     expect(u.powered || u.solarDeployed).toBe(true);
-    console.log(`explorer 3 sols: min battery ${minBat}%, end ${u.batteryPercent}%, ${cells.size} tiles visited, state ${u.vm.state}`);
+    console.log(`explorer 3 sols: min battery ${minBat}%, end ${u.batteryPercent}%, ${cells.size} tiles visited, state ${u.cpu.state}`);
   });
 });

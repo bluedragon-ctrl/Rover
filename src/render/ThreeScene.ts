@@ -294,8 +294,8 @@ export class ThreeScene {
       v.angle += d * Math.min(1, dt * 10);
 
       const view = this.engine.viewShape(u);
-      const dead = u.vm.state === CpuState.POWER_OFF || u.vm.state === CpuState.DESTROYED;
-      const fault = u.vm.state === CpuState.FAULT;
+      const dead = u.cpu.state === CpuState.POWER_OFF || u.cpu.state === CpuState.DESTROYED;
+      const fault = u.cpu.state === CpuState.FAULT;
       // Turntables use compass bearings (0 = north = -Z), relative to the body.
       const bearing = (deg: number) => (-deg * Math.PI) / 180 - v!.angle;
       const pose: RoverPose = {

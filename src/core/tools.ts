@@ -8,14 +8,14 @@ import { BALANCE } from './balance';
 export type ToolId = 'DRILL' | 'GRABBER' | 'SPECTROMETER' | 'SEISMIC' | 'USE_ITEM' | 'CAMERA';
 
 /**
- * Declarative tool table. A write to `@TOOL n` (the ROM's `CALL ACT n arg`) uses the tool
- * mounted in hardpoint n on @TOOL_ARG; `@REPAIR slot` runs the internal USE_ITEM tool, `@CAM
- * dir` the CAMERA (M14 devices). The VM never changes for new tools.
+ * Declarative tool table. GO in the tools block (`TOLCS`, FN = hardpoint n; the ROM's `ACT`)
+ * uses the tool mounted in hardpoint n on `TOLARG`; GO in the repair block runs the internal
+ * USE_ITEM tool, in the camera block the CAMERA. The CPU never changes for new tools.
  *
- * Lifecycle: `check` runs when the start port is written (fails fast, no time spent);
- * if it returns OK the energy is paid, the device works for `ticks`, then `complete`
- * applies the effect (and re-validates, since the world may have changed); its result
- * waits for `WAIT @port`.
+ * Lifecycle: `check` runs at GO (fails fast, no time spent: ERR in the CSR, the reason in
+ * `xxER`); if it returns OK the energy is paid, the device works for `ticks`, then `complete`
+ * applies the effect (and re-validates, since the world may have changed); DONE is set and
+ * its result goes into the device's error register.
  */
 export interface ToolDef {
   id: ToolId;
@@ -100,7 +100,7 @@ export const TOOLS: Record<ToolId, ToolDef> = {
     arg: 'slot',
     ticks: 30,
     energy: 300,
-    description: 'Analyzes the item in cargo <slot>, freeing it and recording a 16-byte spectrum (18 B in the recorder; ERR_FULL keeps the item).',
+    description: 'Analyzes the item in cargo <slot>, freeing it and recording a 16-byte spectrum (18 B in the recorder; E.FULL keeps the item).',
     check(e, u, slot) {
       if (!validSlot(u, slot)) return Status.ERR_INVALID;
       if (!e.registry.get(u.cargo[slot])?.science) return Status.ERR_INVALID;
@@ -122,7 +122,7 @@ export const TOOLS: Record<ToolId, ToolDef> = {
     arg: 'dir',
     ticks: 4,
     energy: 150,
-    description: 'Finds the nearest ore vein up to 12 tiles away in <dir>, through walls: @SEISMIC_TYPE / @SEISMIC_DIST (0 = none).',
+    description: 'Finds the nearest ore vein up to 12 tiles away in <dir>, through walls: SEITYP / SEIDST (0 = none).',
     check: (_e, _u, dir) => (validDir(dir) ? Status.OK : Status.ERR_INVALID),
     complete(e, u, dir) {
       u.seismicType = 0;
@@ -147,7 +147,7 @@ export const TOOLS: Record<ToolId, ToolDef> = {
     energy: BALANCE.snapEnergy,
     keepsHeading: true,
     description:
-      'CALL SNAP dir mode (@CAM dir, @CAM_MODE) photographs the first obstacle, item or rover within 2 tiles in <dir>; with nothing that close, a landscape of what lies ahead (ridges, ground, the sun). The photo goes into image memory: change it with LDB / STB, then CALL SEND it to the science recorder. Needs @SUN_LIGHT ≥ 20 or the headlight aimed that way (@HEADING = dir), else the photo is dark and worth nothing. Mk-I modes: 1 grey, 2 dithered (256 B each); upgrades add 3 colour palette (512 B), 4 hi-res 64×64 (1024 B), 5 RGB332 (1024 B).',
+      'ROM SNAP (R0 = dir, R1 = mode F.M1…F.M5; the camera block CAMCS / CAMDIR) photographs the first obstacle, item or rover within 2 tiles in <dir>; with nothing that close, a landscape of what lies ahead (ridges, ground, the sun). The photo goes into image memory at IMGBAS: change it with MOV / MOVB, then send it home with ROM SNDIMG. Needs SUNLIT ≥ 20 or the headlight aimed that way (HDG = dir), else the photo is dark and worth nothing. Mk-I modes: 1 grey, 2 dithered (64×64, 1 KB each); upgrades add 3 colour palette (2 KB), 4 hi-res 128×128 (4 KB), 5 RGB332 (4 KB).',
     target: (u, d) => (validDir(d) ? adjacent(u, d) : null),
     check(_e, u, dir, mode = 1) {
       return !validDir(dir) || !u.chassis.cameraModes.includes(mode) ? Status.ERR_INVALID : Status.OK;
@@ -155,7 +155,7 @@ export const TOOLS: Record<ToolId, ToolDef> = {
     complete(e, u, dir, mode = 1) {
       const st = this.check(e, u, dir, mode);
       if (st !== Status.OK) return st;
-      e.capturePhoto(u, dir, mode); // into image memory (M12, SPEC §3.8.7); SEND records it
+      e.capturePhoto(u, dir, mode); // into image memory (SPEC §3.8.7); SNDIMG sends it
       return Status.OK;
     },
   },
@@ -166,7 +166,7 @@ export const TOOLS: Record<ToolId, ToolDef> = {
     ticks: 10,
     energy: 200,
     description:
-      'Repairs [system] (default SYS_HULL) by consuming the material in cargo <slot>: REPAIR_KIT +30 hull / +40 solar / +40 dish, IRON_ORE +10 hull / +15 dish, SILICON_ORE +20 solar.',
+      'Repairs [system] (F.HULL, F.SOL, F.ANT) by consuming the material in cargo <slot>: KIT +30 hull / +40 solar / +40 dish, IRON +10 hull / +15 dish, SILIC +20 solar.',
     check(e, u, slot, system = SystemId.SYS_HULL) {
       if (!validSlot(u, slot) || system < 0 || system > 2) return Status.ERR_INVALID;
       return e.registry.get(u.cargo[slot])?.repairs?.[system] ? Status.OK : Status.ERR_INVALID;

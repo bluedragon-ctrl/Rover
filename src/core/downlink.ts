@@ -363,9 +363,12 @@ export class Downlink {
 
 /** Dump frame header: kind 1 (sized frame), tag 15 (system). Followed by dump kind, length, payload. */
 export const DUMP_HEADER = 0x80 | (SYSTEM_TAG << 3);
-/** Kinds 1/2: firmware context; 3/4: program context, same layouts (M10, SPEC §3.9.3). */
-export const DumpKind = { CPU: 1, STACKS: 2, PROG_CPU: 3, PROG_STACKS: 4, CPU11: 5, STACK11: 6, PROG_CPU11: 7, PROG_STACK11: 8 } as const;
-/** M15 dumps: the most stack words a PDP-11 stack dump carries. */
+/**
+ * Dump kinds on the wire: registers and stack of the firmware (5 / 6) and of the program
+ * (7 / 8). Kinds 1–4 were Rover-ASM's dumps (retired in M15 slice 6).
+ */
+export const DumpKind = { CPU11: 5, STACK11: 6, PROG_CPU11: 7, PROG_STACK11: 8 } as const;
+/** The most stack words a stack dump carries. */
 export const STACK11_WORDS = 8;
 /** State byte of a program dump: @PROG_STATE. */
 export const PROG_STATE_NAMES: readonly string[] = ['PROG_NONE', 'PROG_READY', 'PROG_RUNNING', 'PROG_DONE', 'PROG_FAULT', 'PROG_HALTED'];
@@ -379,45 +382,12 @@ export interface SysFrame {
   taken: number;
 }
 
-const be = (v: number, n: number): number[] => {
-  const out: number[] = [];
-  for (let i = n - 1; i >= 0; i--) out.push(((v | 0) >> (i * 8)) & 0xff);
-  return out;
-};
-const rd = (b: readonly number[], at: number, n: number, signed: boolean): number => {
-  let v = 0;
-  for (let i = 0; i < n; i++) v = v * 256 + (b[at + i] ?? 0);
-  if (signed && n < 4 && v >= 2 ** (8 * n - 1)) v -= 2 ** (8 * n);
-  return n === 4 && signed ? v | 0 : v;
-};
 const dumpFrame = (kind: number, payload: number[]): number[] => [DUMP_HEADER, kind, payload.length, ...payload];
 
 /**
- * CPU dump: IP 2 B, @STATUS 1 B, state 1 B, each register 4 B, data/call stack depth 1 B each.
- * A firmware dump's state is a CpuState name; a program dump's (kind 3) is @PROG_STATE.
- */
-export function encodeCpuDump(d: { ip: number; status: number; state: string | number; regs: ArrayLike<number>; dsDepth: number; csDepth: number }, kind: number = DumpKind.CPU): number[] {
-  const code = typeof d.state === 'number' ? d.state : CPU_STATE_CODES.indexOf(d.state);
-  const p = [...be(d.ip, 2), d.status & 255, code < 0 ? 255 : code];
-  for (let i = 0; i < d.regs.length; i++) p.push(...be(d.regs[i], 4));
-  p.push(d.dsDepth & 255, d.csDepth & 255);
-  return dumpFrame(kind, p);
-}
-
-/** Stack dump: data depth 1 B + 4 B per entry, call depth 1 B + 2 B (return IP) per entry. */
-export function encodeStackDump(ds: readonly number[], cs: readonly number[], kind: number = DumpKind.STACKS): number[] {
-  const p = [ds.length & 255];
-  for (const v of ds) p.push(...be(v, 4));
-  p.push(cs.length & 255);
-  for (const v of cs) p.push(...be(v, 2));
-  return dumpFrame(kind, p);
-}
-
-/**
- * M15 PDP-11 register dump (kinds 5 / 7): state 1 B, PSW 2 B, R0–R7 2 B each. Words are
- * low byte first, as they sit in PDP-11 memory. The state byte is as in kinds 1 / 3.
- */
-export function encodeCpu11Dump(d: { state: string | number; psw: number; r: ArrayLike<number> }, prog = false): number[] {
+ * Register dump (kinds 5 / 7): state 1 B, PSW 2 B, R0–R7 2 B each. Words are low byte
+ * first, as they sit in memory. The state byte: a CpuState (firmware) or `PRGST` (program).
+ */export function encodeCpu11Dump(d: { state: string | number; psw: number; r: ArrayLike<number> }, prog = false): number[] {
   const code = typeof d.state === 'number' ? d.state : CPU_STATE_CODES.indexOf(d.state);
   const p = [code < 0 ? 255 : code, ...le(d.psw)];
   for (let i = 0; i < 8; i++) p.push(...le(d.r[i] ?? 0));
@@ -425,7 +395,7 @@ export function encodeCpu11Dump(d: { state: string | number; psw: number; r: Arr
 }
 
 /**
- * M15 PDP-11 stack dump (kinds 6 / 8): SP 2 B, count 1 B, then that many words from SP up
+ * Stack dump (kinds 6 / 8): SP 2 B, count 1 B, then that many words from SP up
  * (the top of the stack first, at most {@link STACK11_WORDS}), low byte first.
  */
 export function encodeStack11Dump(sp: number, words: readonly number[], prog = false): number[] {
@@ -438,47 +408,27 @@ const le = (v: number): number[] => [v & 0xff, (v >> 8) & 0xff];
 const rdLe = (b: readonly number[], at: number): number => (b[at] ?? 0) | ((b[at + 1] ?? 0) << 8);
 
 export type DumpSlot = 'firmware' | 'program';
-/** `kind` is the layout (1 CPU, 2 stacks); `slot` tells firmware (kinds 1/2) from program (3/4). */
+/** A decoded dump: registers (wire kinds 5 / 7) or stack (6 / 8) of a slot. */
 export type DecodedDump =
-  | { kind: 1; slot: DumpSlot; ip: number; status: number; state: string; regs: number[]; dsDepth: number; csDepth: number }
-  | { kind: 2; slot: DumpSlot; dataStack: number[]; callStack: number[] }
-  /** M15: PDP-11 registers (wire kinds 5 / 7) and stack (6 / 8). */
-  | { kind: 3; slot: DumpSlot; state: string; psw: number; r: number[] }
-  | { kind: 4; slot: DumpSlot; sp: number; words: number[] };
+  | { kind: 'regs'; slot: DumpSlot; state: string; psw: number; r: number[] }
+  | { kind: 'stack'; slot: DumpSlot; sp: number; words: number[] };
 
 /** Decode a dump frame as received, or null if it is not one. */
 export function decodeDump(b: readonly number[]): DecodedDump | null {
   if (b[0] !== DUMP_HEADER) return null;
-  const end = 3 + (b[2] ?? 0);
   const k = b[1];
-  const slot: DumpSlot = k === DumpKind.PROG_CPU || k === DumpKind.PROG_STACKS || k === DumpKind.PROG_CPU11 || k === DumpKind.PROG_STACK11 ? 'program' : 'firmware';
+  const slot: DumpSlot = k === DumpKind.PROG_CPU11 || k === DumpKind.PROG_STACK11 ? 'program' : 'firmware';
   if (k === DumpKind.CPU11 || k === DumpKind.PROG_CPU11) {
     const names = slot === 'program' ? PROG_STATE_NAMES : CPU_STATE_CODES;
     const r: number[] = [];
     for (let i = 0; i < 8; i++) r.push(rdLe(b, 6 + i * 2));
-    return { kind: 3, slot, state: names[b[3] ?? 255] ?? '?', psw: rdLe(b, 4), r };
+    return { kind: 'regs', slot, state: names[b[3] ?? 255] ?? '?', psw: rdLe(b, 4), r };
   }
   if (k === DumpKind.STACK11 || k === DumpKind.PROG_STACK11) {
     const n = b[5] ?? 0;
     const words: number[] = [];
     for (let i = 0; i < n; i++) words.push(rdLe(b, 6 + i * 2));
-    return { kind: 4, slot, sp: rdLe(b, 3), words };
-  }
-  if (b[1] === DumpKind.CPU || b[1] === DumpKind.PROG_CPU) {
-    const regs: number[] = [];
-    for (let at = 7; at + 4 <= end - 2; at += 4) regs.push(rd(b, at, 4, true));
-    const names = slot === 'program' ? PROG_STATE_NAMES : CPU_STATE_CODES;
-    return { kind: 1, slot, ip: rd(b, 3, 2, false), status: b[5] ?? 0, state: names[b[6] ?? 255] ?? '?', regs, dsDepth: b[end - 2] ?? 0, csDepth: b[end - 1] ?? 0 };
-  }
-  if (b[1] === DumpKind.STACKS || b[1] === DumpKind.PROG_STACKS) {
-    const dataStack: number[] = [];
-    const callStack: number[] = [];
-    let at = 3;
-    const nd = b[at++] ?? 0;
-    for (let i = 0; i < nd; i++, at += 4) dataStack.push(rd(b, at, 4, true));
-    const nc = b[at++] ?? 0;
-    for (let i = 0; i < nc; i++, at += 2) callStack.push(rd(b, at, 2, false));
-    return { kind: 2, slot, dataStack, callStack };
+    return { kind: 'stack', slot, sp: rdLe(b, 3), words };
   }
   return null;
 }

@@ -1,209 +1,130 @@
 import { describe, expect, it } from 'vitest';
-import { CHASSIS_MK1 } from '../src/core/balance';
-import { BootReason, encodeLog, hex, SYSTEM_TAG } from '../src/core/downlink';
-import { DEFAULT_FIRMWARE, FIRMWARE_FAULT_PROTECTION, PROGRAM_TEMPLATES } from '../src/core/programs';
+import { BootReason } from '../src/core/downlink';
+import { PDP_DEFAULT_FIRMWARE, PDP_PROGRAM_TEMPLATES } from '../src/core/programs-pdp11';
+import { MsgType } from '../src/core/messages';
 import { deserialize, serialize } from '../src/core/SaveManager';
-import { SimulationEngine } from '../src/core/SimulationEngine';
-import { CpuState, Preempt, ProgState, Status } from '../src/core/types';
+import type { SimulationEngine } from '../src/core/SimulationEngine';
+import { CpuState, Preempt, ProgState } from '../src/core/types';
 import type { Unit } from '../src/core/Unit';
-import { builtinConstants, compile } from '../src/core/vm/Compiler';
-import { createDefaultRegistry } from '../src/core/WorldRegistry';
+import { factory, fw, HANG, rover as base, run, sleep } from './helpers/rover';
 
-const factory = { factory: true };
-const consts = createDefaultRegistry().constants();
-
-/** Keep the dish on the orbiter before every tick, so frames reach mission control. */
-function run(e: SimulationEngine, ticks: number): void {
-  for (let i = 0; i < ticks; i++) {
-    for (const u of e.units) u.antennaAngle = u.antennaTarget = e.env.orbitAzimuth(e.tick + 1);
-    e.advanceTick();
-  }
-}
+const WEATHER = PDP_PROGRAM_TEMPLATES['Weather station'];
 
 function rover(firmware: string, program?: string, seed = 7): { e: SimulationEngine; u: Unit } {
-  const e = new SimulationEngine({ seed });
-  const u = e.spawnUnit('t');
-  expect(e.upload(u, firmware, factory).errors).toEqual([]);
-  if (program !== undefined) expect(e.uploadProgram(u, program, factory).errors).toEqual([]);
-  return { e, u };
+  return base(firmware, { seed, setup: (e, u) => {
+    if (program !== undefined) expect(e.uploadProgram(u, program, factory).errors).toEqual([]);
+  } });
 }
 
 function until(e: SimulationEngine, cond: () => boolean, max = 3000): number {
   for (let i = 0; i < max; i++) {
     if (cond()) return i;
-    run(e, 1);
+    run(e, 1, true);
   }
   throw new Error('condition never held');
 }
 
-/** Boot frames mission control received with this reason. */
-const boots = (e: SimulationEngine, reason: number) => e.received.filter((f) => hex(f.bytes) === hex(encodeLog(SYSTEM_TAG, reason))).length;
-
-describe('compiler: fault-protection ports are firmware-only', () => {
-  const c = (src: string, slot: 'firmware' | 'program') => compile(src, CHASSIS_MK1, consts, { slot });
-
-  it('a program may read @WDT, @PREEMPT, @BAT_ALARM, @PREEMPTED but not write the first three', () => {
-    for (const p of ['WDT', 'PREEMPT', 'BAT_ALARM']) {
-      expect(c(`MOV @${p} 5`, 'firmware').errors).toEqual([]);
-      expect(c(`MOV @${p} 5`, 'program').errors[0].message).toBe(`Only the firmware may write @${p}`);
-      expect(c(`MOV r0 @${p}`, 'program').errors).toEqual([]);
-    }
-    expect(c('MOV r0 @PREEMPTED', 'program').errors).toEqual([]);
-    expect(c('MOV @PREEMPTED 1', 'firmware').errors.length).toBe(1); // read-only
-    expect([builtinConstants().PRE_ALERT, builtinConstants().PRE_DAMAGE, builtinConstants().PRE_LOW_BAT, builtinConstants().ERR_PREEMPTED]).toEqual([1, 2, 4, 9]);
-    expect(c('MOV @PREEMPT PRE_ALERT\nMOV @PREEMPT PRE_DAMAGE\nMOV @PREEMPT PRE_LOW_BAT', 'firmware').errors).toEqual([]);
-    expect(c('JEQ @STATUS ERR_PREEMPTED x\nx: END', 'program').errors).toEqual([]);
+/** Count the watchdog-timeout reboots of a rover. */
+function watch(u: Unit, e: SimulationEngine): () => number {
+  let n = 0;
+  e.events.on('LOG', (m) => {
+    if (m.unitId === u.id && /Watchdog timeout/.test(m.message)) n++;
   });
-});
+  return () => n;
+}
 
-describe('watchdog @WDT (SPEC §3.9.5)', () => {
-  it('is not armed after boot: old firmware that never kicks it runs on', () => {
-    const { e, u } = rover('loop: JMP loop');
+describe('watchdog WDT (SPEC §3.9.5)', () => {
+  it('is not armed after boot: firmware that never kicks it runs on', () => {
+    const { e, u } = rover('START:  BR   START');
+    const timeouts = watch(u, e);
     run(e, 2000);
     expect(u.wdt).toBe(0);
-    expect(boots(e, BootReason.WDT_TIMEOUT)).toBe(0);
+    expect(timeouts()).toBe(0);
   });
 
   it('reboots a hung firmware n ticks after the last kick, with boot reason 5, and disarms', () => {
-    const { e, u } = rover('MOV r0 @TICK\nMOV @WDT 30\nhang: JMP hang');
-    run(e, 1);
-    expect(u.wdt).toBe(30);
+    const { e, u } = rover('START:  MOV  #30., @#WDT\n1$:     BR   1$');
+    until(e, () => u.wdt === 30, 10);
     const armedAt = e.tick;
-    until(e, () => u.vm.regs[0] !== armedAt && u.vm.regs[0] !== 0, 100); // rebooted and ran again
+    until(e, () => u.bootReason === BootReason.WDT_TIMEOUT, 100);
     expect(e.tick - armedAt).toBe(30);
-    run(e, 40);
-    expect(boots(e, BootReason.WDT_TIMEOUT)).toBeGreaterThanOrEqual(1);
+    expect(u.wdt).toBe(0); // disarmed by the reboot (until the firmware arms it again)
     expect(BootReason.WDT_TIMEOUT).toBe(5);
   });
 
   it('a firmware that keeps kicking is never reset; writing 0 does not disarm it', () => {
-    const { e, u } = rover('loop: MOV @WDT 30\nMOV @WDT 0\nCALL SLEEP 20\nJMP loop');
+    const { e, u } = rover(`START:\n1$:     MOV  #30., @#WDT\n        CLR  @#WDT\n        ${sleep(20)}\n        BR   1$`);
+    const timeouts = watch(u, e);
     run(e, 1000);
-    expect(boots(e, BootReason.WDT_TIMEOUT)).toBe(0);
+    expect(timeouts()).toBe(0);
     expect(u.wdt).toBeGreaterThan(0); // the 0 write was ignored
   });
 
   it('a hard reboot disarms it; a kick with a smaller value shortens it', () => {
-    const { e, u } = rover('MOV @WDT 500\nCALL SLEEP 5\nMOV @WDT 10\nCALL SLEEP 1000');
-    run(e, 1);
-    expect(u.wdt).toBe(500);
-    run(e, 6);
+    const { e, u } = rover(fw('MOV  #500., @#WDT', sleep(5), 'MOV  #10., @#WDT'));
+    until(e, () => u.wdt === 500, 10);
+    run(e, 8);
     expect(u.wdt).toBeLessThanOrEqual(10);
-    until(e, () => boots(e, BootReason.WDT_TIMEOUT) > 0, 200);
-    e.upload(u, 'CALL SLEEP 1000', factory); // hard reboot
+    expect(u.wdt).toBeGreaterThan(0);
+    until(e, () => u.bootReason === BootReason.WDT_TIMEOUT, 20);
+    e.upload(u, `START:${HANG}`, factory); // hard reboot
     expect(u.wdt).toBe(0);
   });
 
-  it('BRK freezes it, like a debugger', () => {
-    const { e, u } = rover('MOV @WDT 20\nBRK\nCALL SLEEP 1000');
+  it('BPT freezes it, like a debugger', () => {
+    const { e, u } = rover(fw('MOV  #20., @#WDT', 'BPT'));
+    const timeouts = watch(u, e);
     run(e, 200);
-    expect(u.vm.state).toBe(CpuState.HALTED);
+    expect(u.cpu.state).toBe(CpuState.HALTED);
     expect(u.wdt).toBe(20);
-    expect(boots(e, BootReason.WDT_TIMEOUT)).toBe(0);
+    expect(timeouts()).toBe(0);
   });
 
-  it('keeps counting through a program slice; with exact slices (M14) a long SLEEP no longer starves the firmware', () => {
-    const { e, u } = rover('loop: MOV @WDT 100\nCALL RUN 10\nJMP loop', 'CALL SLEEP 300\nEND 1');
+  it('keeps counting through a program run; limited runs bring the firmware back in time', () => {
+    const prog = `START:  ${sleep(300)}\n        MOV  #1, R0\n        HALT`;
+    const loop = (ticks: number) => `START:\n1$:     MOV  #100., @#WDT\n        MOV  #${ticks}., R0\n        JSR  PC, RUN\n        WAIT\n        BR   1$`;
+    const { e, u } = rover(loop(10), prog);
+    const timeouts = watch(u, e);
     until(e, () => u.progState === ProgState.PROG_DONE, 400);
-    expect(boots(e, BootReason.WDT_TIMEOUT)).toBe(0); // the timer interrupt brought the firmware back every 10 ticks
-    // A call without a time limit (@SLICE 0) trusts the program: then the watchdog catches it.
-    const s = rover('loop: MOV @WDT 100\nCALL RUN 0\nJMP loop', 'CALL SLEEP 300\nEND 1');
-    const t = until(s.e, () => boots(s.e, BootReason.WDT_TIMEOUT) > 0, 400);
+    expect(timeouts()).toBe(0); // the slice timer brought the firmware back every 10 ticks
+    // A run without a time limit (SLICE 0) trusts the program: then the watchdog catches it.
+    const s = rover(loop(0), prog);
+    const st = watch(s.u, s.e);
+    const t = until(s.e, () => st() > 0, 400);
     expect(t).toBeGreaterThan(100);
-    expect(s.u.prog.state).not.toBe(CpuState.FAULT); // the reboot restarted the program
+    expect(s.u.progState).toBe(ProgState.PROG_READY); // the reboot made the program ready again
   });
 
   it('the default firmware arms it and keeps it fed through charging, idling and slices', () => {
-    const { e, u } = rover(DEFAULT_FIRMWARE, PROGRAM_TEMPLATES['Weather station']);
-    run(e, 6000); // 2.5 sols: nights, charging, SLEEP 100 inside slices
+    const { e, u } = rover(PDP_DEFAULT_FIRMWARE, WEATHER);
+    const timeouts = watch(u, e);
+    run(e, 6000); // 2.5 sols: nights, charging, sleeping programs
     expect(u.wdt).toBeGreaterThan(0);
-    expect(boots(e, BootReason.WDT_TIMEOUT)).toBe(0);
+    expect(timeouts()).toBe(0);
     expect(u.powered).toBe(true);
   });
 });
 
-describe('fault protection @PREEMPT (SPEC §3.9.2)', () => {
-  /**
-   * Firmware: arm `mask`, run long slices, note @PREEMPTED in r0 and count slices in r1; after
-   * a preemption it stops the drive (@DRIVE_N 0: the firmware decides, M14). It calls the
-   * program again in the same tick, and CALL PROGRAM clears @PREEMPTED: so the tests look at r0.
-   */
-  const fw = (mask: string, extra = '') =>
-    `${extra}\nMOV @PREEMPT ${mask}\nloop: CALL RUN 500\nMOV r0 @PREEMPTED\nJEQ r0 0 cont\nMOV @DRIVE_N 0\ncont: ADD r1 1\nJEQ @PROG_STATE PROG_READY loop\nCALL SLEEP 1000`;
-
-  it('PRE_ALERT: an announced event interrupts the program at once; its SLEEP goes on and it resumes there', () => {
-    const { e, u } = rover(fw('PRE_ALERT'), 'CALL SLEEP 400\nMOV r1 @STATUS\nMOV r2 7\nEND 1');
-    run(e, 20);
-    expect(u.slice).toBeGreaterThan(0);
-    expect(u.prog.state).toBe(CpuState.BLOCKED);
-    e.director.triggerNow('PARTIAL_ECLIPSE'); // announced next tick
-    run(e, 1);
-    expect(u.vm.regs[0]).toBe(Preempt.PRE_ALERT); // the firmware got control in that tick
-    expect(u.vm.regs[1]).toBe(1); // ...came back from RUN once...
-    run(e, 1);
-    expect(u.slice).toBeGreaterThan(0); // ...and started a second slice (its 9 instructions take two ticks)
-    expect(u.prog.state).toBe(CpuState.BLOCKED); // interrupted, not aborted: still asleep in the ROM's WAIT
-    expect(u.prog.timer).toBeGreaterThan(300);
-    until(e, () => u.progState === ProgState.PROG_DONE, 400); // woke up when its timer ran out
-    expect(u.prog.regs[1]).toBe(Status.OK);
-    expect(u.prog.regs[2]).toBe(7);
-    run(e, 1);
-    expect(u.vm.regs[0]).toBe(0); // the second slice ended normally (END): nothing preempted it
-  });
-
-  it('without @PREEMPT the slice is cooperative: the SLEEP runs to the end', () => {
-    const { e, u } = rover(fw('0'), 'CALL SLEEP 400\nEND 1');
-    run(e, 20);
-    e.director.triggerNow('PARTIAL_ECLIPSE');
-    run(e, 100);
-    expect(u.slice).toBeGreaterThan(0);
-    expect(u.preempted).toBe(0);
-    expect(u.prog.state).toBe(CpuState.BLOCKED);
-  });
-
-  it('PRE_LOW_BAT: battery below @BAT_ALARM interrupts a long drive; the firmware stops it at the end of the tile', () => {
-    const { e, u } = rover(fw('PRE_LOW_BAT', 'MOV @BAT_ALARM 50'), 'CALL STEP EAST 3\nMOV r1 @STATUS\nEND 1');
-    u.energy = 50_000 + 10; // just above the alarm: the first tile's 40 energy crosses it
-    run(e, 1); // the firmware calls the program, which starts the drive in the same tick (pays the tile)
-    expect(u.action?.kind).toBe('STEP');
-    run(e, 1); // 49 % < 50 %: interrupted; the firmware writes @DRIVE_N 0
-    expect(u.vm.regs[0]).toBe(Preempt.PRE_LOW_BAT);
-    expect(u.action).toMatchObject({ kind: 'STEP', tilesLeft: 1, stop: true });
-    until(e, () => u.progState === ProgState.PROG_DONE, 20);
-    expect(u.x).toBe(1); // finished the tile it was on, then stopped
-    expect(u.prog.regs[1]).toBe(Status.ERR_PREEMPTED); // the program's WAIT @DRIVE: stopped by a command
-  });
-
-  it('PRE_DAMAGE: a squall hit ends the slice', () => {
-    const { e, u } = rover(fw('PRE_DAMAGE'), 'CALL SLEEP 1000');
-    run(e, 5);
-    e.director.triggerNow('SQUALL');
-    until(e, () => u.vm.regs[0] !== 0, 300);
-    expect(u.vm.regs[0]).toBe(Preempt.PRE_DAMAGE);
-    expect(u.hull + u.antennaHealth + u.solarHealth).toBeLessThan(300);
-  });
-
+describe('fault protection PREMPT (SPEC §3.9.2)', () => {
   it('a reboot switches fault protection off', () => {
-    const { e, u } = rover('MOV @PREEMPT 7\nMOV @BAT_ALARM 40\nCALL SLEEP 1000');
-    run(e, 2);
+    const { e, u } = rover(fw('MOV  #7, @#PREMPT', 'MOV  #40., @#BATALM'));
+    run(e, 6);
     expect([u.preemptMask, u.batAlarm]).toEqual([7, 40]);
-    e.upload(u, 'CALL SLEEP 1000', factory);
+    e.upload(u, `START:${HANG}`, factory);
     expect([u.preemptMask, u.batAlarm, u.preempted]).toEqual([0, 0, 0]);
   });
 
-  it('the Fault protection firmware stops the Weather station for an alert and logs why', () => {
-    const { e, u } = rover(FIRMWARE_FAULT_PROTECTION, PROGRAM_TEMPLATES['Weather station']);
-    run(e, 30);
+  it('the default firmware stops the Weather station for an alert and logs why (L.PRE)', () => {
+    const { e, u } = rover(PDP_DEFAULT_FIRMWARE, WEATHER);
+    run(e, 30, true);
     e.director.triggerNow('PARTIAL_ECLIPSE');
     until(e, () => u.preempted !== 0, 50);
     expect(u.preempted).toBe(Preempt.PRE_ALERT);
-    until(e, () => e.received.some((f) => hex(f.bytes) === hex(encodeLog(12, Preempt.PRE_ALERT))), 200); // T_PREEMPT = 1
+    until(e, () => e.messages.some((m) => m.type === MsgType.LOG && m.body[0] === 12 && m.body[1] === Preempt.PRE_ALERT), 300); // L.PRE = 12
   });
-});
 
-describe('save v16', () => {
   it('round-trips an armed watchdog, fault protection and the thermal state at night', () => {
-    const make = () => rover(FIRMWARE_FAULT_PROTECTION, PROGRAM_TEMPLATES['Weather station'], 3).e;
+    const make = () => rover(PDP_DEFAULT_FIRMWARE, WEATHER, 3).e;
     const a = make();
     run(a, 2600);
     const b0 = make();

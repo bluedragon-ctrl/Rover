@@ -1,15 +1,47 @@
-import { BALANCE, cloneChassis, PDP11, type ChassisDef } from './balance';
+import { BALANCE, cloneChassis, type ChassisDef } from './balance';
 import { CpuState, ProgState } from './types';
 import type { ToolId } from './tools';
-import { RoverVM } from './vm/RoverVM';
 import { Downlink, type ProductDesc } from './downlink';
 import { freshParser, type ParserState } from './messages';
-import { PHOTO_FORMATS, photoBytes, type PhotoFormats } from './photos';
+import { PHOTO_FORMATS_2X, photoBytes, type PhotoFormats } from './photos';
 import type { RoverMachine } from './machine/RoverMachine';
 
 /** Image memory size (SPEC §3.8.7): the largest photo the installed camera modes take. */
-export const imageBytes = (c: Pick<ChassisDef, 'cameraModes'>, formats: PhotoFormats = PHOTO_FORMATS): number =>
+export const imageBytes = (c: Pick<ChassisDef, 'cameraModes'>, formats: PhotoFormats = PHOTO_FORMATS_2X): number =>
   c.cameraModes.reduce((n, m) => Math.max(n, photoBytes(m, formats)), 0);
+
+/**
+ * The computer's power and run state as the world sees it (power off, destroyed, a fault
+ * waiting for the fault reset, halted at a breakpoint). The machine (`Unit.machine`) holds
+ * the registers and memory.
+ */
+export class CpuStatus {
+  state: CpuState = CpuState.RUNNING;
+  faultReason = '';
+  /** Ticks until the fault reset reboots a FAULTed CPU. */
+  watchdog = 0;
+
+  /** A hard reboot: the CPU runs again unless it has no power or no rover. */
+  reboot(): void {
+    this.faultReason = '';
+    this.watchdog = 0;
+    if (this.state !== CpuState.DESTROYED && this.state !== CpuState.POWER_OFF) this.state = CpuState.RUNNING;
+  }
+
+  halt(): void {
+    this.state = CpuState.HALTED;
+  }
+
+  resume(): void {
+    if (this.state === CpuState.HALTED) this.state = CpuState.RUNNING;
+  }
+
+  fault(reason: string, watchdogTicks: number): void {
+    this.state = CpuState.FAULT;
+    this.faultReason = reason;
+    this.watchdog = watchdogTicks;
+  }
+}
 
 /**
  * What the camera saw at the last SNAP (M12): the photo fields of a product descriptor plus
@@ -18,15 +50,15 @@ export const imageBytes = (c: Pick<ChassisDef, 'cameraModes'>, formats: PhotoFor
 export type Capture = Pick<ProductDesc, 'type' | 'subject' | 'x' | 'y' | 'sx' | 'sy' | 'lit' | 'horizon' | 'anomaly' | 'x2'> & { noise: { tick: number; seq: number } };
 
 /**
- * The chassis' mechanical work (M14 devices drive, tools, repair, camera: they share the
+ * The chassis' mechanical work (drive, tools, repair, camera: they share the
  * chassis and the arm, so one at a time). `tilesLeft` counts the tile in progress;
- * `stop`: @DRIVE_N 0 asked to stop at the end of this tile.
+ * `stop`: `DRVCNT` 0 asked to stop at the end of this tile.
  */
 export type UnitAction =
   | { kind: 'STEP'; dir: number; tilesLeft: number; ticksLeft: number; toX: number; toY: number; stop?: boolean }
   | { kind: 'TOOL'; tool: ToolId; arg: number; arg2?: number; ticksLeft: number };
 
-/** M14 devices with a progress port and a result (docs/ASSEMBLER_CORE.md §4). The timer is per slot (RoverVM.timer). */
+/** Devices with a progress count and a result (the I/O page's device blocks, SPEC §5.6). */
 export type Device = 'drive' | 'radar' | 'tool' | 'repair' | 'cam' | 'send' | 'erase';
 export const DEVICES: readonly Device[] = ['drive', 'radar', 'tool', 'repair', 'cam', 'send', 'erase'];
 
@@ -58,7 +90,7 @@ export interface UnitMotion {
 export class Unit {
   x = 0;
   y = 0;
-  /** Direction the rover faces (the drive, directional tools, @HEADING). Aims the headlight cone. */
+  /** Direction the rover faces (the drive, directional tools, `HDG`). Aims the headlight cone. */
   heading = 0;
   energy: number;
   hull = 100;
@@ -66,12 +98,12 @@ export class Unit {
   solarHealth = 100;
   antennaHealth = 100;
   cargo: number[];
-  /** The rover's three status lamps on the cabin roof (@IND1..3, a LightColor each). Purely visual. */
+  /** The rover's three status lamps on the cabin roof (`IND1`–`IND3`, a LightColor each). Purely visual. */
   indicators: number[] = [0, 0, 0];
-  /** @POST: two-digit hex display on the back of the cabin (0–255). Visual only, survives reboots. */
+  /** `DISP`: two-digit hex display on the back of the cabin (0–255). Visual only, survives reboots. */
   post = 0;
   headlight = 0;
-  /** Commanded solar state 0/1 (@SOLAR_OPEN). */
+  /** Commanded solar state 0/1 (`SOLOPN`). */
   solarOpen = 0;
   /** Deployment progress, 0 (stowed) .. BALANCE.solarDeployTicks (fully open). */
   solarDeploy = 0;
@@ -84,13 +116,11 @@ export class Unit {
   link = new Downlink();
   /**
    * M12 image memory (SPEC §3.8.7). Non-volatile, like a camera's flash: survives reboots and
-   * power-off; only a photo (overwrites) and @ERASE clear it. Grows with camera upgrades; use
+   * power-off; only a photo (overwrites) and the erase (`F.ERAS`) clear it. Grows with camera upgrades; use
    * imageMemory() to read it at the right size.
    */
   img = new Uint8Array(0);
-  /** M15: the camera's formats (PHOTO_FORMATS_2X on the PDP-11 core, PDP11_CPU.md §6.3). */
-  photoFormats: PhotoFormats = PHOTO_FORMATS;
-  /** The last SNAP's capture, until a SEND of the same type carries it home. */
+  /** The last SNAP's capture, until `SNDIMG` of the same type takes it home. */
   capture: Capture | null = null;
   /**
    * M15: the recorder's own view of the CPU's messages (`RECBUF`), so it knows where a photo
@@ -105,10 +135,8 @@ export class Unit {
   /** M15: safe mode latched (`BOOTCS` SAFE): kept through reboots, cleared by a firmware upload. */
   safeMode = false;
   imgCaps: Array<Capture | null> = [];
-  /** Mode of the last SNAP: the default type of SEND. */
+  /** Mode of the last SNAP (`IMGTYP`: `SNDIMG` with R0 = 0 sends that). */
   snapMode = 1;
-  /** An STB since the last SNAP (the next SEND is EDITED, not RAW). */
-  imgEdited = false;
   /** Energy gained from solar last tick (for UI). */
   lastSolarGain = 0;
   /** Cache key of the last fog reveal (x, y, range). */
@@ -116,16 +144,16 @@ export class Unit {
   action: UnitAction | null = null;
   motion: UnitMotion | null = null;
 
-  // M14 devices (docs/ASSEMBLER_CORE.md §4). Latched arguments:
-  /** @DRIVE_N tiles per drive (1 after a reboot). */
+  // Device parameters latched by the I/O page:
+  /** `DRVCNT`: tiles per drive. */
   driveN = 1;
-  /** @TOOL_ARG direction / slot. */
+  /** `TOLARG`: direction / slot. */
   toolArg = 0;
-  /** @REPAIR_SYS (SYS_HULL after a reboot). */
+  /** The repair's system (its FN). */
   repairSys = 0;
-  /** @CAM_MODE (1 after a reboot). */
+  /** The camera mode (its FN). */
   camMode = 1;
-  /** @SLICE as the firmware wrote it: ticks the next CALL PROGRAM may run (0 = no limit). */
+  /** `SLICE` as the firmware wrote it: ticks the next program run may last (0 = no limit). */
   sliceSet = 0;
   /** Radar sweep in progress (ticks left), its direction, and the last answer. */
   radarTicks = 0;
@@ -134,10 +162,10 @@ export class Unit {
   radarDist = 0;
   /** Image send / erase in progress. */
   imgOp: { kind: 'send' | 'erase'; ticksLeft: number } | null = null;
-  /** Each device's result: copied into @STATUS by `WAIT @port` (0 = OK). */
+  /** Each device's result (`xxER`, 0 = OK). */
   results: Record<Device, number> = { drive: 0, radar: 0, tool: 0, repair: 0, cam: 0, send: 0, erase: 0 };
 
-  /** Progress port value: tiles (drive) or ticks left, 0 = idle. */
+  /** Work left: tiles (drive) or ticks, 0 = idle (DONE). */
   deviceLeft(d: Device): number {
     const a = this.action;
     switch (d) {
@@ -156,40 +184,33 @@ export class Unit {
   cyclesLeft = 0;
   /** Firmware source (the firmware slot). */
   sourceCode = '';
-  /**
-   * M15 PDP-11 core (engine option `cpu: 'pdp11'`): the bus, both contexts and the CPU.
-   * null on the Rover-ASM core. `vm.state` still carries power, halts and faults.
-   */
-  machine: RoverMachine | null = null;
-  /** Firmware context. Its state is the CPU's state (power, faults, halts). */
-  readonly vm: RoverVM;
-  /** M10: program slot source ('' = no program) and its own context (SPEC §3.9). */
+  /** The computer: the bus, both contexts and the CPU (set by the engine when the rover is created). */
+  machine!: RoverMachine;
+  /** Power, halts and faults of the computer. */
+  readonly cpu = new CpuStatus();
+  /** Program slot source ('' = no program, SPEC §3.9). */
   programSource = '';
-  readonly prog: RoverVM;
-  /** Flash bytes of each slot, from their last successful compile. */
+  /** Bytes of each slot's image, from their last successful assembly. */
   firmwareBytes = 0;
   programBytes = 0;
   progState: ProgState = ProgState.PROG_NONE;
   progResult = 0;
-  /**
-   * -1 when the firmware has control; inside CALL PROGRAM the ticks left of the slice (M14
-   * @SLICE), or 0 for a call without a time limit.
-   */
+  /** -1 when the firmware has control; during a program run the ticks left of its `SLICE`, or 0 for no limit. */
   slice = -1;
 
   /**
-   * @WDT (SPEC §3.9.5): ticks until the watchdog reboots the rover; 0 = not armed. CPU state:
+   * `WDT` (SPEC §3.9.5): ticks until the watchdog reboots the rover; 0 = not armed. CPU state:
    * a hard reboot disarms it.
    */
   wdt = 0;
-  /** @PREEMPT condition mask, @BAT_ALARM threshold and @PREEMPTED (what ended the last slice early). CPU state. */
+  /** `PREMPT` condition mask, `BATALM` threshold and `PRMPTD` (what ended the last slice early). CPU state. */
   preemptMask = 0;
   batAlarm = 0;
   preempted = 0;
-  /** Internal temperature in °C (@TEMP, SPEC §3.3.4) and whether the survival heaters ran this tick (@HEATER). */
+  /** Internal temperature in °C (`TEMP`, SPEC §3.3.4) and whether the survival heaters ran this tick (`HEATER`). */
   temp = 0;
   heater = 0;
-  /** Dust on the solar array, 0–100 % (@SOLAR_DUST): charging is scaled by what is left. */
+  /** Dust on the solar array, 0–100 % (`SOLDST`): charging is scaled by what is left. */
   solarDust = 0;
 
   /** Last seismic scan result (TOOL_3 SEISMIC). */
@@ -200,19 +221,19 @@ export class Unit {
   /** This rover's own stats: base chassis + upgrades. */
   readonly chassis: ChassisDef;
 
-  /** Science recorder size in bytes (M15: scaled on the PDP-11 core, PDP11.recorderScale). */
+  /** Science recorder size in bytes. */
   get recorderBytes(): number {
-    return this.machine ? this.chassis.recorderBytes * PDP11.recorderScale : this.chassis.recorderBytes;
+    return this.chassis.recorderBytes;
   }
 
-  /** Downlink bytes per tick at full signal (M15: scaled on the PDP-11 core, PDP11.linkScale). */
+  /** Downlink bytes per tick at full signal. */
   get linkBytesPerTick(): number {
-    return this.machine ? this.chassis.linkBytesPerTick * PDP11.linkScale : this.chassis.linkBytesPerTick;
+    return this.chassis.linkBytesPerTick;
   }
 
   /** Image memory at its current size (grows, keeping its contents, when an upgrade adds a camera mode). */
   imageMemory(): Uint8Array {
-    const n = imageBytes(this.chassis, this.photoFormats);
+    const n = imageBytes(this.chassis);
     if (this.img.length < n) {
       const grown = new Uint8Array(n);
       grown.set(this.img);
@@ -221,46 +242,17 @@ export class Unit {
     return this.img;
   }
 
-  /**
-   * M14 RAM (docs/ASSEMBLER_CORE.md §7): shared by firmware and program, zero after a hard
-   * reboot. Grows with RAM upgrades; read it through ramMemory().
-   */
-  ram = new Uint8Array(0);
-  /** RAM top the firmware was assembled for (its VARs count down from here); 0 = the chassis RAM. */
-  fwRamTop = 0;
-  /** RAM taken by each slot's VARs, [low, high), from their last successful compile. */
-  firmwareRam = { low: 0, high: 0 };
-  programRam = { low: 0, high: 0 };
-
-  ramMemory(): Uint8Array {
-    if (this.ram.length < this.chassis.ramBytes) {
-      const grown = new Uint8Array(this.chassis.ramBytes);
-      grown.set(this.ram);
-      this.ram = grown;
-    }
-    return this.ram;
-  }
-
   /** ERASE: image memory zeroed, the capture dropped (SPEC §3.8.7). */
   clearImageMemory(): void {
     this.img.fill(0);
     this.capture = null;
-    this.imgEdited = false;
   }
 
   constructor(readonly id: number, public name: string, base: ChassisDef) {
     const chassis = (this.chassis = cloneChassis(base));
     this.energy = chassis.batteryCapacity;
-    this.vm = new RoverVM(chassis);
-    this.prog = new RoverVM(chassis, true);
     this.cargo = new Array(chassis.cargoSlots).fill(0);
     this.img = new Uint8Array(imageBytes(chassis));
-    this.ram = new Uint8Array(chassis.ramBytes);
-  }
-
-  /** The context that executes now: the program inside CALL PROGRAM, else the firmware. */
-  get cpu(): RoverVM {
-    return this.slice >= 0 ? this.prog : this.vm;
   }
 
   get batteryPercent(): number {
@@ -276,6 +268,6 @@ export class Unit {
   }
 
   get powered(): boolean {
-    return this.vm.state !== CpuState.POWER_OFF && this.vm.state !== CpuState.DESTROYED;
+    return this.cpu.state !== CpuState.POWER_OFF && this.cpu.state !== CpuState.DESTROYED;
   }
 }

@@ -6,11 +6,33 @@
  */
 
 import { BALANCE, PDP11 } from '../balance';
-import { wrapDeg } from '../Environment';
-import { getPort, type PortContext } from '../ports';
+import type { ChunkedWorld } from '../ChunkedWorld';
+import { signalStrength, wrapDeg, type SunState } from '../Environment';
 import { ProgState, Status } from '../types';
+import type { WorldRegistry } from '../WorldRegistry';
 import type { Device, Unit } from '../Unit';
 import { MsgType, parseStream } from '../messages';
+
+/** What the device registers need from the world and the engine (SimulationEngine.ioCtx). */
+export interface IoContext {
+  readonly tick: number;
+  readonly sun: SunState;
+  readonly orbitAzimuth: number;
+  world: ChunkedWorld;
+  registry: WorldRegistry;
+  sensorRange(u: Unit): number;
+  turn(u: Unit, dir: number): void;
+  alert(): { type: number; eta: number };
+  drops(): { x: number; y: number }[];
+  nearestDrop(u: Unit): { x: number; y: number } | null;
+  /** Firmware write to `PRGST`: P.NONE acknowledges, P.RDY restarts the program. */
+  setProgState(u: Unit, v: number): void;
+  /** A device start (or a `DRVCNT` write while driving): SimulationEngine.device(). */
+  device(u: Unit, start: DeviceStart, v: number): void;
+}
+
+/** What a device block's GO (or `DRVCNT`) asks the engine to do. */
+export type DeviceStart = 'DRIVE' | 'DRIVE_N' | 'RADAR' | 'TOOL' | 'REPAIR' | 'CAM' | 'ERASE';
 
 /** RO read-only, RW read/write, WO write-only (reads 0), FW written by the firmware only (the program may read). */
 export type Access = 'RO' | 'RW' | 'WO' | 'FW';
@@ -92,7 +114,7 @@ export function freshIo(): IoState {
 /** What a register needs from its machine. */
 export interface IoHost {
   readonly u: Unit;
-  readonly ctx: PortContext;
+  readonly ctx: IoContext;
   readonly io: IoState;
   /** The program's registers are loaded (FW registers refuse its writes). */
   readonly program: boolean;
@@ -122,8 +144,6 @@ export interface IoRegister {
 
 const s16 = (v: number): number => ((v & 0xffff) ^ 0x8000) - 0x8000;
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
-/** Read a Rover-ASM port (the same device logic, a new face). */
-const port = (name: string) => (h: IoHost) => getPort(name)?.read?.(h.u, h.ctx) ?? 0;
 
 /** Which unit device a block's DONE and result come from. */
 function unitDevice(h: IoHost, key: DevKey): Device {
@@ -273,8 +293,8 @@ function deviceRegisters(b: DeviceBlock): IoRegister[] {
           write: (h, v) => (h.u.toolArg = v & 0xffff),
         },
         { addr: base + 6, name: 'TOLLFT', access: 'RO', description: 'Ticks left of the tool use', read: left('tool') },
-        { addr: base + 8, name: 'SEITYP', access: 'RO', description: 'Ore found by the last seismic scan (F.T3), 0 = none', read: port('SEISMIC_TYPE') },
-        { addr: base + 10, name: 'SEIDST', access: 'RO', description: 'Distance to it, 0 = none', read: port('SEISMIC_DIST') },
+        { addr: base + 8, name: 'SEITYP', access: 'RO', description: 'Ore found by the last seismic scan (F.T3), 0 = none', read: (h) => h.u.seismicType },
+        { addr: base + 10, name: 'SEIDST', access: 'RO', description: 'Distance to it, 0 = none', read: (h) => h.u.seismicDist },
       );
       break;
     case 'rep':
@@ -294,52 +314,52 @@ function deviceRegisters(b: DeviceBlock): IoRegister[] {
   return regs;
 }
 
-/** Telemetry (176000, read-only): today's ports under six-character names. */
-const TELEMETRY: Array<[name: string, port: string, description: string]> = [
-  ['BAT', 'BAT', 'Battery 0–100 %'],
-  ['HULL', 'HULL', 'Hull integrity 0–100'],
-  ['SOLHLT', 'SOLAR_HEALTH', 'Solar array integrity 0–100 (scales charging)'],
-  ['ANTHLT', 'ANTENNA_HEALTH', 'Dish integrity 0–100 (scales signal)'],
-  ['X', 'X', 'World X (east +), signed'],
-  ['Y', 'Y', 'World Y (north +), signed'],
-  ['TICKL', '', 'Ticks since world start, low word; reading it freezes TICKH'],
-  ['TICKH', '', 'High word of the tick counter, as frozen by the last TICKL read'],
-  ['GROUND', 'GROUND', 'Terrain tile under the rover'],
-  ['GNDHAZ', 'GROUND_HAZARD', 'Hazard level of the terrain under the rover 0–2'],
-  ['TEMP', 'TEMP', 'Internal temperature in °C, signed'],
-  ['HEATER', 'HEATER', '1 while the survival heaters run'],
-  ['CRGFRE', 'CARGO_FREE', 'Empty cargo slots'],
-  ['SCIRDY', 'SCIENCE_READY', 'Science products waiting for the downlink'],
-  ['RECFRE', 'REC_FREE', 'Free recorder bytes'],
-  ['RADRNG', 'SENSOR_RANGE', 'Radar range in tiles'],
-  ['ALERT', 'ALERT', 'Announced or active world event: A.NONE, A.ECL, A.SQL'],
-  ['ALRETA', 'ALERT_ETA', 'Ticks until it starts'],
-  ['DROPS', 'DROPS', 'Landed supply crates'],
-  ['DROPX', 'DROP_X', 'X of the nearest landed crate (own X if none), signed'],
-  ['DROPY', 'DROP_Y', 'Y of the nearest landed crate, signed'],
-  ['SUNAZ', 'SUN_AZIMUTH', 'Sun bearing 0–359'],
-  ['SUNEL', 'SUN_ELEV', 'Sun elevation in degrees, signed (<= 0 is night)'],
-  ['SUNLIT', 'SUN_LIGHT', 'Illumination 0–100'],
-  ['SOLDST', 'SOLAR_DUST', 'Dust on the solar array 0–100 %'],
-  ['ORBAZ', 'ORBIT_AZIMUTH', 'Relay orbiter bearing 0–359'],
-  ['SIGNAL', 'SIGNAL_STR', 'Uplink quality 0–100'],
+type Read = (u: Unit, c: IoContext) => number;
+
+/** Telemetry (176000, read-only). */
+const TELEMETRY: Array<[name: string, read: Read | null, description: string]> = [
+  ['BAT', (u) => u.batteryPercent, 'Battery 0–100 %'],
+  ['HULL', (u) => u.hull, 'Hull integrity 0–100'],
+  ['SOLHLT', (u) => u.solarHealth, 'Solar array integrity 0–100 (scales charging)'],
+  ['ANTHLT', (u) => u.antennaHealth, 'Dish integrity 0–100 (scales signal)'],
+  ['X', (u) => u.x, 'World X (east +), signed'],
+  ['Y', (u) => u.y, 'World Y (north +), signed'],
+  ['TICKL', null, 'Ticks since world start, low word; reading it freezes TICKH'],
+  ['TICKH', null, 'High word of the tick counter, as frozen by the last TICKL read'],
+  ['GROUND', (u, c) => c.world.getTile(u.x, u.y, 0), 'Terrain tile under the rover'],
+  ['GNDHAZ', (u, c) => c.registry.get(c.world.getTile(u.x, u.y, 0))?.hazardLevel ?? 0, 'Hazard level of the terrain under the rover 0–2'],
+  ['TEMP', (u) => u.temp, `Internal temperature in °C, signed (${BALANCE.ambientDayC} °C in full sun, ${BALANCE.ambientNightC} °C at night; the heaters hold ${BALANCE.heaterSetpointC} °C)`],
+  ['HEATER', (u) => u.heater, `1 while the survival heaters run (${BALANCE.heaterPerTick} energy a tick)`],
+  ['CRGFRE', (u) => u.cargo.filter((c) => c === 0).length, 'Empty cargo slots'],
+  ['SCIRDY', (u) => u.link.products.length, 'Science products waiting for the downlink'],
+  ['RECFRE', null, 'Free recorder bytes'],
+  ['RADRNG', (u, c) => c.sensorRange(u), 'Radar range in tiles'],
+  ['ALERT', (_u, c) => c.alert().type, 'Announced or active world event: A.NONE, A.ECL, A.SQL'],
+  ['ALRETA', (_u, c) => c.alert().eta, 'Ticks until it starts'],
+  ['DROPS', (_u, c) => c.drops().length, 'Landed supply crates'],
+  ['DROPX', (u, c) => c.nearestDrop(u)?.x ?? u.x, 'X of the nearest landed crate (own X if none), signed'],
+  ['DROPY', (u, c) => c.nearestDrop(u)?.y ?? u.y, 'Y of the nearest landed crate, signed'],
+  ['SUNAZ', (_u, c) => c.sun.azimuth, 'Sun bearing 0–359'],
+  ['SUNEL', (_u, c) => c.sun.elevation, 'Sun elevation in degrees, signed (<= 0 is night)'],
+  ['SUNLIT', (_u, c) => c.sun.light, 'Illumination 0–100'],
+  ['SOLDST', (u) => u.solarDust, 'Dust on the solar array 0–100 %'],
+  ['ORBAZ', (_u, c) => c.orbitAzimuth, 'Relay orbiter bearing 0–359'],
+  ['SIGNAL', (u, c) => Math.floor((signalStrength(u.antennaAngle, c.orbitAzimuth) * u.antennaHealth) / 100), 'Uplink quality 0–100'],
 ];
 
-/** Actuators (176200, read/write) and the console display. */
-const ACTUATORS: Array<[name: string, port: string, description: string, signed: boolean]> = [
-  ['HDG', 'HEADING', `Direction the rover faces; write turns in place (${BALANCE.turnEnergy} energy, wraps mod 4)`, true],
-  ['LIGHT', 'HEADLIGHT', 'Headlight 0 / 1', false],
-  ['SOLOPN', 'SOLAR_OPEN', 'Solar array 0 stow, 1 deploy', false],
-  ['SOLANG', 'SOLAR_ANGLE', 'Panel bearing: write the target, read the current one', true],
-  ['ANTANG', 'ANTENNA_ANGLE', 'Dish bearing: write the target, read the current one', true],
-  ['IND1', 'IND1', 'Status lamp 1: OFF, RED, GREEN, BLUE, AMBER', false],
-  ['IND2', 'IND2', 'Status lamp 2', false],
-  ['IND3', 'IND3', 'Status lamp 3', false],
+/** Actuators (176200, read/write): read, write (already wrapped or clamped), and the clamp range or 'angle'. */
+const ACTUATORS: Array<[name: string, read: (u: Unit) => number, write: (u: Unit, v: number, c: IoContext) => void, range: [number, number] | 'angle', description: string]> = [
+  ['HDG', (u) => u.heading, (u, v, c) => c.turn(u, ((v % 4) + 4) % 4), [-32768, 32767], `Direction the rover faces; write turns in place (${BALANCE.turnEnergy} energy, wraps mod 4)`],
+  ['LIGHT', (u) => u.headlight, (u, v) => (u.headlight = v), [0, 1], `Headlight 0 / 1 (${BALANCE.headlightPerTick} energy a tick)`],
+  ['SOLOPN', (u) => u.solarOpen, (u, v) => (u.solarOpen = v), [0, 1], 'Solar array 0 stow, 1 deploy'],
+  ['SOLANG', (u) => u.solarAngle, (u, v) => (u.solarTarget = v), 'angle', 'Panel bearing: write the target, read the current one'],
+  ['ANTANG', (u) => u.antennaAngle, (u, v) => (u.antennaTarget = v), 'angle', 'Dish bearing: write the target, read the current one'],
+  ...[1, 2, 3].map((n): (typeof ACTUATORS)[number] => [`IND${n}`, (u) => u.indicators[n - 1], (u, v) => (u.indicators[n - 1] = v), [0, 4], n === 1 ? 'Status lamp 1: OFF, RED, GREEN, BLUE, AMBER' : `Status lamp ${n}`]),
 ];
 
-function fromPorts(): IoRegister[] {
+function telemetryAndActuators(): IoRegister[] {
   const regs: IoRegister[] = [];
-  TELEMETRY.forEach(([name, p, description], i) => {
+  TELEMETRY.forEach(([name, read, description], i) => {
     const addr = 0o176000 + 2 * i;
     if (name === 'TICKL') {
       regs.push({
@@ -351,19 +371,18 @@ function fromPorts(): IoRegister[] {
       });
     } else if (name === 'TICKH') regs.push({ addr, name, access: 'RO', description, read: (h) => h.io.tickH });
     else if (name === 'RECFRE') regs.push({ addr, name, access: 'RO', description: `${description} (the same as RECFRE in the recorder block, 176554)`, read: recFree, alias: true });
-    else regs.push({ addr, name, access: 'RO', description, read: port(p) });
+    else regs.push({ addr, name, access: 'RO', description, read: (h) => read!(h.u, h.ctx) });
   });
-  ACTUATORS.forEach(([name, p, description, signed], i) => {
-    const def = getPort(p)!;
+  ACTUATORS.forEach(([name, read, write, range, description], i) => {
     regs.push({
       addr: 0o176200 + 2 * i,
       name,
       access: 'RW',
       description,
-      read: port(p),
+      read: (h) => read(h.u),
       write: (h, v) => {
-        const x = signed ? s16(v) : v;
-        def.write?.(h.u, def.angle ? wrapDeg(x) : clamp(x, def.min ?? -32768, def.max ?? 32767), h.ctx);
+        const x = range === 'angle' || name === 'HDG' ? s16(v) : v; // bearings and the heading are signed
+        write(h.u, range === 'angle' ? wrapDeg(x) : clamp(x, range[0], range[1]), h.ctx);
       },
     });
   });
@@ -515,7 +534,7 @@ const SYSTEM: IoRegister[] = [
     name: 'DISP',
     access: 'RW',
     description: 'Console display register: the two-digit display on the back of the cabin (0–255)',
-    read: port('POST'),
+    read: (h) => h.u.post,
     write: (h, v) => (h.u.post = v & 0xff),
   },
   {
@@ -532,7 +551,7 @@ const SYSTEM: IoRegister[] = [
 export const CARGO_BASE = 0o176600;
 export const CARGO_BYTES = 8;
 
-export const IO_REGISTERS: readonly IoRegister[] = [...fromPorts(), ...DEVICE_BLOCKS.flatMap(deviceRegisters), ...OUTPUT, ...RECORDER, ...CONTROL, ...SYSTEM].sort((a, b) => a.addr - b.addr);
+export const IO_REGISTERS: readonly IoRegister[] = [...telemetryAndActuators(), ...DEVICE_BLOCKS.flatMap(deviceRegisters), ...OUTPUT, ...RECORDER, ...CONTROL, ...SYSTEM].sort((a, b) => a.addr - b.addr);
 
 const byAddr = new Map(IO_REGISTERS.map((r) => [r.addr, r]));
 export const ioRegister = (addr: number): IoRegister | undefined => byAddr.get(addr & 0xfffe);

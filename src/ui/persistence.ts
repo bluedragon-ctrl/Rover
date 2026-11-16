@@ -1,4 +1,4 @@
-import { deserialize, serialize } from '../core/SaveManager';
+import { deserialize, OldSaveError, serialize } from '../core/SaveManager';
 import type { SimulationEngine } from '../core/SimulationEngine';
 
 const KEY = 'rover.autosave.v1';
@@ -30,17 +30,21 @@ export function clearAutosave(): void {
 }
 
 /**
- * Load the autosave if it matches the requested seed (or no seed was requested) and, M15,
- * the requested computer (`?cpu=pdp11`; none requested: any).
+ * Load the autosave if it matches the requested seed (or no seed was requested). An autosave
+ * from before the computer was replaced (OldSaveError) is cleared, and `old` tells the caller
+ * to say so: those saves cannot be loaded.
  */
-export function tryLoadAutosave(seedParam: number | null, cpu: 'pdp11' | 'rover-asm' | null = null): { engine: SimulationEngine | null; error?: string } {
-  const snap = readAutosave() as { seed?: number; cpu?: string } | null;
+export function tryLoadAutosave(seedParam: number | null): { engine: SimulationEngine | null; error?: string; old?: boolean } {
+  const snap = readAutosave() as { seed?: number } | null;
   if (!snap) return { engine: null };
   if (seedParam !== null && snap.seed !== seedParam) return { engine: null };
-  if (cpu !== null && (snap.cpu === 'pdp11' ? 'pdp11' : 'rover-asm') !== cpu) return { engine: null };
   try {
     return { engine: deserialize(snap) };
   } catch (err) {
+    if (err instanceof OldSaveError) {
+      clearAutosave();
+      return { engine: null, error: err.message, old: true };
+    }
     return { engine: null, error: (err as Error).message };
   }
 }

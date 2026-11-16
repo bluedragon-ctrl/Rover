@@ -4,16 +4,18 @@ import type { DirectorState } from './EventDirector';
 import type { ProductDesc, QueuedFrame, ReceivedFrame, ReceivedProduct, SysFrame } from './downlink';
 import { SimulationEngine, type PhotoAssembly, type SentRecord, type SupplyDrop } from './SimulationEngine';
 import { UPGRADE_BY_ID } from './upgrades';
-import { CpuState, ProgState, type Status } from './types';
-import type { RoverVM } from './vm/RoverVM';
-import { DEVICES, type Capture, type Device, type Unit, type UnitAction, type UnitMotion } from './Unit';
+import type { CpuState, ProgState } from './types';
+import type { Capture, Device, Unit, UnitAction, UnitMotion } from './Unit';
 import { fromHex, toHex } from './imaging';
-import { ambientTemp, Environment } from './Environment';
-import { migrateHardwareOps, migrateImageMemory } from './migrateSource';
 import type { MachineSave } from './machine/RoverMachine';
 import type { ParserState, ReceivedMessage } from './messages';
 
-export const SAVE_VERSION = 20;
+/**
+ * v21 (M15 slice 6): the rover's computer is the machine of src/core/machine/ and nothing
+ * else. Older saves (Rover-ASM, v1–v20) are not migrated (owner decision, docs/PDP11_CPU.md §12):
+ * loading one raises OldSaveError and the game starts a new world.
+ */
+export const SAVE_VERSION = 21;
 
 interface UnitSave {
   id: number;
@@ -27,37 +29,32 @@ interface UnitSave {
   solarHealth: number;
   antennaHealth: number;
   cargo: number[];
-  /** v12 (before: `lights` = [beacon colour, beacon blink, headlight]) */
   headlight: number;
   solar: [open: number, deploy: number, angle: number, target: number];
   antenna: [angle: number, target: number];
   sourceCode: string;
-  /** v2 */
   upgrades: string[];
   seismic: [type: number, dist: number];
-  /** v3 */
   indicators: number[];
-  /** v7: @POST display */
+  /** The `DISP` display on the cabin. */
   post: number;
-  /** v4: downlink transmitter (v5: recorder, v6: dump replies) */
-  link: { fifo: QueuedFrame[]; headSent: number; acc: number; lost: number; gap: number; products: ProductDesc[]; recSent: number; seq: number; sys: SysFrame[]; sysSent: number; tx?: number[]; txLost?: number };
+  /** Downlink: log FIFO, recorder products, dump replies, TX stream. */
+  link: { fifo: QueuedFrame[]; headSent: number; acc: number; lost: number; gap: number; products: ProductDesc[]; recSent: number; seq: number; sys: SysFrame[]; sysSent: number; tx: number[]; txLost: number };
   action: UnitAction | null;
   motion: UnitMotion | null;
   cyclesLeft: number;
-  vm: VmSave;
-  /** v10: program slot (M10) */
-  program: { source: string; vm: VmSave; state: ProgState; result: number; slice: number };
-  /** v14: image memory (M12, SPEC §3.8.7): bytes as hex without trailing zeros, the capture, SEND's default type, edited since the SNAP */
-  image: { mem: string; capture: Capture | null; mode: number; edited: boolean };
-  /** v16: watchdog ticks left, fault protection [@PREEMPT, @BAT_ALARM, @PREEMPTED], thermal [°C, heater], array dust % */
+  /** Power, halts and faults. */
+  cpu: { state: CpuState; faultReason: string; watchdog: number };
+  /** Program slot. */
+  program: { source: string; state: ProgState; result: number; slice: number };
+  /** Image memory as hex without trailing zeros, the capture, the mode of the last photo. */
+  image: { mem: string; capture: Capture | null; mode: number };
+  /** Watchdog ticks left, fault protection [PREMPT, BATALM, PRMPTD], thermal [°C, heater], array dust %. */
   wdt: number;
   preempt: [mask: number, alarm: number, hit: number];
   thermal: [temp: number, heater: number];
   dust: number;
-  /** v17 (M14): RAM as hex without trailing zeros; RAM top the firmware was assembled for (0 = the chassis RAM). */
-  ram: string;
-  fwRamTop: number;
-  /** v18 (M14 devices): latched arguments, the radar [ticks, dir, hit, dist], image send / erase, each device's result. */
+  /** Latched device parameters, the radar [ticks, dir, hit, dist], the image erase, each device's result. */
   devices: {
     driveN: number;
     toolArg: number;
@@ -68,57 +65,8 @@ interface UnitSave {
     imgOp: Unit['imgOp'];
     results: Record<Device, number>;
   };
-  /** v19 (M15): the PDP-11 core (only in a `cpu: 'pdp11'` save). */
-  machine?: MachineSave;
-  /** Set by a migration that rewrote this rover's code: its saved CPU state no longer matches, reboot on load. */
-  rebootOnLoad?: boolean;
-}
-
-interface VmSave {
-  ip: number;
-  regs: number[];
-  dataStack: number[];
-  callStack: number[];
-  state: CpuState;
-  status: Status;
-  faultReason: string;
-  watchdog: number;
-  instructionsExecuted: number;
-  /** v18: @TIMER ticks left. */
-  timer: number;
-  /** Set by the v10 -> v11 migration: `ip` and `callStack` are instruction indices, not byte addresses. */
-  legacyIndex?: boolean;
-}
-
-function saveVm(vm: RoverVM): VmSave {
-  return {
-    ip: vm.ip,
-    regs: Array.from(vm.regs),
-    dataStack: [...vm.dataStack],
-    callStack: [...vm.callStack],
-    state: vm.state,
-    status: vm.status,
-    faultReason: vm.faultReason,
-    watchdog: vm.watchdog,
-    instructionsExecuted: vm.instructionsExecuted,
-    timer: vm.timer,
-  };
-}
-
-function loadVm(vm: RoverVM, s: VmSave): void {
-  // Before v11 an IP was an instruction index; now it is a byte address (SPEC §5.7.1).
-  const instrs = vm.program?.instrs ?? [];
-  const addr = (i: number) => (!s.legacyIndex ? i : i >= 0 && i < instrs.length ? instrs[i].addr : (vm.program?.code.length ?? 0));
-  vm.ip = addr(s.ip);
-  vm.regs.set(s.regs);
-  vm.dataStack = [...s.dataStack];
-  vm.callStack = s.callStack.map(addr);
-  vm.state = s.state;
-  vm.status = s.status;
-  vm.faultReason = s.faultReason;
-  vm.watchdog = s.watchdog;
-  vm.instructionsExecuted = s.instructionsExecuted;
-  vm.timer = s.timer;
+  /** The machine: core, CPU contexts, I/O page, images. */
+  machine: MachineSave;
 }
 
 interface ChunkSave {
@@ -141,30 +89,27 @@ export interface SaveSnapshot {
   mappedTiles: number;
   nextUnitId: number;
   director: DirectorState;
-  /** v2 */
   drops: SupplyDrop[];
   nextDropId: number;
-  /** v4: frames received by mission control */
+  /** Frames received by mission control. */
   received: ReceivedFrame[];
-  /** v5: science products received (or being received) by mission control */
+  /** Science products received (or being received) by mission control. */
   gallery: ReceivedProduct[];
-  /** v8: subject types already delivered in a lit photo (first-of-a-kind bonus) */
+  /** Subject types already delivered in a lit photo (first-of-a-kind bonus). */
   photoSubjects: number[];
-  /** v15: camera modes already delivered as an edited photo. */
+  /** Camera modes already delivered as an edited photo. */
   editedTypes: number[];
-  /** v9: anomaly tiles already credited ("x,y") */
+  /** Anomaly tiles already credited ("x,y"). */
   anomalyTiles: string[];
-  /** v13: what mission control sent over the uplink (Comms timeline) */
+  /** What mission control sent over the uplink (Comms timeline). */
   sent: SentRecord[];
   units: UnitSave[];
   chunks: ChunkSave[];
-  /** v19 (M15): which computer the rovers have (absent = Rover-ASM); messages and parsers of the TX stream. */
-  cpu?: 'pdp11';
-  messages?: ReceivedMessage[];
-  parsers?: Array<[unitId: number, state: ParserState]>;
-  /** v20 (M15 slice 4): the recorder's message parsers and photos being put together. */
-  recParsers?: Array<[unitId: number, state: ParserState]>;
-  photoAsm?: Array<[unitId: number, asm: PhotoAssembly]>;
+  /** Mission control's messages, and its parsers of the TX and recorder streams; photos being put together. */
+  messages: ReceivedMessage[];
+  parsers: Array<[unitId: number, state: ParserState]>;
+  recParsers: Array<[unitId: number, state: ParserState]>;
+  photoAsm: Array<[unitId: number, asm: PhotoAssembly]>;
 }
 
 function rle(a: Uint8Array): number[] {
@@ -226,15 +171,10 @@ export function serialize(e: SimulationEngine): SaveSnapshot {
     sent: e.sent.map((r) => ({ ...r })),
     units: e.units.map(saveUnit),
     chunks,
-    ...(e.pdp11
-      ? {
-          cpu: 'pdp11' as const,
-          messages: e.messages.map((m) => ({ ...m, body: [...m.body] })),
-          parsers: [...e.parsers.entries()].map(([id, p]): [number, ParserState] => [id, structuredClone(p)]),
-          recParsers: [...e.recParsers.entries()].map(([id, p]): [number, ParserState] => [id, structuredClone(p)]),
-          photoAsm: [...e.photoAsm.entries()].map(([id, a]): [number, PhotoAssembly] => [id, structuredClone(a)]),
-        }
-      : {}),
+    messages: e.messages.map((m) => ({ ...m, body: [...m.body] })),
+    parsers: [...e.parsers.entries()].map(([id, p]): [number, ParserState] => [id, structuredClone(p)]),
+    recParsers: [...e.recParsers.entries()].map(([id, p]): [number, ParserState] => [id, structuredClone(p)]),
+    photoAsm: [...e.photoAsm.entries()].map(([id, a]): [number, PhotoAssembly] => [id, structuredClone(a)]),
   };
 }
 
@@ -276,15 +216,13 @@ function saveUnit(u: Unit): UnitSave {
     action: u.action ? { ...u.action } : null,
     motion: u.motion ? { ...u.motion } : null,
     cyclesLeft: u.cyclesLeft,
-    vm: saveVm(u.vm),
-    program: { source: u.programSource, vm: saveVm(u.prog), state: u.progState, result: u.progResult, slice: u.slice },
-    image: { mem: toHex(u.img.subarray(0, lastNonZero(u.img) + 1)), capture: u.capture ? { ...u.capture } : null, mode: u.snapMode, edited: u.imgEdited },
+    cpu: { state: u.cpu.state, faultReason: u.cpu.faultReason, watchdog: u.cpu.watchdog },
+    program: { source: u.programSource, state: u.progState, result: u.progResult, slice: u.slice },
+    image: { mem: toHex(u.img.subarray(0, lastNonZero(u.img) + 1)), capture: u.capture ? { ...u.capture } : null, mode: u.snapMode },
     wdt: u.wdt,
     preempt: [u.preemptMask, u.batAlarm, u.preempted],
     thermal: [u.temp, u.heater],
     dust: u.solarDust,
-    ram: toHex(u.ram.subarray(0, lastNonZero(u.ram) + 1)),
-    fwRamTop: u.fwRamTop,
     devices: {
       driveN: u.driveN,
       toolArg: u.toolArg,
@@ -295,7 +233,7 @@ function saveUnit(u: Unit): UnitSave {
       imgOp: u.imgOp ? { ...u.imgOp } : null,
       results: { ...u.results },
     },
-    ...(u.machine ? { machine: u.machine.save() } : {}),
+    machine: u.machine.save(),
   };
 }
 
@@ -307,198 +245,27 @@ const lastNonZero = (b: Uint8Array): number => {
 
 export class SaveError extends Error {}
 
-/** v11 -> v12: rewrite the retired beacon ports onto the status lamps. */
-const retireBeacon = (src: string): string => src.replace(/@LIGHT_COLOR\b/gi, '@IND1').replace(/@LIGHT_BLINK\b/gi, '@IND3');
-
-/** Upgrade older snapshots step by step to the current version. */
-export function migrate(raw: unknown): SaveSnapshot {
-  const s = raw as SaveSnapshot & Record<string, unknown>;
-  if (!s || typeof s !== 'object' || typeof s.seed !== 'number' || typeof s.version !== 'number') throw new SaveError('Not a Rover save file.');
-  if (s.version > SAVE_VERSION) throw new SaveError(`Save version ${s.version} is newer than this game (${SAVE_VERSION}).`);
-  let v = s.version;
-  const out = structuredClone(s) as SaveSnapshot;
-  if (v === 1) {
-    // v1 -> v2: upgrades and supply drops did not exist yet.
-    out.drops = [];
-    out.nextDropId = 1;
-    for (const u of out.units) {
-      u.upgrades = [];
-      u.seismic = [0, 0];
-    }
-    v = 2;
+/** A save from before the computer was replaced (v1–v20): it cannot be loaded, start a new world. */
+export class OldSaveError extends SaveError {
+  constructor(readonly version: number) {
+    super(`This save (version ${version}) is from before the rover's computer was replaced by the Blue-11. Old saves cannot be loaded: start a new world.`);
   }
-  if (v === 2) {
-    // v2 -> v3: indicator lamps (@IND1..@IND3) start dark.
-    for (const u of out.units) u.indicators = [0, 0, 0];
-    v = 3;
-  }
-  if (v === 3) {
-    // v3 -> v4: byte downlink (M9). Empty FIFO, nothing received yet.
-    out.received = [];
-    for (const u of out.units) u.link = { fifo: [], headSent: 0, acc: 0, lost: 0, gap: 0 } as unknown as UnitSave['link'];
-    v = 4;
-  }
-  if (v === 4) {
-    // v4 -> v5: science recorder (M9 slice 2). Old science packets still waiting are
-    // credited now (they have no spectrum); TX packet counters are gone.
-    const units = out.units as (UnitSave & { scienceReady?: number; packetsSent?: number; lastTx?: unknown })[];
-    const stats = out.stats as SaveSnapshot['stats'] & { packetsSent?: number };
-    for (const u of units) {
-      const waiting = u.scienceReady ?? 0;
-      out.credits += waiting;
-      stats.scienceDelivered += waiting;
-      delete u.scienceReady;
-      delete u.packetsSent;
-      delete u.lastTx;
-      Object.assign(u.link, { products: [], recSent: 0, seq: 0 });
-    }
-    stats.framesReceived = (stats.packetsSent ?? 0) + out.received.length;
-    delete stats.packetsSent;
-    out.gallery = [];
-    v = 5;
-  }
-  if (v === 5) {
-    // v5 -> v6: memory dumps (M9 slice 3). No dump replies waiting.
-    for (const u of out.units) Object.assign(u.link, { sys: [], sysSent: 0 });
-    v = 6;
-  }
-  if (v === 6) {
-    // v6 -> v7: @POST display (M9 slice 4) starts at 00.
-    for (const u of out.units) u.post = 0;
-    v = 7;
-  }
-  if (v === 7) {
-    // v7 -> v8: camera photos (M9 slice 5). No photo taken or delivered yet.
-    out.photoSubjects = [];
-    out.stats.photosTaken = 0;
-    out.stats.photosDelivered = 0;
-    v = 8;
-  }
-  if (v === 8) {
-    // v8 -> v9: anomalies (M9 slice 6). Photos taken before carry no anomaly.
-    out.anomalyTiles = [];
-    out.stats.anomaliesFound = 0;
-    v = 9;
-  }
-  if (v === 9) {
-    // v9 -> v10: firmware + program slot (M10). The old code stays the firmware; no program.
-    for (const u of out.units) {
-      const ctx: VmSave = { ip: 0, regs: u.vm.regs.map(() => 0), dataStack: [], callStack: [], state: CpuState.RUNNING, status: 0 as Status, faultReason: '', watchdog: 0, instructionsExecuted: 0, timer: 0 };
-      u.program = { source: '', vm: ctx, state: ProgState.PROG_NONE, result: 0, slice: -1 };
-    }
-    v = 10;
-  }
-  if (v === 10) {
-    // v10 -> v11: machine code (M10 slice 2). IPs and return addresses become byte
-    // addresses; they are converted after the program is compiled again (loadVm).
-    for (const u of out.units) {
-      u.vm.legacyIndex = true;
-      u.program.vm.legacyIndex = true;
-    }
-    v = 11;
-  }
-  if (v === 11) {
-    // v11 -> v12: the status beacon is gone; the three roof lamps are the status lights.
-    // Old code keeps working: @LIGHT_COLOR becomes @IND1, @LIGHT_BLINK becomes @IND3
-    // (same size: one port byte, so saved byte addresses stay valid), and the lamps
-    // take over what the beacon showed.
-    const units = out.units as (UnitSave & { lights?: [number, number, number] })[];
-    for (const u of units) {
-      const [color, blink, headlight] = u.lights ?? [0, 0, u.headlight ?? 0];
-      delete u.lights;
-      u.headlight = headlight;
-      const usedColor = /@LIGHT_COLOR\b/i.test(u.sourceCode) || /@LIGHT_COLOR\b/i.test(u.program.source);
-      const usedBlink = /@LIGHT_BLINK\b/i.test(u.sourceCode) || /@LIGHT_BLINK\b/i.test(u.program.source);
-      u.sourceCode = retireBeacon(u.sourceCode);
-      u.program.source = retireBeacon(u.program.source);
-      if (usedColor) u.indicators[0] = color;
-      if (usedBlink) u.indicators[2] = blink;
-    }
-    v = 12;
-  }
-  if (v === 12) {
-    // v12 -> v13: mission control's sent record (Comms timeline) starts empty.
-    out.sent = [];
-    v = 13;
-  }
-  if (v === 13) {
-    // v13 -> v14: image memory (M12). Empty, no capture.
-    for (const u of out.units) u.image = { mem: '', capture: null, mode: 1, edited: false };
-    v = 14;
-  }
-  if (v === 14) {
-    // v14 -> v15: Darkroom (M12 slice 3). No edited photo credited yet.
-    out.editedTypes = [];
-    out.stats.photosEdited = 0;
-    v = 15;
-  }
-  if (v === 15) {
-    // v15 -> v16: watchdog, fault protection, thermal model, array dust. Nothing armed, a
-    // clean array, and the rover at the ambient temperature of that moment.
-    const temp = ambientTemp(new Environment().sun(out.tick).light);
-    for (const u of out.units) {
-      u.wdt ??= 0;
-      u.preempt ??= [0, 0, 0];
-      u.thermal ??= [temp, 0];
-      u.dust ??= 0;
-    }
-    v = 16;
-  }
-  if (v === 16) {
-    // v16 -> v17: M14 memory. RAM starts empty. Image memory moved to IMG in the data
-    // address space and LDB / STB take a bracketed address: rewrite the code; a rover whose
-    // code changed is rebooted on load (its saved instruction addresses no longer match).
-    for (const u of out.units) {
-      u.ram ??= '';
-      u.fwRamTop ??= 0;
-      const fw = migrateImageMemory(u.sourceCode);
-      const prog = migrateImageMemory(u.program.source);
-      if (fw !== u.sourceCode || prog !== u.program.source) u.rebootOnLoad = true;
-      u.sourceCode = fw;
-      u.program.source = prog;
-    }
-    v = 17;
-  }
-  if (v === 17) {
-    // v17 -> v18: M14 devices and ROM. The hardware instructions became device ports and ROM
-    // routines: rewrite the code (STEP d n -> CALL STEP d n, ...). A rover whose code changed,
-    // or that uses LDF (renumbered), reboots on load: its saved addresses no longer match.
-    for (const u of out.units) {
-      const fw = migrateHardwareOps(u.sourceCode);
-      const prog = migrateHardwareOps(u.program.source);
-      if (fw !== u.sourceCode || prog !== u.program.source || /\bLDF\b/i.test(fw + prog)) u.rebootOnLoad = true;
-      u.sourceCode = fw;
-      u.program.source = prog;
-      if ((u.action as { kind: string } | null)?.kind === 'WAIT') u.action = null;
-      u.vm.timer ??= 0;
-      u.program.vm.timer ??= 0;
-      const results = Object.fromEntries(DEVICES.map((d) => [d, 0])) as Record<Device, number>;
-      u.devices ??= { driveN: 1, toolArg: 0, repairSys: 0, camMode: 1, sliceSet: 0, radar: [0, 0, 0, 0], imgOp: null, results };
-    }
-    v = 18;
-  }
-  if (v === 18) {
-    // v18 -> v19 (M15 slice 3): the TX stream and the PDP-11 core are new and optional.
-    for (const u of out.units) {
-      u.link.tx ??= [];
-      u.link.txLost ??= 0;
-    }
-    v = 19;
-  }
-  if (v === 19) {
-    // v19 -> v20 (M15 slice 4): recorder messages, safe mode; all optional, empty by default.
-    v = 20;
-  }
-  if (v !== SAVE_VERSION) throw new SaveError(`Unsupported save version ${s.version}.`);
-  out.version = v;
-  return out;
 }
 
-/** M15: reassemble both images from their saved sources, then restore the machine. */
+/** Check a snapshot's version. There are no migrations since v21 (see SAVE_VERSION). */
+export function migrate(raw: unknown): SaveSnapshot {
+  const s = raw as SaveSnapshot;
+  if (!s || typeof s !== 'object' || typeof s.seed !== 'number' || typeof s.version !== 'number') throw new SaveError('Not a Rover save file.');
+  if (s.version > SAVE_VERSION) throw new SaveError(`Save version ${s.version} is newer than this game (${SAVE_VERSION}).`);
+  if (s.version < SAVE_VERSION) throw new OldSaveError(s.version);
+  return structuredClone(s);
+}
+
+/** Reassemble both images from their saved sources, then restore the machine. */
 function loadMachine(e: SimulationEngine, u: Unit, us: UnitSave): void {
-  const m = u.machine!;
+  const m = u.machine;
   const ms = us.machine;
-  if (!ms) throw new SaveError(`Saved rover ${us.name} has no PDP-11 state.`);
+  if (!ms) throw new SaveError(`Saved rover ${us.name} has no machine state.`);
   for (const slot of ['firmware', 'program'] as const) {
     const src = slot === 'firmware' ? ms.firmware : ms.program;
     if (!src) continue;
@@ -515,18 +282,20 @@ function loadMachine(e: SimulationEngine, u: Unit, us: UnitSave): void {
   u.progState = us.program.state;
   u.progResult = us.program.result;
   u.slice = us.program.slice;
-  loadVm(u.vm, us.vm);
+  u.cpu.state = us.cpu.state;
+  u.cpu.faultReason = us.cpu.faultReason;
+  u.cpu.watchdog = us.cpu.watchdog;
 }
 
 /** Rebuild an engine from a snapshot (any supported version). Throws SaveError on bad data. */
 export function deserialize(raw: unknown): SimulationEngine {
   const s = migrate(raw);
 
-  const e = new SimulationEngine({ seed: s.seed, cpu: s.cpu === 'pdp11' ? 'pdp11' : 'rover-asm' });
-  e.messages = (s.messages ?? []).map((m) => ({ ...m, body: [...m.body] }));
-  e.parsers = new Map((s.parsers ?? []).map(([id, p]) => [id, structuredClone(p)]));
-  e.recParsers = new Map((s.recParsers ?? []).map(([id, p]) => [id, structuredClone(p)]));
-  e.photoAsm = new Map((s.photoAsm ?? []).map(([id, a]) => [id, structuredClone(a)]));
+  const e = new SimulationEngine({ seed: s.seed });
+  e.messages = s.messages.map((m) => ({ ...m, body: [...m.body] }));
+  e.parsers = new Map(s.parsers.map(([id, p]) => [id, structuredClone(p)]));
+  e.recParsers = new Map(s.recParsers.map(([id, p]) => [id, structuredClone(p)]));
+  e.photoAsm = new Map(s.photoAsm.map(([id, a]) => [id, structuredClone(a)]));
   e.tick = s.tick;
   e.world.now = s.tick;
   e.credits = s.credits;
@@ -573,8 +342,8 @@ export function deserialize(raw: unknown): SimulationEngine {
       seq: us.link.seq,
       sys: us.link.sys.map((f) => ({ bytes: [...f.bytes], taken: f.taken })),
       sysSent: us.link.sysSent,
-      tx: [...(us.link.tx ?? [])],
-      txLost: us.link.txLost ?? 0,
+      tx: [...us.link.tx],
+      txLost: us.link.txLost,
     });
     u.seismicType = us.seismic[0];
     u.seismicDist = us.seismic[1];
@@ -583,7 +352,6 @@ export function deserialize(raw: unknown): SimulationEngine {
     mem.set(fromHex(us.image.mem).slice(0, mem.length));
     u.capture = us.image.capture ? { ...us.image.capture } : null;
     u.snapMode = us.image.mode;
-    u.imgEdited = us.image.edited;
     Object.assign(u, {
       x: us.x,
       y: us.y,
@@ -624,33 +392,7 @@ export function deserialize(raw: unknown): SimulationEngine {
       imgOp: us.devices.imgOp ? { ...us.devices.imgOp } : null,
       results: { ...us.devices.results },
     });
-    const ram = u.ramMemory(); // sized by the RAM upgrades
-    ram.fill(0);
-    ram.set(fromHex(us.ram).slice(0, ram.length));
-    u.fwRamTop = us.fwRamTop;
-    if (u.machine) {
-      loadMachine(e, u, us);
-      continue;
-    }
-    u.sourceCode = us.sourceCode; // before compiling: the installed firmware keeps its RAM layout
-    const res = e.compileFor(u, us.sourceCode);
-    if (!res.program) throw new SaveError(`Saved firmware of ${us.name} no longer compiles: ${res.errors[0]?.message}`);
-    u.firmwareBytes = res.flashUsed;
-    u.firmwareRam = { low: res.ramLow, high: res.ramHigh };
-    u.vm.load(res.program);
-    loadVm(u.vm, us.vm);
-    const ps = us.program;
-    const pres = e.compileFor(u, ps.source, 'program');
-    if (!pres.program) throw new SaveError(`Saved program of ${us.name} no longer compiles: ${pres.errors[0]?.message}`);
-    u.programSource = ps.source;
-    u.programBytes = pres.flashUsed;
-    u.programRam = { low: pres.ramLow, high: pres.ramHigh };
-    u.prog.load(pres.program);
-    loadVm(u.prog, ps.vm);
-    u.progState = ps.state;
-    u.progResult = ps.result;
-    u.slice = ps.slice;
-    if (us.rebootOnLoad) e.rebootAfterUpdate(u);
+    loadMachine(e, u, us);
   }
   e.refreshDerived();
   return e;

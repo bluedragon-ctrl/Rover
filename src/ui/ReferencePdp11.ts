@@ -11,7 +11,7 @@ import { systemSymbols } from '../core/machine/names';
 import { MSG_TYPE_NAMES, MsgType } from '../core/messages';
 import { INSTRUCTIONS } from '../pdp11';
 import type { WorldRegistry } from '../core/WorldRegistry';
-import { mountReference } from './ReferencePanel';
+import { imageHtml, mountReference, toolsHtml } from './ReferencePanel';
 import { oct6 } from './toolchain';
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
@@ -108,6 +108,8 @@ const SECTIONS = [
   ['flags', 'Flags'],
   ['io', 'I/O page'],
   ['rom', 'ROM'],
+  ['tools', 'Tools'],
+  ['image', 'Image'],
   ['consts', 'Symbols'],
   ['radio', 'Radio'],
 ] as const;
@@ -153,7 +155,7 @@ function basicsHtml(): string {
     fault; then the firmware continues after its gate write and reads why in <code>PRGST</code> / <code>PRGER</code>. A program can't
     write firmware-only registers or memory outside its region (that is a fault).</p>
     <h4>Time</h4>
-    <p class="small">The CPU gets ${PDP11.cyclesPerRoverCycle * CHASSIS_MK1.cyclesPerTick} cycles per tick (Mk-I; the overclock upgrades give more). Every bus access costs one cycle: each
+    <p class="small">The CPU gets ${CHASSIS_MK1.cyclesPerTick} cycles per tick (Mk-I; the overclock upgrades give more). Every bus access costs one cycle: each
     instruction word, each extra word (<code>#n</code>, an address, an index), each operand read and write. <code>MOV R1, R2</code> = 1,
     <code>MOV #5, R0</code> = 2, <code>INC @#COUNT</code> = 4, <code>JSR PC, X</code> = 3. <code>WAIT</code> sleeps until an interrupt
     (the line clock interrupts every tick at vector ${o(CLOCK_VECTOR, 3)} when <code>LKS</code> has <code>IE</code>).</p>
@@ -383,6 +385,8 @@ export function renderReference11(el: HTMLElement, registry: WorldRegistry): voi
     flags: flagsHtml(),
     io: ioHtml(),
     rom: romHtml(),
+    tools: toolsHtml(),
+    image: imageHtml(),
     consts: constsHtml(registry),
     radio: radioHtml(),
   });
