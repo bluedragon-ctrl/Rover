@@ -121,16 +121,21 @@ function load(): void {
   stop();
   const src = editor.state.doc.toString();
   asm = assemble(src, { symbols: SIM_SYMBOLS });
-  const diagnostics: Diagnostic[] = asm.errors.map((e) => {
+  const found = [
+    ...asm.errors.map((e) => ({ ...e, severity: 'error' as const })),
+    ...asm.warnings.map((e) => ({ ...e, severity: 'warning' as const })),
+  ].sort((a, b) => a.line - b.line);
+  const diagnostics: Diagnostic[] = found.map((e) => {
     const line = editor.state.doc.line(Math.min(e.line, editor.state.doc.lines));
     const from = Math.min(line.from + Math.max(0, e.column - 1), line.to);
-    return { from, to: Math.max(from, line.to), severity: 'error', message: e.message };
+    return { from, to: Math.max(from, line.to), severity: e.severity, message: e.message };
   });
   editor.dispatch(setDiagnostics(editor.state, diagnostics));
   const errs = $('errors');
-  errs.replaceChildren(...asm.errors.map((e) => {
+  errs.replaceChildren(...found.map((e) => {
     const d = document.createElement('div');
-    d.textContent = `line ${e.line}: ${e.message}`;
+    d.textContent = `line ${e.line}: ${e.severity === 'warning' ? 'warning: ' : ''}${e.message}`;
+    if (e.severity === 'warning') d.className = 'warn';
     d.onclick = () => {
       const l = editor.state.doc.line(e.line);
       editor.dispatch({ selection: { anchor: l.from }, effects: EditorView.scrollIntoView(l.from, { y: 'center' }) });

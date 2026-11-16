@@ -128,6 +128,12 @@ export class Cpu {
    * faults, after it for EMT / TRAP / BPT / IOT).
    */
   onTrap: ((t: TrapInfo) => 'vector' | 'stop') | null = null;
+  /**
+   * Called for every instruction once it is fetched, before it runs: its address and its
+   * first word. For profilers, coverage maps, instruction counts by opcode. Not called for
+   * an instruction whose fetch faults, nor for interrupts.
+   */
+  onInstruction: ((pc: number, opcode: number) => void) | null = null;
   /** Called when PSW bits 15–14 (current mode) change, by a trap, `RTI` or a PSW write. */
   onModeChange: ((newMode: number, oldMode: number) => void) | null = null;
 
@@ -463,6 +469,7 @@ export class Cpu {
    */
   private exec(): ExecResult {
     const w = this.fetch();
+    if (this.onInstruction) this.onInstruction(this.ipc, w);
     const op4 = w >> 12;
     switch (op4) {
       case 0o01: case 0o02: case 0o03: case 0o04: case 0o05:
