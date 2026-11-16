@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { assemble, SimpleMachine } from '../../src/blue11';
 import { EXAMPLES, SIM_SYMBOLS } from '../../src/simulator/examples';
+import { uncommentedLines } from '../helpers/comments';
 
 describe('simulator examples', () => {
   it.each(EXAMPLES.map((e) => [e.name, e] as const))('%s assembles and runs', (_name, ex) => {
@@ -12,6 +13,10 @@ describe('simulator examples', () => {
     const r = m.run(2_000_000);
     expect(r.reason).toBe('halt');
     expect(m.output).toBe(ex.expect);
+  });
+
+  it.each(EXAMPLES.map((e) => [e.name, e] as const))('%s has a comment on every instruction', (_name, ex) => {
+    expect(uncommentedLines(ex.source)).toEqual([]);
   });
 
   it('the addressing-modes tour ends with the documented registers', () => {

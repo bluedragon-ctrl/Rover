@@ -12,6 +12,7 @@ import { CpuState, Layer, ProgState } from '../src/core/types';
 import type { Unit } from '../src/core/Unit';
 import { UPGRADE_BY_ID } from '../src/core/upgrades';
 import { T } from '../src/core/WorldRegistry';
+import { uncommentedLines } from './helpers/comments';
 
 const factory = { factory: true };
 
@@ -75,6 +76,12 @@ describe('shipped code assembles', () => {
       const r = assembled(src, 'program');
       expect(r.errors, name).toEqual([]);
       expect(r.asm.bytes.length, name).toBeLessThan(BLUE11.coreBytes - BLUE11.programBase);
+    }
+  });
+
+  it('every instruction of shipped code has a comment (learning line by line)', () => {
+    for (const [name, src] of Object.entries({ ...PROGRAM_TEMPLATES, ...FIRMWARE_TEMPLATES })) {
+      expect(uncommentedLines(src), name).toEqual([]);
     }
   });
 

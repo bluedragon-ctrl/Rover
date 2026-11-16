@@ -3,6 +3,9 @@
  * every lesson, in Blue-11 assembly. Tests assemble and run each
  * (tests/blue11-programs.test.ts).
  *
+ * Every instruction carries a comment that says what it does, so players can learn from
+ * the code line by line (a test checks it).
+ *
  * Numbers are octal unless they end in a dot (`50.` is fifty). Names have at most six
  * characters. The ROM's routines take R0 and R1 (a third in R2, kept) and answer in R0
  * with the flags set from it; they may change R0 and R1, nothing else.
@@ -38,88 +41,88 @@ L.END  = 14.
 
 START:  MOV  #CLOCK, @#100      ; line clock vector: handler...
         MOV  #300, @#102        ; ...and its PSW: priority 6
-        MOV  #PR.ALR!PR.BAT, @#PREMPT ; fault protection, set once a boot
-        MOV  #LOWBAT, @#BATALM
+        MOV  #PR.ALR!PR.BAT, @#PREMPT ; fault protection (! = OR), once a boot
+        MOV  #LOWBAT, @#BATALM  ; PR.BAT fires when BAT drops below this
 MAIN:   MOV  #WDTIX, @#WDT      ; kick the watchdog (arms it at boot)
-        CMP  @#BAT, #LOWBAT
-        BLO  CHARGE
-        CMP  @#PRGST, #P.RDY
+        CMP  @#BAT, #LOWBAT     ; compare the battery with LOWBAT...
+        BLO  CHARGE             ; ...lower: go and charge first
+        CMP  @#PRGST, #P.RDY    ; is a program loaded and ready?
         BNE  IDLE               ; nothing to run
         TST  @#SOLOPN           ; array open (charging, old code)?
-        BEQ  1$
+        BEQ  1$                 ; no: skip the stowing
         CLR  @#SOLOPN           ; stow it before the program drives
-        MOV  #20., R0
-        JSR  PC, SLEEP
-1$:     CLR  @#LIGHT            ; headlight on at night
-        TST  @#SUNEL
-        BGT  2$
-        MOV  #1, @#LIGHT
+        MOV  #20., R0           ; stowing takes 20 ticks...
+        JSR  PC, SLEEP          ; ...so wait that long
+1$:     CLR  @#LIGHT            ; headlight off by day...
+        TST  @#SUNEL            ; sun elevation: above the horizon?
+        BGT  2$                 ; yes: leave it off
+        MOV  #1, @#LIGHT        ; ...on at night
 2$:     MOV  #GREEN, @#IND1     ; lamp 1 green: the program runs
-        MOV  #SLTIX, R0
+        MOV  #SLTIX, R0         ; R0 = how many ticks the slice may take
         JSR  PC, RUN            ; the gate; R0 = PRGST when it comes back
-        CMP  R0, #P.RDY
-        BNE  3$
+        CMP  R0, #P.RDY         ; still ready = it did not end
+        BNE  3$                 ; it ended: report how
         TST  @#PRMPTD           ; time up, or cut short?
-        BEQ  MAIN
+        BEQ  MAIN               ; time up: next round of the main loop
         CLR  @#DRVCNT           ; cut short: stop the wheels at the end of the tile
-        MOV  #L.PRE, R0
-        MOV  @#PRMPTD, R1
-        JSR  PC, LOG
-        BR   MAIN
-3$:     CMP  R0, #P.HLT
+        MOV  #L.PRE, R0         ; log tag: why it was cut short...
+        MOV  @#PRMPTD, R1       ; ...and the PR. bits that say so
+        JSR  PC, LOG            ; send the log line home
+        BR   MAIN               ; and go round again
+3$:     CMP  R0, #P.HLT         ; stopped at a BPT?
         BEQ  IDLE               ; BPT: it waits for Continue
         MOV  #BLUE, @#IND1      ; lamp 1 blue: done, red: fault
-        CMP  R0, #P.DONE
-        BEQ  4$
-        MOV  #RED, @#IND1
+        CMP  R0, #P.DONE        ; did it end normally?
+        BEQ  4$                 ; yes: keep the lamp blue
+        MOV  #RED, @#IND1       ; no, a fault: lamp 1 red
 4$:     MOV  @#PRGRES, @#DISP   ; the cabin display shows the result
-        MOV  #L.END, R0
-        MOV  @#PRGST, R1
-        JSR  PC, LOG
-        MOV  #L.RES, R0
-        MOV  @#PRGRES, R1
-        JSR  PC, LOG
+        MOV  #L.END, R0         ; log tag: how the program ended...
+        MOV  @#PRGST, R1        ; ...its state (done or fault)
+        JSR  PC, LOG            ; send it home
+        MOV  #L.RES, R0         ; log tag: the program's result...
+        MOV  @#PRGRES, R1       ; ...the R0 it ended with
+        JSR  PC, LOG            ; send it home
         CLR  @#PRGST            ; P.NONE: acknowledged; "Run again" restarts it
-IDLE:   CLR  @#LIGHT
-        CMP  @#SIGNAL, #20.
-        BLO  5$
-        MOV  #L.BAT, R0         ; heartbeat while idle
-        MOV  @#BAT, R1
-        JSR  PC, LOG
-5$:     MOV  #20., R0
-        JSR  PC, SLEEP
-        BR   MAIN
+IDLE:   CLR  @#LIGHT            ; nothing to do: headlight off
+        CMP  @#SIGNAL, #20.     ; is the link to the orbiter good?
+        BLO  5$                 ; too weak: don't log
+        MOV  #L.BAT, R0         ; heartbeat while idle: tag...
+        MOV  @#BAT, R1          ; ...and the battery level
+        JSR  PC, LOG            ; send it home
+5$:     MOV  #20., R0           ; sleep 20 ticks...
+        JSR  PC, SLEEP          ; ...to save power
+        BR   MAIN               ; then look again
 
-CHARGE: CLR  @#LIGHT
+CHARGE: CLR  @#LIGHT            ; headlight off: save every bit of power
         MOV  #AMBER, @#IND2     ; lamp 2 amber: charging
 6$:     MOV  #WDTIX, @#WDT      ; charging can take a whole night: keep kicking
-        CMP  @#ALERT, #A.SQL
+        CMP  @#ALERT, #A.SQL    ; a squall on its way?
         BEQ  7$                 ; squall: the clock keeps the array stowed
-        MOV  #1, @#SOLOPN
-7$:     MOV  #20., R0
-        JSR  PC, SLEEP
-        CMP  @#BAT, #FULBAT
-        BLO  6$
-        CLR  @#IND2
-        BR   MAIN
+        MOV  #1, @#SOLOPN       ; open the solar array
+7$:     MOV  #20., R0           ; wait 20 ticks...
+        JSR  PC, SLEEP          ; ...while the sun charges the battery
+        CMP  @#BAT, #FULBAT     ; full enough?
+        BLO  6$                 ; not yet: keep charging
+        CLR  @#IND2             ; lamp 2 off: charging done
+        BR   MAIN               ; back to work
 
 ; CLOCK: the line clock's handler, every tick. It may run in the middle of
 ; the program, on the program's registers: it uses none. Most ticks it only
 ; counts down (about 12 cycles with the interrupt and RTI).
-CLOCK:  DEC  CNT
-        BNE  9$
-        MOV  #SLOW, CNT
+CLOCK:  DEC  CNT                ; one tick less until the housekeeping
+        BNE  9$                 ; not yet: return at once
+        MOV  #SLOW, CNT         ; start counting again
         MOV  @#ORBAZ, @#ANTANG  ; dish on the orbiter
         MOV  @#SUNAZ, @#SOLANG  ; array on the sun
-        CMP  @#ALERT, #A.SQL
-        BNE  8$
+        CMP  @#ALERT, #A.SQL    ; a squall on its way?
+        BNE  8$                 ; no: leave the array as it is
         CLR  @#SOLOPN           ; squall warning: stow the array
-8$:     CLR  @#IND3             ; lamp 3 blue while the link is up
-        CMP  @#SIGNAL, #20.
-        BLO  9$
-        MOV  #BLUE, @#IND3
-9$:     RTI
-CNT:    .WORD 1
+8$:     CLR  @#IND3             ; lamp 3 off...
+        CMP  @#SIGNAL, #20.     ; ...unless the link is good
+        BLO  9$                 ; weak link: leave it off
+        MOV  #BLUE, @#IND3      ; lamp 3 blue while the link is up
+9$:     RTI                     ; back to whatever was interrupted
+CNT:    .WORD 1                 ; ticks until the next housekeeping
 `;
 
 /** Firmware lesson: the gate and nothing else. */
@@ -134,7 +137,7 @@ export const MINIMAL_FIRMWARE = `; MINIMAL FIRMWARE: the smallest firmware that 
 START:  CLR  @#SLICE            ; 0: no time limit
 1$:     MOV  #GO, @#PRGCS       ; the gate: refused (PRGCS bit 15) if not P.RDY
         WAIT                    ; sleep until the next tick
-        BR   1$
+        BR   1$                 ; and try the gate again
 `;
 
 /** All-in-one firmware: Explorer without a program, charging by itself. */
@@ -146,53 +149,53 @@ export const ALLIN_EXPLORER = `; EXPLORER (all-in-one firmware): wander, turn ri
 ; and that the array stays open across a reboot.
 ; Try: compare it with "Default firmware" + the program "Explorer".
 
-LOWBAT = 30.
-FULBAT = 90.
+LOWBAT = 30.                    ; charge below this battery level...
+FULBAT = 90.                    ; ...until this one
 
 START:  CLR  @#SOLOPN           ; the array survives reboots: stow it first
         MOV  #20., R0           ; stowing takes 20 ticks
-        JSR  PC, SLEEP
-        CLR  R2                 ; R2 = direction
-LOOP:   CMP  @#BAT, #LOWBAT
-        BLO  CHARGE
-        CLR  @#LIGHT
-        TST  @#SUNEL
-        BGT  LOOK
+        JSR  PC, SLEEP          ; wait R0 ticks
+        CLR  R2                 ; R2 = direction (0 = NORTH)
+LOOP:   CMP  @#BAT, #LOWBAT     ; battery low?
+        BLO  CHARGE             ; yes: charge first
+        CLR  @#LIGHT            ; headlight off by day...
+        TST  @#SUNEL            ; is the sun up?
+        BGT  LOOK               ; yes: leave it off
         MOV  #1, @#LIGHT        ; night: headlight
-LOOK:   MOV  R2, R0
-        JSR  PC, SCAN
-        MOV  @#RADHIT, R3
+LOOK:   MOV  R2, R0             ; look the way we are heading
+        JSR  PC, SCAN           ; one radar sweep
+        MOV  @#RADHIT, R3       ; what the radar saw
         BEQ  AHEAD              ; NONE: nothing ahead
-        CMP  @#RADDST, #1
+        CMP  @#RADDST, #1       ; how far is it?
         BGT  AHEAD              ; something, but not adjacent
         CMP  R3, #SAMPLE        ; items are driven over, not around
-        BEQ  AHEAD
-        CMP  R3, #KIT
-        BEQ  AHEAD
+        BEQ  AHEAD              ; a sample: drive on
+        CMP  R3, #KIT           ; a repair kit?
+        BEQ  AHEAD              ; also driven over
 TURN:   INC  R2                 ; turn right
         BIC  #177774, R2        ; MOD 4
-        BR   LOOP
-AHEAD:  CLR  @#IND2
-        MOV  #GREEN, @#IND1
-        MOV  R2, R0
-        MOV  #1, R1
-        JSR  PC, STEP
-        BEQ  LOOP
-        BR   TURN
+        BR   LOOP               ; and look again
+AHEAD:  CLR  @#IND2             ; lamp 2 off: not charging
+        MOV  #GREEN, @#IND1     ; lamp 1 green: on the move
+        MOV  R2, R0             ; direction...
+        MOV  #1, R1             ; ...one tile
+        JSR  PC, STEP           ; drive; R0 = OK or why not
+        BEQ  LOOP               ; OK: carry on
+        BR   TURN               ; failed: turn and try another way
 
-CHARGE: CLR  @#LIGHT
-        CLR  @#IND1
-        MOV  #AMBER, @#IND2
-1$:     MOV  #1, @#SOLOPN
-        CMP  @#ALERT, #A.SQL
-        BNE  2$
+CHARGE: CLR  @#LIGHT            ; save power: headlight off
+        CLR  @#IND1             ; lamp 1 off: not driving
+        MOV  #AMBER, @#IND2     ; lamp 2 amber: charging
+1$:     MOV  #1, @#SOLOPN       ; open the solar array
+        CMP  @#ALERT, #A.SQL    ; a squall on its way?
+        BNE  2$                 ; no: keep it open
         CLR  @#SOLOPN           ; squall warning: keep the array stowed
-2$:     MOV  @#SUNAZ, @#SOLANG
-        MOV  @#ORBAZ, @#ANTANG
-        MOV  #20., R0
-        JSR  PC, SLEEP
-        CMP  @#BAT, #FULBAT
-        BLO  1$
+2$:     MOV  @#SUNAZ, @#SOLANG  ; turn the array to the sun
+        MOV  @#ORBAZ, @#ANTANG  ; and the dish to the orbiter
+        MOV  #20., R0           ; wait 20 ticks...
+        JSR  PC, SLEEP          ; ...while it charges
+        CMP  @#BAT, #FULBAT     ; full enough?
+        BLO  1$                 ; not yet: keep charging
         BR   START              ; stow and go
 `;
 
@@ -205,53 +208,53 @@ export const ALLIN_PROSPECTOR = `; PROSPECTOR (all-in-one firmware): wander; min
 ; stow the array for squalls: a gap the default firmware closes.
 ; Try: add the squall check (see "All-in-one Explorer").
 
-START:  CLR  @#SOLOPN
-        MOV  #20., R0
-        JSR  PC, SLEEP
+START:  CLR  @#SOLOPN           ; the array survives reboots: stow it
+        MOV  #20., R0           ; stowing takes 20 ticks...
+        JSR  PC, SLEEP          ; ...so wait
         CLR  R2                 ; direction
-LOOP:   CMP  @#BAT, #30.
-        BLO  CHARGE
+LOOP:   CMP  @#BAT, #30.        ; battery below 30?
+        BLO  CHARGE             ; yes: charge first
         MOV  @#ORBAZ, @#ANTANG  ; spectra go home by themselves
-        MOV  R2, R0
-        JSR  PC, SCAN
-        CMP  @#RADDST, #1
+        MOV  R2, R0             ; look the way we are heading
+        JSR  PC, SCAN           ; one radar sweep
+        CMP  @#RADDST, #1       ; how far is what it saw?
         BGT  AHEAD              ; not adjacent yet
-        MOV  @#RADHIT, R3
-        BEQ  AHEAD
-        CMP  R3, #IRON
-        BEQ  MINE
-        CMP  R3, #SILIC
-        BEQ  MINE
-        CMP  R3, #SAMPLE
-        BEQ  GRAB
-TURN:   INC  R2
-        BIC  #177774, R2
-        BR   LOOP
+        MOV  @#RADHIT, R3       ; what it is
+        BEQ  AHEAD              ; nothing: drive on
+        CMP  R3, #IRON          ; iron ore?
+        BEQ  MINE               ; mine it
+        CMP  R3, #SILIC         ; silicate ore?
+        BEQ  MINE               ; mine it too
+        CMP  R3, #SAMPLE        ; a sample?
+        BEQ  GRAB               ; pick it up
+TURN:   INC  R2                 ; anything else: turn right...
+        BIC  #177774, R2        ; ...MOD 4
+        BR   LOOP               ; and look again
 MINE:   MOV  #F.T0, R1          ; drill
-        BR   USEIT
+        BR   USEIT              ; use it
 GRAB:   MOV  #F.T1, R1          ; grabber
-USEIT:  MOV  R2, R0
-        JSR  PC, ACT
+USEIT:  MOV  R2, R0             ; R0 = the direction of the target
+        JSR  PC, ACT            ; use the tool in R1
         CLR  R3                 ; analyze every slot (E.INV if empty)
-1$:     MOV  R3, R0
+1$:     MOV  R3, R0             ; R0 = cargo slot
         MOV  #F.T2, R1          ; spectrometer
-        JSR  PC, ACT
-        INC  R3
-        CMP  R3, #4
-        BLT  1$
-        BR   LOOP
-AHEAD:  MOV  R2, R0
-        MOV  #1, R1
-        JSR  PC, STEP
-        BEQ  LOOP
-        BR   TURN
-CHARGE: MOV  #1, @#SOLOPN
-2$:     MOV  @#SUNAZ, @#SOLANG
-        MOV  #20., R0
-        JSR  PC, SLEEP
-        CMP  @#BAT, #90.
-        BLO  2$
-        BR   START
+        JSR  PC, ACT            ; analyze what is in that slot
+        INC  R3                 ; next slot
+        CMP  R3, #4             ; four slots (0-3)
+        BLT  1$                 ; more slots to go
+        BR   LOOP               ; done: wander on
+AHEAD:  MOV  R2, R0             ; direction...
+        MOV  #1, R1             ; ...one tile
+        JSR  PC, STEP           ; drive
+        BEQ  LOOP               ; OK: carry on
+        BR   TURN               ; blocked: turn
+CHARGE: MOV  #1, @#SOLOPN       ; open the solar array
+2$:     MOV  @#SUNAZ, @#SOLANG  ; turn it to the sun
+        MOV  #20., R0           ; wait 20 ticks...
+        JSR  PC, SLEEP          ; ...while it charges
+        CMP  @#BAT, #90.        ; full enough?
+        BLO  2$                 ; not yet: keep charging
+        BR   START              ; stow and go
 `;
 
 /** All-in-one firmware: fetch supply crates forever. */
@@ -262,30 +265,30 @@ export const ALLIN_FETCH = `; FETCH (all-in-one firmware): drive to the nearest 
 ; again. It does not charge: watch BAT on long trips.
 ; Try: the program "Fetch supply crate" for the version with results.
 
-START:  CLR  @#SOLOPN
-        MOV  #20., R0
-        JSR  PC, SLEEP
-LOOP:   TST  @#DROPS
-        BEQ  IDLE
+START:  CLR  @#SOLOPN           ; the array survives reboots: stow it
+        MOV  #20., R0           ; stowing takes 20 ticks...
+        JSR  PC, SLEEP          ; ...so wait
+LOOP:   TST  @#DROPS            ; has a crate landed?
+        BEQ  IDLE               ; no: wait
         MOV  #GREEN, @#IND1     ; lamp 1 green: on the way
         MOV  @#DROPX, R0        ; dx = DROPX - X
-        SUB  @#X, R0
+        SUB  @#X, R0            ; (R0 = R0 - X)
         MOV  @#DROPY, R1        ; dy = DROPY - Y - 1: aim south of the crate
-        SUB  @#Y, R1
-        DEC  R1
+        SUB  @#Y, R1            ; (R1 = R1 - Y)
+        DEC  R1                 ; (R1 = R1 - 1)
         JSR  PC, DIRTO          ; R0 = the way to go, -1 = there
-        BMI  THERE
-        MOV  #1, R1
-        JSR  PC, STEP
-        BR   LOOP
-THERE:  MOV  #NORTH, R0
-        MOV  #F.T1, R1
+        BMI  THERE              ; negative: arrived
+        MOV  #1, R1             ; one tile that way
+        JSR  PC, STEP           ; drive
+        BR   LOOP               ; and work out the way again
+THERE:  MOV  #NORTH, R0         ; the crate is north of us
+        MOV  #F.T1, R1          ; grabber
         JSR  PC, ACT            ; adjacent: grab = install
-        BR   LOOP
+        BR   LOOP               ; look for the next crate
 IDLE:   MOV  #BLUE, @#IND1      ; lamp 1 blue: no crate to fetch
-        MOV  #50., R0
-        JSR  PC, SLEEP
-        BR   LOOP
+        MOV  #50., R0           ; wait 50 ticks...
+        JSR  PC, SLEEP          ; ...asleep
+        BR   LOOP               ; then check again
 `;
 
 // ------------------------------------------------------------------ programs
@@ -303,6 +306,8 @@ export const FIRST_STEPS = `; FIRST STEPS: drive a 3x3 square, then end.
 ; every error. HALT ends the program; the firmware sends R0 home
 ; (Comms: L.END = 3, L.RES = 1) and shows it on the cabin display.
 ; Numbers are octal: 3 is three, 10 is eight; 10. is ten.
+; Each line: an optional label (a name for this place, "SIDE:"), the
+; instruction, its operands, and after the ; a comment the CPU ignores.
 ; Try: a bigger square; HALT with the number of sides driven.
 
 START:  CLR  R2                 ; R2 = direction: 0 NORTH, 1 EAST, 2 SOUTH, 3 WEST
@@ -311,12 +316,12 @@ SIDE:   MOV  R2, R0             ; STEP takes the direction in R0...
         JSR  PC, STEP           ; R0 = OK or why not
         BNE  STUCK              ; blocked, hazard, low power...
         INC  R2                 ; turn right: NORTH -> EAST -> ...
-        CMP  R2, #4
+        CMP  R2, #4             ; compare R2 with 4 (sets the flags)
         BLT  SIDE               ; fewer than 4 sides: the next one
         MOV  #1, R0             ; result 1: square done
-        HALT
+        HALT                    ; end the program; R0 is its result
 STUCK:  CLR  R0                 ; result 0: something was in the way
-        HALT
+        HALT                    ; end the program
 `;
 
 export const DRIVE_YOURSELF = `; DRIVE YOURSELF: the same 3x3 square as First steps, but talking to
@@ -342,18 +347,18 @@ START:  CLR  DIR                ; NORTH
         MOV  DIR, @#DRVDIR      ; which way
         MOV  #GO, @#DRVCS       ; start
 2$:     TSTB @#DRVCS            ; DONE (bit 7)?
-        BMI  3$
+        BMI  3$                 ; set (negative byte): the drive is done
         WAIT                    ; no: sleep until the next tick
-        BR   2$
+        BR   2$                 ; and test again
 3$:     TST  @#DRVCS            ; ERR (bit 15)?
         BMI  STUCK              ; why: DRVER
-        INC  DIR
-        CMP  DIR, #4
-        BLT  1$
+        INC  DIR                ; turn right
+        CMP  DIR, #4            ; all four sides driven?
+        BLT  1$                 ; no: the next side
         MOV  #1, R0             ; result 1: square done
         RTS  PC                 ; "return from main" ends the program
 STUCK:  MOV  @#DRVER, R0        ; result: why it stopped
-        RTS  PC
+        RTS  PC                 ; end the program
 `;
 
 export const COUNT = `; COUNT WITH A VARIABLE: drive a 2x2 square one tile at a time and
@@ -379,22 +384,22 @@ L.TIL = 2                       ; log tag: tiles driven in all runs
 START:  INC  RUNS               ; one more run
         CLR  R2                 ; direction
 SIDE:   CLR  R3                 ; tiles on this side
-TILE:   MOV  R2, R0
-        MOV  #1, R1
+TILE:   MOV  R2, R0             ; direction...
+        MOV  #1, R1             ; ...one tile
         JSR  PC, STEP           ; one tile at a time, to count them
-        BNE  STUCK
-        INC  TILES
-        INC  R3
-        CMP  R3, #LEG
-        BLT  TILE
+        BNE  STUCK              ; failed: stop and report
+        INC  TILES              ; one more tile, kept in memory
+        INC  R3                 ; one more on this side
+        CMP  R3, #LEG           ; side finished?
+        BLT  TILE               ; no: the next tile
         INC  R2                 ; corner: turn right
-        CMP  R2, #4
-        BLT  SIDE
-STUCK:  MOV  #L.TIL, R0
-        MOV  TILES, R1
-        JSR  PC, LOG
+        CMP  R2, #4             ; all four sides?
+        BLT  SIDE               ; no: the next side
+STUCK:  MOV  #L.TIL, R0         ; log tag...
+        MOV  TILES, R1          ; ...and the tile count
+        JSR  PC, LOG            ; send it home (Comms)
         MOV  RUNS, R0           ; result: runs so far
-        HALT
+        HALT                    ; end the program
 
 RUNS:   .WORD 0                 ; how often the program ran
 TILES:  .WORD 0                 ; tiles driven, all runs together
@@ -415,23 +420,23 @@ export const ROUTE = `; ROUTE: drive a route stored in the program, then report 
 
 L.LEGS = 2                      ; log tag
 
-START:  CLR  GOOD
+START:  CLR  GOOD               ; no good legs yet
         MOV  #ROUTE, R3         ; R3 points at the next entry
 NEXT:   MOVB (R3)+, R0          ; direction
-        BMI  FIN               ; 377: the end of the route
+        BMI  FIN                ; 377: the end of the route
         MOVB (R3)+, R1          ; tiles
-        JSR  PC, STEP
+        JSR  PC, STEP           ; drive this leg
         BNE  NEXT               ; blocked: try the next leg
-        INC  GOOD
-        BR   NEXT
-FIN:    MOV  #L.LEGS, R0
-        MOV  GOOD, R1
-        JSR  PC, LOG
-        MOV  GOOD, R0
-        HALT
+        INC  GOOD               ; it worked: count it
+        BR   NEXT               ; the next leg
+FIN:    MOV  #L.LEGS, R0        ; log tag...
+        MOV  GOOD, R1           ; ...and the good legs
+        JSR  PC, LOG            ; send it home
+        MOV  GOOD, R0           ; result: the good legs
+        HALT                    ; end the program
 
 GOOD:   .WORD 0                 ; legs driven without a problem
-ROUTE:  .BYTE EAST, 3, NORTH, 2, WEST, 3, SOUTH, 2, 377
+ROUTE:  .BYTE EAST, 3, NORTH, 2, WEST, 3, SOUTH, 2, 377 ; (way, tiles)..., end
 `;
 
 export const DRIVE_AND_SCAN = `; DRIVE AND SCAN AT ONCE: drive 10 tiles east and count the samples
@@ -453,26 +458,26 @@ L.SMP = 2                       ; log tag: how far north a new sample lies
 
 START:  CLR  R2                 ; samples seen
         CLR  R3                 ; what the sweep before found
-        MOV  #10., @#DRVCNT
-        MOV  #EAST, @#DRVDIR
+        MOV  #10., @#DRVCNT     ; ten tiles...
+        MOV  #EAST, @#DRVDIR    ; ...east
         MOV  #GO, @#DRVCS       ; start the drive; don't wait for it
         TST  @#DRVCS            ; refused (array open, wall ahead...)?
-        BMI  FIN
-LOOK:   MOV  #NORTH, R0
+        BMI  FIN                ; ERR set: give up
+LOOK:   MOV  #NORTH, R0         ; look north...
         JSR  PC, SCAN           ; one sweep: a tick; the wheels go on
-        CMP  @#RADHIT, #SAMPLE
-        BNE  MORE
-        CMP  R3, #SAMPLE
+        CMP  @#RADHIT, #SAMPLE  ; did it see a sample?
+        BNE  MORE               ; no
+        CMP  R3, #SAMPLE        ; and the sweep before?
         BEQ  MORE               ; still the same sample
         INC  R2                 ; a new one
-        MOV  #L.SMP, R0
-        MOV  @#RADDST, R1
-        JSR  PC, LOG
-MORE:   MOV  @#RADHIT, R3
+        MOV  #L.SMP, R0         ; log tag...
+        MOV  @#RADDST, R1       ; ...and how far north it lies
+        JSR  PC, LOG            ; send it home
+MORE:   MOV  @#RADHIT, R3       ; remember this sweep for the next one
         TSTB @#DRVCS            ; drive DONE?
         BPL  LOOK               ; still driving: sweep again
-FIN:    MOV  R2, R0
-        RTS  PC                 ; result: samples seen
+FIN:    MOV  R2, R0             ; result: samples seen
+        RTS  PC                 ; end the program
 `;
 
 export const EXPLORER = `; EXPLORER: wander, turn right at obstacles, report acid vents.
@@ -493,31 +498,31 @@ L.VX = 2                        ; log tags: where the vent is
 L.VY = 3
 
 START:  CLR  R2                 ; R2 = heading 0-3
-LOOP:   MOV  R2, R0
-        JSR  PC, SCAN
+LOOP:   MOV  R2, R0             ; look the way we are heading
+        JSR  PC, SCAN           ; one radar sweep
         MOV  @#RADHIT, R3       ; MOV sets the flags too:
         BEQ  AHEAD              ;   NONE: nothing ahead
-        CMP  @#RADDST, #1
+        CMP  @#RADDST, #1       ; how far is it?
         BGT  AHEAD              ; something ahead, but not adjacent
         CMP  R3, #SAMPLE        ; items are driven over
-        BEQ  AHEAD
-        CMP  R3, #KIT
-        BEQ  AHEAD
+        BEQ  AHEAD              ; a sample: drive on
+        CMP  R3, #KIT           ; a repair kit?
+        BEQ  AHEAD              ; also driven over
 TURN:   INC  R2                 ; turn right...
         BIC  #177774, R2        ; ...MOD 4
-        BR   LOOP
-AHEAD:  MOV  R2, R0
-        MOV  #1, R1
-        JSR  PC, STEP
-        BEQ  LOOP
-        CMP  R0, #E.HAZ
+        BR   LOOP               ; and look again
+AHEAD:  MOV  R2, R0             ; direction...
+        MOV  #1, R1             ; ...one tile
+        JSR  PC, STEP           ; drive
+        BEQ  LOOP               ; OK: carry on
+        CMP  R0, #E.HAZ         ; drove onto a hazard?
         BNE  TURN               ; blocked: something moved in
         MOV  #L.VX, R0          ; on an acid vent: tell mission control
-        MOV  @#X, R1
-        JSR  PC, LOG
-        MOV  #L.VY, R0
-        MOV  @#Y, R1
-        JSR  PC, LOG
+        MOV  @#X, R1            ; where: X...
+        JSR  PC, LOG            ; send it
+        MOV  #L.VY, R0          ; ...and Y
+        MOV  @#Y, R1            ; (north-south position)
+        JSR  PC, LOG            ; send it
         BR   TURN               ; and leave it
 `;
 
@@ -539,19 +544,19 @@ export const PHOTOGRAPHER = `; PHOTOGRAPHER: photograph all four directions, sen
 START:  CLR  R2                 ; direction
         CLR  R3                 ; photos sent
 SHOT:   MOV  R2, @#HDG          ; turn in place to face it
-        MOV  R2, R0
-        MOV  #F.M1, R1
+        MOV  R2, R0             ; the camera's direction...
+        MOV  #F.M1, R1          ; ...and mode: 64x64 grey
         JSR  PC, SNAP           ; into image memory
         BNE  NEXT               ; E.LOWP...: skip this one
         MOV  #1, R0             ; type 1: a 64x64 grey photo
         JSR  PC, SNDIMG         ; image memory -> recorder -> home
-        BNE  NEXT
-        INC  R3
-NEXT:   INC  R2
-        CMP  R2, #4
-        BLT  SHOT
+        BNE  NEXT               ; not sent: don't count it
+        INC  R3                 ; one more photo sent
+NEXT:   INC  R2                 ; the next direction
+        CMP  R2, #4             ; all four done?
+        BLT  SHOT               ; no: the next photo
         MOV  R3, R0             ; result: photos sent (0-4)
-        HALT
+        HALT                    ; end the program
 `;
 
 export const PROSPECTOR = `; PROSPECTOR: wander; mine ore veins and pick up samples next to the
@@ -571,47 +576,47 @@ export const PROSPECTOR = `; PROSPECTOR: wander; mine ore veins and pick up samp
 ; Try: keep IRON in cargo for repairs (see Field repair).
 
 START:  CLR  R2                 ; direction
-LOOP:   MOV  R2, R0
-        JSR  PC, SCAN
-        CMP  @#RADDST, #1
+LOOP:   MOV  R2, R0             ; look the way we are heading
+        JSR  PC, SCAN           ; one radar sweep
+        CMP  @#RADDST, #1       ; how far is what it saw?
         BGT  AHEAD              ; target not adjacent yet
-        MOV  @#RADHIT, R3
+        MOV  @#RADHIT, R3       ; what it is
         BEQ  AHEAD              ; nothing
-        CMP  R3, #IRON
-        BEQ  MINE
-        CMP  R3, #SILIC
-        BEQ  MINE
-        CMP  R3, #SAMPLE
-        BEQ  GRAB
-TURN:   INC  R2
-        BIC  #177774, R2
-        BR   LOOP
+        CMP  R3, #IRON          ; iron ore?
+        BEQ  MINE               ; mine it
+        CMP  R3, #SILIC         ; silicate ore?
+        BEQ  MINE               ; mine it too
+        CMP  R3, #SAMPLE        ; a sample?
+        BEQ  GRAB               ; pick it up
+TURN:   INC  R2                 ; anything else: turn right...
+        BIC  #177774, R2        ; ...MOD 4
+        BR   LOOP               ; and look again
 MINE:   MOV  #F.T0, R1          ; drill: 8 ticks, ore into cargo
-        BR   TOOL
+        BR   TOOL               ; use it
 GRAB:   MOV  #F.T1, R1          ; grabber: 2 ticks, item into cargo
-TOOL:   MOV  R2, R0
-        JSR  PC, ACT
-        JSR  PC, LAB
-        BR   LOOP
-AHEAD:  MOV  R2, R0
-        MOV  #1, R1
-        JSR  PC, STEP
-        BEQ  LOOP
-        BR   TURN
+TOOL:   MOV  R2, R0             ; R0 = the direction of the target
+        JSR  PC, ACT            ; use the tool in R1
+        JSR  PC, LAB            ; analyze the cargo
+        BR   LOOP               ; and wander on
+AHEAD:  MOV  R2, R0             ; direction...
+        MOV  #1, R1             ; ...one tile
+        JSR  PC, STEP           ; drive
+        BEQ  LOOP               ; OK: carry on
+        BR   TURN               ; blocked: turn
 
 ; LAB: analyze everything in cargo. Changes R0 and R1 only.
 LAB:    MOV  R3, -(SP)          ; save R3
         CLR  R3                 ; slot
 1$:     TSTB CARGO(R3)          ; item in the slot? 0 = empty
-        BEQ  2$
-        MOV  R3, R0
+        BEQ  2$                 ; empty: the next slot
+        MOV  R3, R0             ; R0 = the slot
         MOV  #F.T2, R1          ; spectrometer: a spectrum into the recorder
-        JSR  PC, ACT
-2$:     INC  R3
+        JSR  PC, ACT            ; analyze it
+2$:     INC  R3                 ; the next slot
         CMP  R3, #4             ; Mk-I has 4 cargo slots (0-3)
-        BLT  1$
+        BLT  1$                 ; more to look at
         MOV  (SP)+, R3          ; restore R3
-        RTS  PC
+        RTS  PC                 ; back to the caller
 `;
 
 export const FIELD_REPAIR = `; FIELD REPAIR: repair worn systems with what is in cargo, HALT with
@@ -637,22 +642,22 @@ START:  CLR  R4                 ; repairs made
 CHECK:  CMP  @HEALTH(R2), #WORN ; this system's health
         BHIS NEXTS              ; healthy enough
         CLR  R3                 ; cargo slot
-TRY:    TSTB CARGO(R3)
+TRY:    TSTB CARGO(R3)          ; anything in this slot?
         BEQ  NEXTSL             ; empty slot
-        MOV  R3, R0
-        MOV  FUNS(R2), R1
-        JSR  PC, USE
+        MOV  R3, R0             ; R0 = the slot
+        MOV  FUNS(R2), R1       ; R1 = which system to repair
+        JSR  PC, USE            ; try the repair
         BNE  NEXTSL             ; this item cannot repair it
-        INC  R4
+        INC  R4                 ; one more repair
         BR   CHECK              ; still worn? try again
-NEXTSL: INC  R3
-        CMP  R3, #4
-        BLT  TRY
+NEXTSL: INC  R3                 ; the next slot
+        CMP  R3, #4             ; all four slots tried?
+        BLT  TRY                ; no: try the next one
 NEXTS:  ADD  #2, R2             ; the next system
-        CMP  R2, #6
-        BLT  CHECK
-        MOV  R4, R0
-        HALT
+        CMP  R2, #6             ; all three systems checked?
+        BLT  CHECK              ; no: check the next one
+        MOV  R4, R0             ; result: repairs made
+        HALT                    ; end the program
 
 HEALTH: .WORD HULL, SOLHLT, ANTHLT ; the health registers' addresses
 FUNS:   .WORD F.HULL, F.SOL, F.ANT ; and the matching repair functions
@@ -673,28 +678,28 @@ export const FETCH = `; FETCH: drive to the nearest supply crate and pick it up,
 ; Try: when blocked, step sideways once and go on (see Explorer).
 
 START:
-LOOP:   TST  @#DROPS
-        BEQ  NOCRAT
+LOOP:   TST  @#DROPS            ; has a crate landed?
+        BEQ  NOCRAT             ; no: nothing to fetch
         MOV  @#DROPX, R0        ; how far east the crate is
-        SUB  @#X, R0
+        SUB  @#X, R0            ; (R0 = DROPX - X)
         MOV  @#DROPY, R1        ; how far north...
-        SUB  @#Y, R1
+        SUB  @#Y, R1            ; (R1 = DROPY - Y)
         DEC  R1                 ; ...the tile south of it is
-        JSR  PC, DIRTO
+        JSR  PC, DIRTO          ; R0 = the way to go
         BMI  THERE              ; -1: arrived
-        MOV  #1, R1
-        JSR  PC, STEP
-        BEQ  LOOP
+        MOV  #1, R1             ; one tile that way
+        JSR  PC, STEP           ; drive
+        BEQ  LOOP               ; OK: work out the way again
         MOV  #2, R0             ; something is in the way
-        HALT
-THERE:  MOV  #NORTH, R0
-        MOV  #F.T1, R1
+        HALT                    ; end the program
+THERE:  MOV  #NORTH, R0         ; the crate is north of us
+        MOV  #F.T1, R1          ; grabber
         JSR  PC, ACT            ; grab = install
-        BNE  LOOP
-        MOV  #1, R0
-        HALT
-NOCRAT: CLR  R0
-        HALT
+        BNE  LOOP               ; failed: try again
+        MOV  #1, R0             ; result 1: installed
+        HALT                    ; end the program
+NOCRAT: CLR  R0                 ; result 0: no crate
+        HALT                    ; end the program
 `;
 
 export const SPIRAL = `; SPIRAL: search around the start in a growing square spiral (legs of
@@ -715,27 +720,27 @@ START:  CLR  R2                 ; direction
         MOV  #1, R3             ; leg length
 1$:     JSR  PC, TWO            ; two legs of this length...
         INC  R3                 ; ...then one tile longer
-        CMP  R3, #LEGS
-        BLE  1$
+        CMP  R3, #LEGS          ; longer than the longest leg?
+        BLE  1$                 ; not yet: two more legs
         BPT                     ; look at the registers, then Continue
-        MOV  R3, R0
-        HALT
+        MOV  R3, R0             ; result: the leg length reached
+        HALT                    ; end the program
 
 ; TWO: two legs of R3 tiles, turning right after each. Changes R2.
 TWO:    JSR  PC, LEG            ; the first leg, then on into LEG for the second
 ; LEG: one leg of R3 tiles in direction R2, log the corner, turn right.
-LEG:    MOV  R2, R0
-        MOV  R3, R1
+LEG:    MOV  R2, R0             ; direction...
+        MOV  R3, R1             ; ...and length
         JSR  PC, STEP           ; blocked? it just stops early
-        MOV  #2, R0
-        MOV  @#X, R1
-        JSR  PC, LOG
-        MOV  #3, R0
-        MOV  @#Y, R1
-        JSR  PC, LOG
-        INC  R2
-        BIC  #177774, R2
-        RTS  PC
+        MOV  #2, R0             ; log tag 2...
+        MOV  @#X, R1            ; ...the corner's X
+        JSR  PC, LOG            ; send it
+        MOV  #3, R0             ; log tag 3...
+        MOV  @#Y, R1            ; ...the corner's Y
+        JSR  PC, LOG            ; send it
+        INC  R2                 ; turn right...
+        BIC  #177774, R2        ; ...MOD 4
+        RTS  PC                 ; back to the caller
 `;
 
 export const SEISMIC = `; SEISMIC SURVEY: listen for ore in four directions, drive to the
@@ -754,39 +759,39 @@ export const SEISMIC = `; SEISMIC SURVEY: listen for ore in four directions, dri
 
 START:  CLR  R2                 ; direction
         MOV  #99., R4           ; nearest distance so far (99. = none)
-LISTEN: MOV  R2, R0
-        MOV  #F.T3, R1
-        JSR  PC, ACT
-        CMP  R0, #E.NOTL
-        BEQ  NOTOOL
-        MOV  @#SEIDST, R0
+LISTEN: MOV  R2, R0             ; listen in direction R2...
+        MOV  #F.T3, R1          ; ...with the seismic scanner
+        JSR  PC, ACT            ; use it
+        CMP  R0, #E.NOTL        ; no such tool?
+        BEQ  NOTOOL             ; the upgrade is missing
+        MOV  @#SEIDST, R0       ; how far the ore is
         BEQ  NEXT               ; nothing that way
-        CMP  R0, R4
+        CMP  R0, R4             ; nearer than the best so far?
         BHIS NEXT               ; not nearer than the best so far
         MOV  R0, R4             ; the new nearest
         MOV  R2, R3             ; and its direction
-NEXT:   INC  R2
-        CMP  R2, #4
-        BLT  LISTEN
-        CMP  R4, #99.
-        BEQ  NOORE
+NEXT:   INC  R2                 ; the next direction
+        CMP  R2, #4             ; all four heard?
+        BLT  LISTEN             ; no: listen again
+        CMP  R4, #99.           ; still "none"?
+        BEQ  NOORE              ; no ore in range
         DEC  R4                 ; stop next to the vein
         BEQ  DRILL              ; already there
-        MOV  R3, R0
-        MOV  R4, R1
-        JSR  PC, STEP
-DRILL:  MOV  R3, R0
-        MOV  #F.T0, R1
+        MOV  R3, R0             ; the ore's direction...
+        MOV  R4, R1             ; ...and how far to drive
+        JSR  PC, STEP           ; drive there
+DRILL:  MOV  R3, R0             ; the vein's direction
+        MOV  #F.T0, R1          ; the drill
         JSR  PC, ACT            ; ore into cargo
-        BNE  BLOCKD
-        MOV  #1, R0
-        HALT
-NOORE:  MOV  #2, R0
-        HALT
-BLOCKD: MOV  #3, R0
-        HALT
-NOTOOL: CLR  R0
-        HALT
+        BNE  BLOCKD             ; failed: we never got there
+        MOV  #1, R0             ; result 1: mined
+        HALT                    ; end the program
+NOORE:  MOV  #2, R0             ; result 2: no ore in range
+        HALT                    ; end the program
+BLOCKD: MOV  #3, R0             ; result 3: blocked on the way
+        HALT                    ; end the program
+NOTOOL: CLR  R0                 ; result 0: no scanner
+        HALT                    ; end the program
 `;
 
 export const WEATHER = `; WEATHER STATION: stay put and report the weather: the sunlight every
@@ -812,29 +817,29 @@ L.ALR  = 4
 L.ETA  = 5
 
 START:
-LOOP:   MOV  @#TICKL, R0
-        MOV  #2400., R1
+LOOP:   MOV  @#TICKL, R0        ; the time in ticks...
+        MOV  #2400., R1         ; ...divided by a sol
         JSR  PC, DIV16          ; R1 = ticks into the sol
-        MOV  R1, R0
-        MOV  #100., R1
+        MOV  R1, R0             ; those ticks...
+        MOV  #100., R1          ; ...divided by 100 ticks an hour
         JSR  PC, DIV16          ; R0 = the hour
-        MOV  R0, R1
-        MOV  #L.HOUR, R0
-        JSR  PC, LOG
-        MOV  #L.LGT, R0
-        MOV  @#SUNLIT, R1
-        JSR  PC, LOG
-        TST  @#ALERT
+        MOV  R0, R1             ; log the hour...
+        MOV  #L.HOUR, R0        ; ...under tag L.HOUR
+        JSR  PC, LOG            ; send it
+        MOV  #L.LGT, R0         ; log tag: light...
+        MOV  @#SUNLIT, R1       ; ...the sunlight 0-100
+        JSR  PC, LOG            ; send it
+        TST  @#ALERT            ; any warning?
         BEQ  CALM               ; A.NONE
-        MOV  #L.ALR, R0
-        MOV  @#ALERT, R1
-        JSR  PC, LOG
-        MOV  #L.ETA, R0
-        MOV  @#ALRETA, R1
-        JSR  PC, LOG
-CALM:   MOV  #100., R0
-        JSR  PC, SLEEP
-        BR   LOOP
+        MOV  #L.ALR, R0         ; log tag: alert...
+        MOV  @#ALERT, R1        ; ...which event is coming
+        JSR  PC, LOG            ; send it
+        MOV  #L.ETA, R0         ; log tag: when...
+        MOV  @#ALRETA, R1       ; ...ticks until it starts
+        JSR  PC, LOG            ; send it
+CALM:   MOV  #100., R0          ; wait 100 ticks...
+        JSR  PC, SLEEP          ; ...asleep
+        BR   LOOP               ; then report again
 `;
 
 // ------------------------------------------------------------------ image lessons (64x64)
@@ -850,12 +855,12 @@ export const IMAGE_LINE = `; LINE: your first picture. Clear image memory to bla
 START:  JSR  PC, ERASE          ; every byte 0
         MOV  #IMGBAS+1000, R1   ; row 32
         MOV  #16., R2           ; one row = 16 bytes = 64 pixels
-1$:     MOVB #377, (R1)+
-        SOB  R2, 1$
+1$:     MOVB #377, (R1)+        ; four white pixels, then R1 to the next byte
+        SOB  R2, 1$             ; R2 = R2 - 1; not 0 yet: again
         MOV  #1, R0             ; send it as a 64x64 grey photo
-        JSR  PC, SNDIMG
-        MOV  #1, R0
-        HALT
+        JSR  PC, SNDIMG         ; image memory -> home
+        MOV  #1, R0             ; result 1: sent
+        HALT                    ; end the program
 `;
 
 export const IMAGE_TEST_PATTERN = `; TEST PATTERN: four grey bars, like a camera test card.
@@ -866,21 +871,21 @@ export const IMAGE_TEST_PATTERN = `; TEST PATTERN: four grey bars, like a camera
 ; bits); divided by 4 (two ASRs) it picks the bar. GREYS(R0) reads the
 ; byte at GREYS + R0: a table lookup.
 
-START:  MOV  #IMGBAS, R1
+START:  MOV  #IMGBAS, R1        ; R1 points at the first byte
         CLR  R2                 ; byte number 0-1777
-1$:     MOV  R2, R0
+1$:     MOV  R2, R0             ; work on a copy of the byte number
         BIC  #177760, R0        ; MOD 16: which byte of its row (0-15)
         ASR  R0                 ; / 4: which bar (0-3)
-        ASR  R0
-        MOVB GREYS(R0), (R1)+
-        INC  R2
+        ASR  R0                 ; (each ASR halves it)
+        MOVB GREYS(R0), (R1)+   ; that bar's grey into image memory
+        INC  R2                 ; the next byte
         CMP  R2, #2000          ; 1024 bytes
-        BLO  1$
-        MOV  #1, R0
-        JSR  PC, SNDIMG
-        MOV  #1, R0
-        HALT
-GREYS:  .BYTE 0, 125, 252, 377
+        BLO  1$                 ; not all yet: again
+        MOV  #1, R0             ; send it as a 64x64 grey photo
+        JSR  PC, SNDIMG         ; image memory -> home
+        MOV  #1, R0             ; result 1: sent
+        HALT                    ; end the program
+GREYS:  .BYTE 0, 125, 252, 377  ; black, dark grey, light grey, white
 `;
 
 export const IMAGE_NEGATIVE = `; NEGATIVE: take a photo, turn it into a negative, send it.
@@ -890,20 +895,20 @@ export const IMAGE_NEGATIVE = `; NEGATIVE: take a photo, turn it into a negative
 ; 512 words (octal 1000), so the loop runs 512 times. SNDIMG with R0 = 0
 ; sends it in the mode of the last photo.
 
-START:  MOV  #NORTH, R0
-        MOV  #F.M1, R1
+START:  MOV  #NORTH, R0         ; photograph north...
+        MOV  #F.M1, R1          ; ...64x64 grey
         JSR  PC, SNAP           ; into image memory: nothing is sent yet
         BNE  FAIL               ; E.LOWP, E.BUSY...
-        MOV  #IMGBAS, R1
+        MOV  #IMGBAS, R1        ; R1 points at the first word
         MOV  #1000, R2          ; 512 words
 1$:     COM  (R1)+              ; read, flip, write back
-        SOB  R2, 1$
+        SOB  R2, 1$             ; R2 = R2 - 1; not 0 yet: again
         CLR  R0                 ; the same format as the SNAP
-        JSR  PC, SNDIMG
-        MOV  #1, R0
-        HALT
-FAIL:   CLR  R0
-        HALT
+        JSR  PC, SNDIMG         ; image memory -> home
+        MOV  #1, R0             ; result 1: sent
+        HALT                    ; end the program
+FAIL:   CLR  R0                 ; result 0: no photo
+        HALT                    ; end the program
 `;
 
 export const IMAGE_STAMP = `; STAMP: take a photo and write where it was taken into its first four
@@ -913,18 +918,18 @@ export const IMAGE_STAMP = `; STAMP: take a photo and write where it was taken i
 ; A MOV copies a whole word, from one address to another: no register
 ; needed. Words are little-endian: the low byte first.
 
-START:  MOV  #NORTH, R0
-        MOV  #F.M1, R1
-        JSR  PC, SNAP
-        BNE  FAIL
+START:  MOV  #NORTH, R0         ; photograph north...
+        MOV  #F.M1, R1          ; ...64x64 grey
+        JSR  PC, SNAP           ; into image memory
+        BNE  FAIL               ; no photo: give up
         MOV  @#X, @#IMGBAS      ; bytes 0-1: X
         MOV  @#Y, @#IMGBAS+2    ; bytes 2-3: Y
-        CLR  R0
-        JSR  PC, SNDIMG
-        MOV  #1, R0
-        HALT
-FAIL:   CLR  R0
-        HALT
+        CLR  R0                 ; the same format as the SNAP
+        JSR  PC, SNDIMG         ; image memory -> home
+        MOV  #1, R0             ; result 1: sent
+        HALT                    ; end the program
+FAIL:   CLR  R0                 ; result 0: no photo
+        HALT                    ; end the program
 `;
 
 export const IMAGE_PLOT = `; PLOT: draw single pixels. Takes a photo and draws a white diagonal
@@ -935,24 +940,24 @@ export const IMAGE_PLOT = `; PLOT: draw single pixels. Takes a photo and draws a
 ; change R0 and R1, so the loop counts in R3. Reference -> ROM shows how
 ; it finds the byte (y x 16 + x / 4) and the two bits in it.
 
-START:  MOV  #NORTH, R0
-        MOV  #F.M1, R1
-        JSR  PC, SNAP
-        BNE  FAIL
+START:  MOV  #NORTH, R0         ; photograph north...
+        MOV  #F.M1, R1          ; ...64x64 grey
+        JSR  PC, SNAP           ; into image memory
+        BNE  FAIL               ; no photo: give up
         MOV  #3, R2             ; white
-        CLR  R3
+        CLR  R3                 ; R3 = 0: the top-left corner
 1$:     MOV  R3, R0             ; pixel (R3, R3)
-        MOV  R3, R1
-        JSR  PC, PLOT
-        INC  R3
-        CMP  R3, #64.
-        BLO  1$
-        CLR  R0
-        JSR  PC, SNDIMG
-        MOV  #1, R0
-        HALT
-FAIL:   CLR  R0
-        HALT
+        MOV  R3, R1             ; (x = y: a diagonal)
+        JSR  PC, PLOT           ; draw it
+        INC  R3                 ; one pixel down and right
+        CMP  R3, #64.           ; past the last pixel?
+        BLO  1$                 ; not yet: the next one
+        CLR  R0                 ; the same format as the SNAP
+        JSR  PC, SNDIMG         ; image memory -> home
+        MOV  #1, R0             ; result 1: sent
+        HALT                    ; end the program
+FAIL:   CLR  R0                 ; result 0: no photo
+        HALT                    ; end the program
 `;
 
 export const IMAGE_MEMORY_MAP = `; MEMORY MAP: Explorer that remembers where it has been. Image memory
@@ -969,35 +974,35 @@ export const IMAGE_MEMORY_MAP = `; MEMORY MAP: Explorer that remembers where it 
 START:  JSR  PC, ERASE          ; forget the old map: image memory keeps
                                 ; its contents through reboots
         CLR  R2                 ; direction
-LOOP:   MOV  R2, R0
-        JSR  PC, SCAN
-        TST  @#RADHIT
-        BEQ  AHEAD
-        CMP  @#RADDST, #1
-        BGT  AHEAD
-TURN:   INC  R2
-        BIC  #177774, R2
-        BR   LOOP
-AHEAD:  MOV  R2, R0
-        MOV  #1, R1
-        JSR  PC, STEP
-        BNE  TURN
-        MOV  @#Y, R3
+LOOP:   MOV  R2, R0             ; look the way we are heading
+        JSR  PC, SCAN           ; one radar sweep
+        TST  @#RADHIT           ; did it see anything?
+        BEQ  AHEAD              ; no: drive on
+        CMP  @#RADDST, #1       ; how far is it?
+        BGT  AHEAD              ; not adjacent: drive on
+TURN:   INC  R2                 ; turn right...
+        BIC  #177774, R2        ; ...MOD 4
+        BR   LOOP               ; and look again
+AHEAD:  MOV  R2, R0             ; direction...
+        MOV  #1, R1             ; ...one tile
+        JSR  PC, STEP           ; drive
+        BNE  TURN               ; blocked: turn
+        MOV  @#Y, R3            ; where are we? Y first
         BIC  #177740, R3        ; map row 0-31
-        ASL  R3                 ; x 32
-        ASL  R3
-        ASL  R3
-        ASL  R3
-        ASL  R3
-        MOV  @#X, R0
+        ASL  R3                 ; x 2 (each ASL doubles it)
+        ASL  R3                 ; x 4
+        ASL  R3                 ; x 8
+        ASL  R3                 ; x 16
+        ASL  R3                 ; x 32: the row's first byte
+        MOV  @#X, R0            ; then X
         BIC  #177740, R0        ; map column 0-31
         ADD  R0, R3             ; byte 0-1777
         MOVB IMGBAS(R3), R0     ; earlier visits
-        BIC  #177400, R0
+        BIC  #177400, R0        ; keep the low byte only (0-255)
         ADD  R0, R2             ; known tile: turn by that many quarters
-        BIC  #177774, R2
+        BIC  #177774, R2        ; ...MOD 4
         INCB IMGBAS(R3)         ; one more visit (wraps at 256)
-        BR   LOOP
+        BR   LOOP               ; and on
 `;
 
 /** Program templates (lessons), in the Code tab's course order. */
