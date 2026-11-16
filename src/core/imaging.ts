@@ -70,7 +70,7 @@ export function productPayload(seed: number, d: ProductDesc): number[] {
   }
 }
 
-/** Bytes of a product's frame; M15 photos (`x2`) are at double resolution (PDP11_CPU.md §6.3). */
+/** Bytes of a product's frame; M15 photos (`x2`) are at double resolution (BLUE11_CPU.md §6.3). */
 export function productSize(d: Pick<ProductDesc, 'type' | 'x2'>): number {
   return d.x2 && photoBytes(d.type, PHOTO_FORMATS_2X) ? 2 + photoBytes(d.type, PHOTO_FORMATS_2X) : productFrameBytes(d.type);
 }

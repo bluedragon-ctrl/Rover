@@ -1,17 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { BALANCE } from '../src/core/balance';
-import { PROSPECTOR, FACTORY_IDLE } from '../src/core/programs';
+import { DEFAULT_FIRMWARE as FACTORY_IDLE, PROSPECTOR } from '../src/core/programs';
 import { deserialize, SAVE_VERSION, SaveError, serialize } from '../src/core/SaveManager';
 import { SimulationEngine } from '../src/core/SimulationEngine';
 import { Alert, CpuState, Layer, Status } from '../src/core/types';
 import { T } from '../src/core/WorldRegistry';
 import { EVENT_BY_ID } from '../src/core/events';
 
-const factory = { factory: true };
+import { factory, fw, HANG, reg, sleep } from './helpers/rover';
+
 const run = (e: SimulationEngine, n: number) => {
   for (let i = 0; i < n; i++) e.advanceTick();
 };
-function rover(src = 'CALL SLEEP 100000', seed = 3) {
+const OPEN = fw('MOV  #1, @#SOLOPN', 'MOV  @#SUNAZ, @#SOLANG');
+function rover(src = `START:${HANG}`, seed = 3) {
   const e = new SimulationEngine({ seed });
   const u = e.spawnUnit('t');
   expect(e.upload(u, src, factory).errors).toEqual([]);
@@ -20,7 +22,7 @@ function rover(src = 'CALL SLEEP 100000', seed = 3) {
 
 describe('subsystems & material repairs', () => {
   it('a damaged array charges proportionally less', () => {
-    const { e, u } = rover('MOV @SOLAR_OPEN 1\nMOV @SOLAR_ANGLE @SUN_AZIMUTH\nCALL SLEEP 100000');
+    const { e, u } = rover(OPEN);
     run(e, 80);
     const full = u.lastSolarGain;
     u.solarHealth = 50;
@@ -39,14 +41,14 @@ describe('subsystems & material repairs', () => {
 
   it('repairs consume the right material from cargo', () => {
     const { e, u } = rover(
-      'CALL USE 0 SYS_SOLAR\nMOV r0 @STATUS\nCALL USE 1 SYS_SOLAR\nMOV r1 @STATUS\nCALL USE 1 SYS_HULL\nMOV r2 @STATUS\nCALL USE 2 SYS_ANTENNA\nMOV r3 @STATUS\nCALL SLEEP 100000',
+      fw(...[['0', 'F.SOL', 'R2'], ['1', 'F.SOL', 'R3'], ['1', 'F.HULL', 'R4'], ['2', 'F.ANT', 'R5']].map(([slot, sys, dst]) => `MOV  #${slot}, R0\n        MOV  #${sys}, R1\n        JSR  PC, USE\n        MOV  R0, ${dst}`)),
     );
     u.cargo = [T.IRON_ORE, T.SILICON_ORE, T.REPAIR_KIT, 0];
     u.solarHealth = 50;
     u.antennaHealth = 50;
     u.hull = 50;
     run(e, 40);
-    expect([u.vm.regs[0], u.vm.regs[1], u.vm.regs[2], u.vm.regs[3]]).toEqual([Status.ERR_INVALID, Status.OK, Status.ERR_INVALID, Status.OK]);
+    expect([reg(u, 2), reg(u, 3), reg(u, 4), reg(u, 5)]).toEqual([Status.ERR_INVALID, Status.OK, Status.ERR_INVALID, Status.OK]);
     expect(u.solarHealth).toBe(70); // silicon +20
     expect(u.antennaHealth).toBe(90); // kit +40
     expect(u.hull).toBe(50); // slot 1 was already used up
@@ -65,7 +67,7 @@ describe('storyteller events', () => {
   };
 
   it('nothing happens until the prerequisites (First contact) are met', () => {
-    const { ev } = starts(42, 'CALL SLEEP 100000', 6);
+    const { ev } = starts(42, `START:${HANG}`, 6);
     expect(ev).toEqual([]);
   });
 
@@ -95,7 +97,7 @@ describe('storyteller events', () => {
   });
 
   it('eclipses darken the sky to their minimum and show on @ALERT', () => {
-    const { e, u } = rover('MOV r0 @ALERT\nMOV r1 @SUN_LIGHT\nCALL SLEEP 1');
+    const { e, u } = rover(`START:\n1$:     MOV  @#ALERT, R2\n        MOV  @#SUNLIT, R3\n        ${sleep(1)}\n        BR   1$`);
     run(e, 300);
     const day = e.sun.light;
     e.director.triggerNow('PARTIAL_ECLIPSE');
@@ -106,15 +108,15 @@ describe('storyteller events', () => {
     e.director.triggerNow('ECLIPSE');
     run(e, BALANCE.eclipseRampTicks + 10);
     expect(e.sun.light).toBe(0);
-    expect(u.vm.regs[0]).toBe(Alert.ALERT_ECLIPSE);
+    expect(reg(u, 2)).toBe(Alert.ALERT_ECLIPSE);
     expect(e.stats.eclipsesSurvived).toBe(0); // admin-triggered events don't count
     expect(e.director.history).toEqual({});
   });
 
   it('a squall wears hull and dish and wrecks an open array; the training squall is gentle', () => {
-    const open = rover('MOV @SOLAR_OPEN 1\nCALL SLEEP 100000');
-    const shut = rover('CALL SLEEP 100000');
-    const dust = rover('MOV @SOLAR_OPEN 1\nCALL SLEEP 100000');
+    const open = rover(OPEN);
+    const shut = rover();
+    const dust = rover(OPEN);
     for (const [r, id] of [[open, 'SQUALL'], [shut, 'SQUALL'], [dust, 'DUST_SQUALL']] as const) {
       run(r.e, 30);
       r.e.director.triggerNow(id);
@@ -129,8 +131,9 @@ describe('storyteller events', () => {
     expect(dust.u.antennaHealth).toBe(100);
   });
 
-  it('factory firmware stows the array when a squall is forecast and survives it', () => {
+  it('the default firmware stows the array when a squall is forecast and survives it', () => {
     const { e, u } = rover(FACTORY_IDLE);
+    u.energy = 20_000; // below LOWBAT: it opens the array to charge
     run(e, 300);
     expect(u.solarDeployed).toBe(true);
     const t = e.tick;
@@ -158,7 +161,8 @@ describe('save / load', () => {
     const make = () => {
       const e = new SimulationEngine({ seed: 12345 });
       const u = e.spawnUnit('Rover-1');
-      e.upload(u, PROSPECTOR, factory);
+      e.upload(u, FACTORY_IDLE, factory);
+      e.uploadProgram(u, PROSPECTOR, factory);
       return e;
     };
     const total = BALANCE.dayTicks * 3;
@@ -189,7 +193,7 @@ describe('save / load', () => {
     expect(l.world.getTile(101, 100, Layer.ITEM)).toBe(T.SAMPLE);
     expect(l.world.isMapped(0, 0)).toBe(true);
     expect(l.world.isMapped(50, 50)).toBe(false);
-    expect(l.units[0].vm.state).not.toBe(CpuState.FAULT);
+    expect(l.units[0].cpu.state).not.toBe(CpuState.FAULT);
   });
 
   it('rejects foreign or future files', () => {

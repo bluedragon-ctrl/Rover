@@ -31,9 +31,9 @@ export const PHOTO_FORMATS: Record<number, PhotoFormat> = {
 };
 
 /**
- * M15 (owner, 2026-11-15): the PDP-11 core's camera at double resolution, a format table
- * of its own until the switch-over (slice 6); the Rover-ASM game keeps PHOTO_FORMATS. Sizes
- * stay powers of two, so a row is a shift away (64 px × 2 bpp = 16 bytes).
+ * The camera's formats (owner, 2026-11-15): double the resolution of the M9 formats above
+ * (PHOTO_FORMATS, kept for the preview pages). Sizes stay powers of two, so a row is a
+ * shift away (64 px × 2 bpp = 16 bytes).
  */
 export const PHOTO_FORMATS_2X: Record<number, PhotoFormat> = {
   1: { w: 64, h: 64, bpp: 2, kind: 'grey', label: '64×64 · 2 bpp grey' },
@@ -45,7 +45,7 @@ export const PHOTO_FORMATS_2X: Record<number, PhotoFormat> = {
 
 export type PhotoFormats = Record<number, PhotoFormat>;
 
-export const photoBytes = (type: number, formats: PhotoFormats = PHOTO_FORMATS): number => {
+export const photoBytes = (type: number, formats: PhotoFormats = PHOTO_FORMATS_2X): number => {
   const f = formats[type];
   return f ? (f.w * f.h * f.bpp) / 8 : 0;
 };
@@ -457,11 +457,16 @@ export const PALETTE16: readonly RGB[] = [
   0x8a2f22, 0xe0643c, 0xffc94a, 0x8fbf3a, 0x2f6f7a, 0x6fd0f0, 0x5a5f8a, 0xffffff,
 ].map(hex);
 
+/**
+ * Pixels packed little-endian (owner decision, docs/BLUE11_CPU.md §0 decision 18): the first
+ * pixel of a byte in its low bits, so a word read with `MOV` holds eight 2-bpp pixels in
+ * order from bit 0 up, as the CPU numbers its bytes.
+ */
 function pack(values: number[], bpp: number): number[] {
   const out = new Array<number>((values.length * bpp) / 8).fill(0);
   values.forEach((v, p) => {
     const bit = p * bpp;
-    out[bit >> 3] |= v << (8 - bpp - (bit & 7));
+    out[bit >> 3] |= v << (bit & 7);
   });
   return out;
 }
@@ -471,13 +476,13 @@ function unpack(b: readonly number[], count: number, bpp: number): number[] {
   const out: number[] = [];
   for (let p = 0; p < count; p++) {
     const bit = p * bpp;
-    out.push(((b[bit >> 3] ?? 0) >> (8 - bpp - (bit & 7))) & mask);
+    out.push(((b[bit >> 3] ?? 0) >> (bit & 7)) & mask);
   }
   return out;
 }
 
-/** Photo payload bytes (pixels packed MSB-first, row by row). */
-export function photoPayload(seed: number, p: PhotoShot, formats: PhotoFormats = PHOTO_FORMATS): number[] {
+/** Photo payload bytes (row by row, pixels packed little-endian: the first in the low bits). */
+export function photoPayload(seed: number, p: PhotoShot, formats: PhotoFormats = PHOTO_FORMATS_2X): number[] {
   const f = formats[p.type];
   if (!f) return [];
   const px = capture(seed, p, f.w, f.h);
@@ -518,7 +523,7 @@ export function photoPayload(seed: number, p: PhotoShot, formats: PhotoFormats =
  * Decode received photo bytes into RGB 0..255 per pixel (w×h×3). `bytes` may be partial:
  * pixels from `pixelsReceived` on have not arrived yet (callers hatch them).
  */
-export function decodePhoto(type: number, bytes: readonly number[], formats: PhotoFormats = PHOTO_FORMATS): { w: number; h: number; rgb: Uint8ClampedArray; pixelsReceived: number } | null {
+export function decodePhoto(type: number, bytes: readonly number[], formats: PhotoFormats = PHOTO_FORMATS_2X): { w: number; h: number; rgb: Uint8ClampedArray; pixelsReceived: number } | null {
   const f = formats[type];
   if (!f) return null;
   const n = f.w * f.h;

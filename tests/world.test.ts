@@ -3,7 +3,9 @@ import { BALANCE } from '../src/core/balance';
 import { CHUNK, ChunkedWorld, worldToChunk } from '../src/core/ChunkedWorld';
 import { MapGenerator } from '../src/core/MapGenerator';
 import { SimulationEngine } from '../src/core/SimulationEngine';
-import { CpuState, Dir, Layer, Status } from '../src/core/types';
+import { CpuState, Layer, Status } from '../src/core/types';
+import { ALLIN_EXPLORER } from '../src/core/programs';
+import { fw, reg, rover, run } from './helpers/rover';
 import { T } from '../src/core/WorldRegistry';
 
 describe('chunk math', () => {
@@ -59,87 +61,72 @@ describe('generation', () => {
   });
 });
 
-describe('engine hardware', () => {
-  function engineWithWall() {
-    const eng = new SimulationEngine({ seed: 3 });
-    eng.world.setTile(3, 0, Layer.OBSTACLE, T.CLIFF_WALL);
-    return eng;
-  }
+const step = (dir: string, n: number, dst: string) => `MOV  #${dir}, R0\n        MOV  #${n}., R1\n        JSR  PC, STEP\n        MOV  R0, ${dst}`;
+const scan = (dir: string, hit: string, dist: string) => `MOV  #${dir}, R0\n        JSR  PC, SCAN\n        MOV  @#RADHIT, ${hit}\n        MOV  @#RADDST, ${dist}`;
 
-  it('STEP moves tile by tile and stops at walls with ERR_BLOCKED', () => {
-    const eng = engineWithWall();
-    const u = eng.spawnUnit('t');
-    eng.upload(u, 'CALL STEP EAST 5\nMOV r0 @STATUS\nCALL SLEEP 1000');
-    for (let i = 0; i < 40; i++) eng.advanceTick();
+describe('engine hardware', () => {
+  const wall = (e: SimulationEngine) => e.world.setTile(3, 0, Layer.OBSTACLE, T.CLIFF_WALL);
+
+  it('STEP moves tile by tile and stops at walls with E.BLK', () => {
+    const { e, u } = rover(fw(step('EAST', 5, 'R2')), { seed: 3, setup: wall });
+    run(e, 40);
     expect([u.x, u.y]).toEqual([2, 0]);
-    expect(u.vm.regs[0]).toBe(Status.ERR_BLOCKED);
+    expect(reg(u, 2)).toBe(Status.ERR_BLOCKED);
     expect(u.energy).toBeLessThan(BALANCE.batteryCapacity - 2 * 40);
   });
 
   it('SCAN reports the first obstacle and its distance', () => {
-    const eng = engineWithWall();
-    const u = eng.spawnUnit('t');
-    eng.upload(u, 'CALL SCAN EAST\nMOV r0 @RADAR_HIT\nMOV r1 @RADAR_DIST\nCALL SCAN WEST\nMOV r2 @RADAR_HIT\nMOV r3 @RADAR_DIST\nCALL SLEEP 1000');
-    for (let i = 0; i < 5; i++) eng.advanceTick();
-    expect([u.vm.regs[0], u.vm.regs[1]]).toEqual([T.CLIFF_WALL, 3]);
-    expect(u.vm.regs[2]).toBe(0);
+    const { e, u } = rover(fw(scan('EAST', 'R2', 'R3'), scan('WEST', 'R4', 'R5')), { seed: 3, setup: wall });
+    run(e, 8);
+    expect([reg(u, 2), reg(u, 3)]).toEqual([T.CLIFF_WALL, 3]);
+    expect(reg(u, 4)).toBe(0);
   });
 
   it('SCAN sees other rovers', () => {
-    const eng = new SimulationEngine({ seed: 3 });
-    const u = eng.spawnUnit('a');
-    eng.spawnUnit('b', 0, 2);
-    eng.upload(u, 'CALL SCAN NORTH\nMOV r0 @RADAR_HIT\nMOV r1 @RADAR_DIST\nCALL SLEEP 1000');
-    eng.advanceTick();
-    eng.advanceTick(); // the sweep takes a tick
-    expect([u.vm.regs[0], u.vm.regs[1]]).toEqual([T.ROVER, 2]);
+    const { e, u } = rover(fw(scan('NORTH', 'R2', 'R3')), { seed: 3, setup: (e) => e.spawnUnit('b', 0, 2) });
+    run(e, 6); // boot, then the sweep takes a tick
+    expect([reg(u, 2), reg(u, 3)]).toEqual([T.ROVER, 2]);
   });
 
-  it('acid vents damage hull and abort the move with ERR_HAZARD', () => {
-    const eng = new SimulationEngine({ seed: 3 });
-    eng.world.setTile(0, 1, Layer.TERRAIN, T.ACID_VENT);
-    const u = eng.spawnUnit('t');
-    eng.upload(u, `CALL STEP ${Dir.NORTH} 3\nMOV r0 @STATUS\nCALL SLEEP 1000`);
-    for (let i = 0; i < 20; i++) eng.advanceTick();
+  it('acid vents damage hull and abort the move with E.HAZ', () => {
+    const { e, u } = rover(fw(step('NORTH', 3, 'R2')), { seed: 3, setup: (e) => e.world.setTile(0, 1, Layer.TERRAIN, T.ACID_VENT) });
+    run(e, 20);
     expect([u.x, u.y]).toEqual([0, 1]);
     expect(u.hull).toBe(90);
-    expect(u.vm.regs[0]).toBe(Status.ERR_HAZARD);
+    expect(reg(u, 2)).toBe(Status.ERR_HAZARD);
   });
 
   it('powers off when the battery is empty and admin can recover', () => {
-    const eng = new SimulationEngine({ seed: 3 });
-    const u = eng.spawnUnit('t');
-    eng.upload(u, 'ADD r0 1');
+    const { e, u } = rover('START:  INC  R0\n        BR   START', { seed: 3 });
     u.energy = 5;
-    for (let i = 0; i < 5; i++) eng.advanceTick();
-    expect(u.vm.state).toBe(CpuState.POWER_OFF);
-    eng.admin.forceCharge(u);
-    eng.advanceTick();
-    expect(u.vm.state).toBe(CpuState.RUNNING);
+    run(e, 5);
+    expect(u.cpu.state).toBe(CpuState.POWER_OFF);
+    e.admin.forceCharge(u);
+    e.advanceTick();
+    expect(u.cpu.state).toBe(CpuState.RUNNING);
   });
 
-  it('is deterministic: same seed and program give the same run', () => {
-    const run = () => {
-      const eng = new SimulationEngine({ seed: 11 });
-      const u = eng.spawnUnit('t');
-      eng.upload(u, 'CALL SCAN r0\nMOV r1 @RADAR_HIT\nMOV r2 @RADAR_DIST\nJEQ r1 NONE go\nADD r0 1\nMOD r0 4\ngo: CALL STEP r0 2');
-      for (let i = 0; i < 2000; i++) eng.advanceTick();
+  it('is deterministic: same seed and firmware give the same run', () => {
+    const once = () => {
+      const e = new SimulationEngine({ seed: 11 });
+      const u = e.spawnUnit('t');
+      e.upload(u, ALLIN_EXPLORER, { factory: true });
+      run(e, 2000);
       return [u.x, u.y, u.energy, u.hull];
     };
-    expect(run()).toEqual(run());
+    expect(once()).toEqual(once());
   });
 });
 
-describe('demo firmware', () => {
-  it('explores for 5000 ticks without faulting', async () => {
-    const { DEMO_EXPLORER } = await import('../src/core/programs');
-    const eng = new SimulationEngine({ seed: 12345 });
-    const u = eng.spawnUnit('t');
-    expect(eng.upload(u, DEMO_EXPLORER, { factory: true }).errors).toEqual([]);
+describe('all-in-one firmware', () => {
+  it('the Explorer explores for 5000 ticks without faulting', () => {
+    const e = new SimulationEngine({ seed: 12345 });
+    const u = e.spawnUnit('t');
+    expect(e.upload(u, ALLIN_EXPLORER, { factory: true }).errors).toEqual([]);
     const visited = new Set<string>();
     for (let i = 0; i < 5000; i++) {
-      eng.advanceTick();
-      expect(u.vm.state === CpuState.FAULT).toBe(false);
+      e.advanceTick();
+      expect(u.cpu.state === CpuState.FAULT).toBe(false);
       visited.add(`${u.x},${u.y}`);
     }
     expect(visited.size).toBeGreaterThan(30);

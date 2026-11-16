@@ -1,22 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { BALANCE } from '../src/core/balance';
-import { compile } from '../src/core/vm/Compiler';
 import { CHASSIS_MK1 } from '../src/core/balance';
-import { DEMO_EXPLORER, TEMPLATES } from '../src/core/programs';
+import { ALLIN_EXPLORER as DEMO_EXPLORER } from '../src/core/programs';
 import { deserialize, serialize } from '../src/core/SaveManager';
 import { coneOffsets, inCone } from '../src/core/sensors';
 import { SimulationEngine } from '../src/core/SimulationEngine';
 import { Dir, Layer } from '../src/core/types';
-import { T, createDefaultRegistry } from '../src/core/WorldRegistry';
+import { T } from '../src/core/WorldRegistry';
 import type { Unit } from '../src/core/Unit';
-
-const factory = { factory: true };
+import { boot, factory, fw, HANG, reg } from './helpers/rover';
 
 /** Engine at night with a rover on a cleared patch far from the (day-revealed) origin. */
 function nightRover(seed = 7): { eng: SimulationEngine; u: Unit; ox: number; oy: number } {
   const eng = new SimulationEngine({ seed });
   const u = eng.spawnUnit('t');
-  eng.upload(u, 'CALL SLEEP 100000', factory);
+  eng.upload(u, `START:${HANG}`, factory);
   while (eng.sun.elevation > 0) eng.advanceTick();
   const ox = 400;
   const oy = 400;
@@ -88,28 +86,30 @@ describe('M8.1 directional headlight', () => {
     eng.world.setTile(ox, oy + 4, Layer.OBSTACLE, T.CLIFF_WALL);
     eng.admin.teleport(u, ox, oy);
     u.heading = Dir.NORTH;
-    eng.upload(u, 'CALL SCAN EAST\nMOV r0 @RADAR_HIT\nMOV r1 @RADAR_DIST\nCALL SCAN NORTH\nMOV r2 @RADAR_HIT\nMOV r3 @RADAR_DIST\nCALL SLEEP 100000', factory);
-    for (let i = 0; i < 6; i++) eng.advanceTick();
+    const scan = (dir: string, hit: string, dist: string) => `MOV  #${dir}, R0\n        JSR  PC, SCAN\n        MOV  @#RADHIT, ${hit}\n        MOV  @#RADDST, ${dist}`;
+    eng.upload(u, fw(scan('EAST', 'R2', 'R3'), scan('NORTH', 'R4', 'R5')), factory);
+    for (let i = 0; i < 9; i++) eng.advanceTick();
     expect(u.heading).toBe(Dir.NORTH);
-    expect([u.vm.regs[0], u.vm.regs[1]]).toEqual([T.CLIFF_WALL, 4]);
-    expect([u.vm.regs[2], u.vm.regs[3]]).toEqual([T.CLIFF_WALL, 4]);
+    expect([reg(u, 2), reg(u, 3)]).toEqual([T.CLIFF_WALL, 4]);
+    expect([reg(u, 4), reg(u, 5)]).toEqual([T.CLIFF_WALL, 4]);
     // ...but the operator has not seen those walls: they are outside the ring.
     expect(eng.world.isMapped(ox + 4, oy)).toBe(false);
   });
 
-  it('@HEADING turns in place for a little energy and wraps mod 4', () => {
+  it('HDG turns in place for a little energy and wraps mod 4', () => {
     const { eng, u, ox, oy } = nightRover();
     eng.world.setTile(ox + 4, oy, Layer.OBSTACLE, T.CLIFF_WALL);
     eng.admin.teleport(u, ox, oy);
     u.heading = Dir.NORTH;
-    eng.upload(u, 'MOV @HEADLIGHT 1\nADD @HEADING 1\nMOV r2 @HEADING\nCALL SCAN EAST\nMOV r0 @RADAR_HIT\nMOV r1 @RADAR_DIST\nMOV @HEADING 7\nMOV r3 @HEADING\nCALL SLEEP 100000', factory);
+    eng.upload(u, fw('MOV  #1, @#LIGHT', 'INC  @#HDG', 'MOV  @#HDG, R2', 'MOV  #EAST, R0', 'JSR  PC, SCAN', 'MOV  #7, @#HDG', 'MOV  @#HDG, R3'), factory);
     const before = u.energy;
+    boot(eng, u);
     eng.advanceTick();
-    expect(u.vm.regs[2]).toBe(Dir.EAST);
+    expect(reg(u, 2)).toBe(Dir.EAST);
     eng.advanceTick(); // reveal follows the new heading on the next tick
     expect(eng.world.isMapped(ox + 4, oy)).toBe(true);
-    for (let i = 0; i < 2; i++) eng.advanceTick();
-    expect(u.vm.regs[3]).toBe(Dir.WEST);
+    for (let i = 0; i < 3; i++) eng.advanceTick();
+    expect(reg(u, 3)).toBe(Dir.WEST);
     expect(u.heading).toBe(Dir.WEST);
     const spent = before - u.energy;
     expect(spent).toBeGreaterThanOrEqual(2 * BALANCE.turnEnergy + BALANCE.scanEnergy);
@@ -124,9 +124,7 @@ describe('M8.1 directional headlight', () => {
     expect(eng.sensorRange(u)).toBe(CHASSIS_MK1.sensorRange);
   });
 
-  it('shipped firmware compiles and the Explorer keeps driving through a night', () => {
-    const consts = createDefaultRegistry().constants();
-    for (const [name, src] of Object.entries(TEMPLATES)) expect(compile(src, CHASSIS_MK1, consts).program, name).toBeTruthy();
+  it('the all-in-one Explorer keeps driving through a night', () => {
     const eng = new SimulationEngine({ seed: 21 });
     const u = eng.spawnUnit('t');
     eng.upload(u, DEMO_EXPLORER, factory);
@@ -143,21 +141,27 @@ describe('M8.1 directional headlight', () => {
   });
 
   it('determinism and save round trip with turns and headlight at night', () => {
-    const prog = `boot: MOV @HEADLIGHT 1
-loop: CALL SCAN @HEADING
-      MOV r0 @RADAR_HIT
-      MOV r1 @RADAR_DIST
-      JEQ r0 NONE go
-      JGT r1 1 go
-      ADD @HEADING 1
-      JMP loop
-go:   CALL STEP @HEADING 1
-      JEQ @STATUS OK loop
-      ADD @HEADING 1
-      JLT @BAT 20 rest
-      JMP loop
-rest: MOV @HEADLIGHT 0
-      CALL SLEEP 200`;
+    const prog = `START:  MOV  #1, @#LIGHT
+1$:     MOV  @#HDG, R0
+        JSR  PC, SCAN
+        MOV  @#RADHIT, R2
+        BEQ  2$                 ; nothing in range: go
+        CMP  @#RADDST, #1
+        BGT  2$                 ; far away: go
+        INC  @#HDG
+        BR   1$
+2$:     MOV  @#HDG, R0
+        MOV  #1, R1
+        JSR  PC, STEP
+        TST  R0
+        BEQ  1$
+        INC  @#HDG
+        CMP  @#BAT, #20.
+        BGE  1$
+        CLR  @#LIGHT
+        MOV  #200., R0
+        JSR  PC, SLEEP
+        BR   1$`;
     const make = () => {
       const e = new SimulationEngine({ seed: 99 });
       const u = e.spawnUnit('r');

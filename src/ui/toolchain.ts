@@ -1,27 +1,22 @@
 /**
- * M15 slice 5: what the Code tab, Comms and the debugger need to know about the rover's
- * computer, for both cores: the editor language, assembling a slot, templates, region sizes,
- * the listing and the address format. Rover-ASM goes until slice 6; then only the PDP-11 half
- * stays. No DOM.
+ * What the Code tab, Comms and the debugger need to know about the rover's computer: the
+ * editor language, assembling a slot, templates, region sizes, the listing and the address
+ * format. No DOM.
  */
 import type { Extension } from '@codemirror/state';
-import { PDP11 } from '../core/balance';
+import { BLUE11 } from '../core/balance';
 import type { ImageResult } from '../core/machine/RoverMachine';
 import { FIRMWARE_TEMPLATES, PROGRAM_TEMPLATES } from '../core/programs';
-import { PDP_FIRMWARE_TEMPLATES, PDP_PROGRAM_TEMPLATES } from '../core/programs-pdp11';
-import type { SimulationEngine } from '../core/SimulationEngine';
+import type { SimulationEngine, Slot } from '../core/SimulationEngine';
 import type { Unit } from '../core/Unit';
-import { runsProgram, snapsWithoutSend, type CompileResult, type Slot } from '../core/vm/Compiler';
-import { formatAddr } from '../core/vm/isa';
-import { macro11, macro11Highlight } from '../pdp11/codemirror';
-import { roverAsm, roverAsmHighlight } from './roverAsmLanguage';
+import { blue11Asm, blue11Highlight } from '../blue11/codemirror';
 
 export interface Diag {
   line: number;
   message: string;
 }
 
-/** A slot's source assembled for the rover (either core). */
+/** A slot's source assembled for the rover. */
 export interface SlotBuild {
   ok: boolean;
   errors: Diag[];
@@ -30,10 +25,8 @@ export interface SlotBuild {
   bytes: number;
   /** Source line of the instruction at an address (0 if none). */
   lineAt: (addr: number) => number;
-  /** Rover-ASM only: the compiler's result. */
-  rasm?: CompileResult;
-  /** PDP-11 only: the assembler's result. */
-  pdp?: ImageResult;
+  /** The assembler's result. */
+  result: ImageResult;
 }
 
 /** One row of the listing pane. */
@@ -52,16 +45,15 @@ export interface ListingRowView {
 export const oct6 = (v: number): string => (v & 0xffff).toString(8).padStart(6, '0');
 
 /** The program's core region ends below its first stack word (its return address). */
-export const pdpRegions = (u: Unit): { fw: number; prog: number } => ({
-  fw: PDP11.programBase - PDP11.firmwareBase,
-  prog: (u.machine?.coreBytes ?? PDP11.coreBytes) - 2 - PDP11.programBase,
+export const coreRegions = (u: Unit): { fw: number; prog: number } => ({
+  fw: BLUE11.programBase - BLUE11.firmwareBase,
+  prog: u.machine.coreBytes - 2 - BLUE11.programBase,
 });
 
 const stripComments = (src: string): string => src.replace(/;[^\n]*/g, '');
 const usesName = (src: string, re: RegExp): boolean => re.test(stripComments(src));
 
 export interface Toolchain {
-  readonly pdp: boolean;
   readonly language: Extension[];
   build(u: Unit, source: string, slot: Slot): SlotBuild;
   templates(slot: Slot): Record<string, string>;
@@ -73,27 +65,7 @@ export interface Toolchain {
   snapsWithoutSend(b: SlotBuild | null, other: SlotBuild | null): boolean;
 }
 
-// ---------------------------------------------------------------- Rover-ASM
-
-function rasmBuild(e: SimulationEngine, u: Unit, source: string, slot: Slot): SlotBuild {
-  const r = e.compileFor(u, source, slot);
-  const p = r.program;
-  return {
-    ok: !!p,
-    errors: r.errors,
-    warnings: [],
-    bytes: r.flashUsed,
-    lineAt: (addr) => {
-      const k = p?.indexAt.get(addr);
-      return k === undefined ? 0 : p!.instrs[k].line;
-    },
-    rasm: r,
-  };
-}
-
-// ---------------------------------------------------------------- PDP-11
-
-function pdpBuild(e: SimulationEngine, u: Unit, source: string, slot: Slot): SlotBuild {
+function buildSlot(e: SimulationEngine, u: Unit, source: string, slot: Slot): SlotBuild {
   const r = e.assembleFor(u, source, slot);
   const lines = r.asm.lineAt;
   return {
@@ -102,16 +74,16 @@ function pdpBuild(e: SimulationEngine, u: Unit, source: string, slot: Slot): Slo
     warnings: r.asm.warnings.map((x) => ({ line: x.line, message: x.message })),
     bytes: r.asm.bytes.length,
     lineAt: (addr) => lines.get(addr) ?? 0,
-    pdp: r,
+    result: r,
   };
 }
 
 /**
- * The MACRO-11 listing, row by row: `addr  words  source` in fixed columns (address 0–5,
- * words from 8, source from 30), as `src/pdp11/assembler.ts` writes it.
+ * The assembler's listing, row by row: `addr  words  source` in fixed columns (address 0–5,
+ * words from 8, source from 30), as `src/blue11/assembler.ts` writes it.
  */
-export function pdpListing(b: SlotBuild): ListingRowView[] {
-  const asm = b.pdp!.asm;
+export function listingRows(b: SlotBuild): ListingRowView[] {
+  const asm = b.result.asm;
   const errs = new Map<number, string>();
   for (const e of b.errors) if (!errs.has(e.line)) errs.set(e.line, e.message);
   const codeLines = new Set(asm.lines.filter((l) => l.code).map((l) => l.line));
@@ -129,31 +101,19 @@ export function pdpListing(b: SlotBuild): ListingRowView[] {
 }
 
 export function toolchain(e: SimulationEngine): Toolchain {
-  if (e.pdp11) {
-    return {
-      pdp: true,
-      language: [macro11, macro11Highlight],
-      build: (u, src, slot) => pdpBuild(e, u, src, slot),
-      templates: (slot) => (slot === 'program' ? PDP_PROGRAM_TEMPLATES : PDP_FIRMWARE_TEMPLATES),
-      addr: (a) => oct6(a),
-      // The gate: `PRGCS` (GO) directly or the ROM's RUN driver.
-      runsProgram: (b) => !!b.pdp && usesName(b.pdp.image?.source ?? '', /\b(RUN|PRGCS)\b/i),
-      snapsWithoutSend: (b, other) => {
-        const src = (x: SlotBuild | null) => (x?.pdp?.image?.source ? stripComments(x.pdp.image.source) : '');
-        const a = src(b);
-        if (!/\bSNAP\b/i.test(a)) return false;
-        return !/\b(SNDIMG|RECBUF)\b/i.test(a + src(other));
-      },
-    };
-  }
   return {
-    pdp: false,
-    language: [roverAsm, roverAsmHighlight],
-    build: (u, src, slot) => rasmBuild(e, u, src, slot),
+    language: [blue11Asm, blue11Highlight],
+    build: (u, src, slot) => buildSlot(e, u, src, slot),
     templates: (slot) => (slot === 'program' ? PROGRAM_TEMPLATES : FIRMWARE_TEMPLATES),
-    addr: (a, slot) => formatAddr(a, slot),
-    runsProgram: (b) => runsProgram(b.rasm),
-    snapsWithoutSend: (b, other) => snapsWithoutSend(b?.rasm ?? null, other?.rasm ?? null),
+    addr: (a) => oct6(a),
+    // The gate: `PRGCS` (GO) directly or the ROM's RUN driver.
+    runsProgram: (b) => usesName(b.result.image?.source ?? '', /\b(RUN|PRGCS)\b/i),
+    snapsWithoutSend: (b, other) => {
+      const src = (x: SlotBuild | null) => (x?.result.image?.source ? stripComments(x.result.image.source) : '');
+      const a = src(b);
+      if (!/\bSNAP\b/i.test(a)) return false;
+      return !/\b(SNDIMG|RECBUF)\b/i.test(a + src(other));
+    },
   };
 }
 

@@ -1,21 +1,21 @@
 /**
- * M15 Rover's side of the PDP-11 core (docs/PDP11_CPU.md §6–§8, §14.1): the bus (core,
+ * M15 Rover's side of the Blue-11 (docs/BLUE11_CPU.md §6–§8, §14.1): the bus (core,
  * image memory, ROM, I/O page), write protection, the two contexts and the gate, when
  * interrupts arrive, and program faults leaving through the gate. The CPU itself is the
- * standalone library in src/pdp11/; nothing here changes how it executes.
+ * standalone library in src/blue11/; nothing here changes how it executes.
  *
  * Contexts: the gate (`MOV #GO, @#PRGCS`) swaps the whole register set, PC and PSW (two
  * saved CPU states). An interrupt or `TRAP` during the program swaps only the stack
- * pointer, as the PDP-11/45's kernel and user SPs: the firmware's handler runs on the
+ * pointer, as the original /45 model's kernel and user SPs: the firmware's handler runs on the
  * program's R0–R5 (saving what it uses) and on the firmware's stack, and its `RTI` back
  * into program mode restores the program's SP.
  */
 
-import { BUS_ERROR, Cpu, PSW_ADDRESS, assemble, type AssembleResult, type Bus, type CpuState as Pdp11State, type TrapInfo } from '../../pdp11';
-import { PDP11 } from '../balance';
+import { BUS_ERROR, Cpu, PSW_ADDRESS, assemble, type AssembleResult, type Bus, type CpuState as Blue11State, type TrapInfo } from '../../blue11';
+import { BLUE11 } from '../balance';
 import { TX_BOOT } from '../downlink';
 import { freshParser, parseStream, type ParserState } from '../messages';
-import type { PortContext } from '../ports';
+
 import { ProgState } from '../types';
 import type { Capture, Unit } from '../Unit';
 import type { WorldRegistry } from '../WorldRegistry';
@@ -36,6 +36,7 @@ import {
   Why,
   type DevKey,
   IO_REGISTERS,
+  type IoContext,
   type IoHost,
   type IoRegister,
   type IoState,
@@ -61,10 +62,10 @@ export interface ImageResult {
   errors: Array<{ line: number; column: number; message: string }>;
 }
 
-/** Assemble a slot's source for its place in core (PDP11_CPU.md §6). */
-export function assembleImage(source: string, slot: MachineSlot, registry: WorldRegistry, coreBytes = PDP11.coreBytes): ImageResult {
-  const origin = slot === 'firmware' ? PDP11.firmwareBase : PDP11.programBase;
-  const limit = slot === 'firmware' ? PDP11.programBase : coreBytes - 2; // the program's first stack word: its return address
+/** Assemble a slot's source for its place in core (BLUE11_CPU.md §6). */
+export function assembleImage(source: string, slot: MachineSlot, registry: WorldRegistry, coreBytes = BLUE11.coreBytes): ImageResult {
+  const origin = slot === 'firmware' ? BLUE11.firmwareBase : BLUE11.programBase;
+  const limit = slot === 'firmware' ? BLUE11.programBase : coreBytes - 2; // the program's first stack word: its return address
   const asm = assemble(source, { origin, symbols: predefinedSymbols(registry), names: 'dec' });
   const errors = [...asm.errors];
   if (asm.ok && asm.bytes.length) {
@@ -85,7 +86,7 @@ export function assembleImage(source: string, slot: MachineSlot, registry: World
 
 /** What the machine asks of the engine. */
 export interface MachineHost {
-  readonly ctx: PortContext;
+  readonly ctx: IoContext;
   /** Hard reboot (the `REBOOT` register, after the instruction). */
   reboot(u: Unit, reason: number, why: string): void;
   /** `HALT` (or a double fault) in the firmware: the whole CPU stops. */
@@ -99,9 +100,9 @@ export interface MachineHost {
 /** Saved machine state (SaveManager). */
 export interface MachineSave {
   core: string;
-  cpu: Pdp11State;
-  fw: Pdp11State | null;
-  prog: Pdp11State;
+  cpu: Blue11State;
+  fw: Blue11State | null;
+  prog: Blue11State;
   bank: 'fw' | 'prog';
   progSp: number;
   progLimit: number;
@@ -144,9 +145,9 @@ export class RoverMachine implements Bus {
   firmware: MachineImage | null = null;
   program: MachineImage | null = null;
   /** The firmware's state while the program has control (saved at the gate). */
-  private fw: Pdp11State | null = null;
+  private fw: Blue11State | null = null;
   /** The program's state while the firmware has control. */
-  private prog: Pdp11State;
+  private prog: Blue11State;
   /** Whose registers the CPU holds. In program time, 'fw' means a firmware handler runs. */
   private bank: 'fw' | 'prog' = 'fw';
   /** The program's SP and stack limit while a firmware handler runs in its time. */
@@ -173,7 +174,7 @@ export class RoverMachine implements Bus {
   constructor(
     readonly u: Unit,
     private readonly mh: MachineHost,
-    readonly coreBytes = PDP11.coreBytes,
+    readonly coreBytes = BLUE11.coreBytes,
   ) {
     this.core = new Uint8Array(coreBytes);
     this.cpu = new Cpu(this, { eis: false, cycles: 'per-bus-access', protectModes: true });
@@ -215,8 +216,8 @@ export class RoverMachine implements Bus {
   private readMemory(addr: number): number {
     if (addr < this.core.length) return this.core[addr] | (this.core[addr + 1] << 8);
     const img = this.u.imageMemory();
-    if (addr >= PDP11.imageBase && addr < PDP11.imageBase + img.length) return img[addr - PDP11.imageBase] | (img[addr - PDP11.imageBase + 1] << 8);
-    if (addr >= PDP11.romBase && addr < PDP11.romBase + ROM_BYTES.length) return ROM_BYTES[addr - PDP11.romBase] | ((ROM_BYTES[addr - PDP11.romBase + 1] ?? 0) << 8);
+    if (addr >= BLUE11.imageBase && addr < BLUE11.imageBase + img.length) return img[addr - BLUE11.imageBase] | (img[addr - BLUE11.imageBase + 1] << 8);
+    if (addr >= BLUE11.romBase && addr < BLUE11.romBase + ROM_BYTES.length) return ROM_BYTES[addr - BLUE11.romBase] | ((ROM_BYTES[addr - BLUE11.romBase + 1] ?? 0) << 8);
     if (addr >= CARGO_BASE && addr < CARGO_BASE + CARGO_BYTES) return ((this.u.cargo[addr - CARGO_BASE] ?? 0) & 0xff) | (((this.u.cargo[addr - CARGO_BASE + 1] ?? 0) & 0xff) << 8);
     return BUS_ERROR;
   }
@@ -224,12 +225,12 @@ export class RoverMachine implements Bus {
   read(addr: number, byte: boolean): number {
     if (addr < this.core.length) return byte ? this.core[addr] : this.core[addr] | (this.core[addr + 1] << 8);
     const img = this.u.imageMemory();
-    if (addr >= PDP11.imageBase && addr < PDP11.imageBase + img.length) {
-      const a = addr - PDP11.imageBase;
+    if (addr >= BLUE11.imageBase && addr < BLUE11.imageBase + img.length) {
+      const a = addr - BLUE11.imageBase;
       return byte ? img[a] : img[a] | (img[a + 1] << 8);
     }
-    if (addr >= PDP11.romBase && addr < PDP11.romBase + ROM_BYTES.length) {
-      const a = addr - PDP11.romBase;
+    if (addr >= BLUE11.romBase && addr < BLUE11.romBase + ROM_BYTES.length) {
+      const a = addr - BLUE11.romBase;
       return byte ? ROM_BYTES[a] : ROM_BYTES[a] | ((ROM_BYTES[a + 1] ?? 0) << 8);
     }
     if (addr >= CARGO_BASE && addr < CARGO_BASE + CARGO_BYTES) {
@@ -237,7 +238,7 @@ export class RoverMachine implements Bus {
       const i = addr - CARGO_BASE;
       return byte ? slot(i) : slot(i) | (slot(i + 1) << 8);
     }
-    const r = addr >= PDP11.ioBase ? ioRegister(addr) : undefined;
+    const r = addr >= BLUE11.ioBase ? ioRegister(addr) : undefined;
     if (!r) {
       this.busFault = 'nxm';
       return BUS_ERROR;
@@ -249,22 +250,21 @@ export class RoverMachine implements Bus {
   write(addr: number, value: number, byte: boolean): boolean {
     const program = this.bank === 'prog';
     if (addr < this.core.length) {
-      if (program && addr < PDP11.programBase) return this.refuse('pro');
+      if (program && addr < BLUE11.programBase) return this.refuse('pro');
       this.core[addr] = value & 0xff;
       if (!byte) this.core[addr + 1] = (value >> 8) & 0xff;
       return true;
     }
     const img = this.u.imageMemory();
-    if (addr >= PDP11.imageBase && addr < PDP11.imageBase + img.length) {
-      const a = addr - PDP11.imageBase;
+    if (addr >= BLUE11.imageBase && addr < BLUE11.imageBase + img.length) {
+      const a = addr - BLUE11.imageBase;
       img[a] = value & 0xff;
       if (!byte) img[a + 1] = (value >> 8) & 0xff;
-      this.u.imgEdited = true;
       return true;
     }
-    if (addr >= PDP11.romBase && addr < PDP11.romBase + ROM_BYTES.length) return this.refuse('pro');
+    if (addr >= BLUE11.romBase && addr < BLUE11.romBase + ROM_BYTES.length) return this.refuse('pro');
     if (addr >= CARGO_BASE && addr < CARGO_BASE + CARGO_BYTES) return true; // read-only: ignored
-    const r = addr >= PDP11.ioBase ? ioRegister(addr) : undefined;
+    const r = addr >= BLUE11.ioBase ? ioRegister(addr) : undefined;
     if (!r) return this.refuse('nxm');
     if (r.access === 'FW' && program) return this.refuse('pro');
     if (byte && addr & 1) return true; // the high byte of these registers takes no writes
@@ -278,7 +278,7 @@ export class RoverMachine implements Bus {
     const keepPrg = this.io.prg;
     this.io = freshIo();
     this.io.prg = keepPrg;
-    this.io.tx.ready = this.u.link.txFree(PDP11.txFifoBytes) > 0;
+    this.io.tx.ready = this.u.link.txFree(BLUE11.txFifoBytes) > 0;
     if (this.u.action?.kind === 'STEP') this.host.ctx.device(this.u, 'DRIVE_N', 0);
     this.u.driveN = 0;
   }
@@ -315,11 +315,11 @@ export class RoverMachine implements Bus {
     this.u.link.rec.push(TX_BOOT); // a message being written into the recorder stays incomplete
     parseStream(this.u.recParser, [TX_BOOT], this.u.id, 0);
     this.u.link.txLost = 0;
-    this.io.tx.ready = this.u.link.txFree(PDP11.txFifoBytes) > 0;
+    this.io.tx.ready = this.u.link.txFree(BLUE11.txFifoBytes) > 0;
     this.cpu.reset();
     this.cpu.r[7] = ROM_ENTRY.BOOT;
     this.cpu.psw = 0o340;
-    this.cpu.stackLimit = this.firmware?.end ?? PDP11.firmwareBase;
+    this.cpu.stackLimit = this.firmware?.end ?? BLUE11.firmwareBase;
     this.fw = null;
     this.bank = 'fw';
     this.gatePending = false;
@@ -332,7 +332,7 @@ export class RoverMachine implements Bus {
 
   /** The program image into core (upload, reboot). Its old memory is overwritten. */
   loadProgramImage(): void {
-    this.core.fill(0, PDP11.programBase);
+    this.core.fill(0, BLUE11.programBase);
     if (this.program) this.core.set(this.program.bytes, this.program.origin);
   }
 
@@ -341,14 +341,14 @@ export class RoverMachine implements Bus {
   }
 
   /** A fresh program context: entry point, SP at the top of core with the ROM's EXIT as return address. */
-  private freshProgram(): Pdp11State {
+  private freshProgram(): Blue11State {
     const top = this.coreBytes;
     return {
-      r: [0, 0, 0, 0, 0, 0, top - 2, this.program?.start ?? PDP11.programBase],
+      r: [0, 0, 0, 0, 0, 0, top - 2, this.program?.start ?? BLUE11.programBase],
       psw: PROGRAM_PSW,
       waiting: false,
       halted: false,
-      stackLimit: this.program?.end ?? PDP11.programBase,
+      stackLimit: this.program?.end ?? BLUE11.programBase,
       pending: [],
     };
   }
@@ -526,7 +526,7 @@ export class RoverMachine implements Bus {
         if (l.ie) this.cpu.interrupt(b.vector, DEVICE_LEVEL);
       } else l.done = done;
     }
-    const ready = this.u.link.txFree(PDP11.txFifoBytes) > 0;
+    const ready = this.u.link.txFree(BLUE11.txFifoBytes) > 0;
     if (ready && !io.tx.ready && io.tx.ie) this.cpu.interrupt(TX_VECTOR, DEVICE_LEVEL);
     io.tx.ready = ready;
     if (this.exitPending && this.bank === 'prog') this.exit(this.exitPending.state, this.exitPending.why);
@@ -608,7 +608,7 @@ export class RoverMachine implements Bus {
    */
   stackWords(slot: MachineSlot, max: number): { sp: number; words: number[] } {
     const sp = this.registers(slot).r[6] & 0xfffe;
-    const base = slot === 'program' ? this.coreBytes : PDP11.programBase;
+    const base = slot === 'program' ? this.coreBytes : BLUE11.programBase;
     const words: number[] = [];
     const end = Math.min(base, this.coreBytes);
     for (let a = sp; a + 2 <= end && words.length < max; a += 2) words.push(this.core[a] | (this.core[a + 1] << 8));
@@ -621,7 +621,7 @@ export class RoverMachine implements Bus {
    */
   peek(addr: number): number | null {
     addr &= 0xfffe;
-    if (addr >= PDP11.ioBase) return null;
+    if (addr >= BLUE11.ioBase) return null;
     const v = this.readMemory(addr);
     return v === BUS_ERROR ? null : v;
   }

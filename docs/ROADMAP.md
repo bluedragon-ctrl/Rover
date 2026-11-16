@@ -25,31 +25,31 @@ Spec: [`SPEC.md`](SPEC.md) · Workflow: [`../CLAUDE.md`](../CLAUDE.md)
 | M11 | User interface review (after M10) | 🚧 Comms tab, Code tab dump box, Reference → Radio, Mission events: default since 2026-11-13 (save v13); `BRK` reports itself |
 | M12 | Image memory: `SNAP` → `LDB` / `STB` → `SEND` (SPEC §3.8.7, guide [`IMAGE_MEMORY.md`](IMAGE_MEMORY.md)) | ✅ done (bit instructions; image memory in the core, save v14; templates, Reference → Image, Gallery labels + hex view, `SNAP` warning; goal *Darkroom* + first-edit bonus per camera mode, save v15) |
 | **M14** | **Assembler core**: hardware through device ports + `WAIT`, ROM library, RAM / `VAR` / addressing modes / `DATA`, program called like a subroutine (design [`ASSEMBLER_CORE.md`](ASSEMBLER_CORE.md)) | 🚧 design approved; slices 2 (memory model, save v17) and 3 (devices, `WAIT`, ROM, `CALL PROGRAM`, save v18) done; slice 4 (lessons, Reference *CPU* / *Devices* / *Memory map*) in review; **frozen** (2026-11-15): the boot ROM with safe mode moves into M15's ROM |
-| **M15** | **PDP-11 core**: Rover-ASM replaced by a PDP-11-style 16-bit CPU and a MACRO-11 subset (octal, eight addressing modes, flags, traps, interrupts), devices as DEC-style registers in the I/O page; saves reset (design [`PDP11_CPU.md`](PDP11_CPU.md), [`PDP11_IO.md`](PDP11_IO.md)) | 🚧 design approved (owner answers 2026-11-15); slices 2 (standalone library `src/pdp11/` + simulator page `simulator.html`) and 3 (Rover's bus, I/O page, gate, interrupts, `TX` output, save v19) done; slice 4 done: ROM drivers and helpers, recorder registers + `SNDIMG`, safe mode, default firmware and every lesson in MACRO-11, cycle budget measured and set to 64, link and recorder ×2, save v20; slice 5 (UI) in review: a PDP-11 world from **Admin → New PDP-11 world** or `?cpu=pdp11`, the default game is unchanged |
+| **M15** | **Blue-11**: Rover-ASM replaced by the Blue-11, a 16-bit CPU that implements a classic DEC instruction set, programmed in Blue-11 assembly (octal, eight addressing modes, flags, traps, interrupts), devices as DEC-style registers in the I/O page; saves reset (design [`BLUE11_CPU.md`](BLUE11_CPU.md), [`BLUE11_IO.md`](BLUE11_IO.md)) | ✅ done: library `src/blue11/` + simulator page (slice 2), Rover's bus, I/O page, gate, interrupts (3), ROM, default firmware and lessons, budget 64 (4), UI (5); **slice 6: the only core, Rover-ASM deleted, saves reset (v21), little-endian photos, SPEC v2.0, renamed Blue-11** |
 | M13 | Realism pass 1: watchdog `@WDT`, thermal model + array dust, fault protection `@PREEMPT` (SPEC §3.3.4, §3.9.2, §3.9.5) | 🚧 core, default firmware, *Fault protection* template, Reference, save v16 done; in review (balance numbers to playtest) |
 
-## M15 — PDP-11 core (in progress)
+## M15 — Blue-11 (done)
 
 Owner, 2026-11-15: after many tuning steps, rewrite the language, VM and control layer
 from scratch instead of growing Rover-ASM further; the visuals and console look stay.
-Target a PDP-11-style ISA for its "simpleness, readability and elegance" (RISC-V, MIPS,
+Target a classic DEC-style 16-bit ISA for its "simpleness, readability and elegance" (RISC-V, MIPS,
 x86 and older machines were discussed). Decisions: saves reset; a simplified call gate
 between firmware and program; cycles charged per bus access (to confirm); octal; multiply
 and divide as ROM subroutines with hardware `MUL` / `DIV` as the EIS upgrade; interrupts
 (line clock every tick, device interrupts); 64 KB addressable but only a small core
 installed at first (Mk-I 2 KB, memory boards add more); the CPU and assembler as a
-standalone library `src/pdp11/` that other projects could reuse; two design documents:
+standalone library `src/blue11/` that other projects could reuse; two design documents:
 
-* [`PDP11_CPU.md`](PDP11_CPU.md): machine, MACRO-11 subset, addressing modes, cycles,
+* [`BLUE11_CPU.md`](BLUE11_CPU.md): machine, Blue-11 assembly (a subset of the original assembler), addressing modes, cycles,
   flags, memory map, contexts and the gate, traps, interrupts (CPU side), `MUL16` /
-  `DIV16`, EIS, ROM, departures from the real PDP-11, what happens to today's features,
+  `DIV16`, EIS, ROM, departures from the original machine, what happens to today's features,
   the library boundary (§14), plan, open questions.
-* [`PDP11_IO.md`](PDP11_IO.md): the DEC device CSR (`GO` / `FN` / `IE` / `DONE` / `ERR`),
+* [`BLUE11_IO.md`](BLUE11_IO.md): the DEC device CSR (`GO` / `FN` / `IE` / `DONE` / `ERR`),
   the register map of the I/O page, 16-bit fixes (`TICKL` / `TICKH`, signed `X` / `Y`,
   no `@TIMER`), device interrupts and vectors, ROM drivers, examples, an audit of every
   current port.
 
-Owner answers, second round (2026-11-15, `PDP11_CPU.md` §0 decisions 12–19): cycles per
+Owner answers, second round (2026-11-15, `BLUE11_CPU.md` §0 decisions 12–19): cycles per
 bus access confirmed; `PRGBAS` fixed per chassis; images reloaded on a hard reboot;
 program interrupt handlers firmware-only in v1; `TRAP n` is a system call served by the
 firmware; **DEC six-character names** (longer is an error; the I/O page names must be
@@ -58,24 +58,24 @@ built together with the library. Then: short names DEC style (`E.BLK`, `SOLHLT`)
 approved; cycle budget and core sizes start from the draft / slice 4 measurement and are
 tuned later. Owner note for slice 3: **standard output as framed messages** (start / end
 codes, a type per message: text, error codes, science data…), sketched in
-[`PDP11_IO.md`](PDP11_IO.md) §3.5a.
+[`BLUE11_IO.md`](BLUE11_IO.md) §3.5a.
 
 - [x] Slice 1: owner review of both drafts (open questions at the end of each).
-- [x] Slice 2: CPU, assembler, disassembler as the standalone library `src/pdp11/`
+- [x] Slice 2: CPU, assembler, disassembler as the standalone library `src/blue11/`
       (no imports from the game, enforced by a test), with tests.
-      Built: `cpu.ts` (PDP-11/40 set + EIS option, eight modes, flags, traps, interrupts,
+      Built: `cpu.ts` (original /40 model set + EIS option, eight modes, flags, traps, interrupts,
       `WAIT`, trace bit, stack limit, PSW at `177776`, cycle models), `assembler.ts`
-      (MACRO-11 subset, two passes, local labels, listing, line map, errors as values),
+      (Blue-11 assembly (a subset of the original assembler), two passes, local labels, listing, line map, errors as values),
       `disassembler.ts`, `machine.ts` (`SimpleMachine`: RAM + DL11 console + KW11-L
       clock, deterministic), `codemirror.ts` (optional), `README.md`. Tests in
-      `tests/pdp11/` (78): flags, modes, the §4 cycle table, the §3.5 listing, the §9
+      `tests/blue11/` (78): flags, modes, the §4 cycle table, the §3.5 listing, the §9
       `MUL16` / `DIV16` routines, round trip of every instruction through the
       disassembler, save/load, the boundary test (no imports from the game, no DOM /
       randomness / clock). Simulator page `simulator.html` (`src/simulator/`): editor
       with errors and breakpoints, registers / NZVC / PSW, memory with PC / SP, console
       with keyboard input, listing; seven example programs, each run by a test.
-- [x] Slice 3 (in review): Rover's side of the library (`src/core/machine/`, design notes
-      `PDP11_CPU.md` §14.4, `PDP11_IO.md` §11), behind `new SimulationEngine({ cpu: 'pdp11' })`.
+- [x] Slice 3: Rover's side of the library (`src/core/machine/`, design notes
+      `BLUE11_CPU.md` §14.4, `BLUE11_IO.md` §11), behind an engine option (gone since slice 6).
   - [x] Six-character names: tiles got `shortName` (`IRON`, `SILIC`, …); every predefined
         symbol checked by a test (`symbols.ts`).
   - [x] I/O page over the unchanged device logic (`iopage.ts`): telemetry, actuators, the six
@@ -88,60 +88,78 @@ codes, a type per message: text, error codes, science data…), sketched in
         `RTS PC` / `SLICE` / `PREMPT` / faults (`PRGER`, `PRGPC`) / `BPT`; `TRAP n` system
         call; interrupts at tick starts (line clock, devices, `TX`), handlers in the
         program's time on the firmware's SP.
-  - [x] Library option `protectModes` (PDP-11/45 user-mode rules) so a program can't
+  - [x] Library option `protectModes` (original /45 model user-mode rules) so a program can't
         leave program mode.
   - [x] Framed output: the `TX` device (64 B FIFO, `TXLOST`, reboot marker), ground parser
         (`messages.ts`: ok / broken / incomplete), `engine.messages`.
   - [x] Save v19 (machine state, TX FIFO, messages, parsers); tests in
-        `tests/pdp-core.test.ts` (30): devices, gate, faults, protection, system calls,
+        `tests/blue11-core.test.ts` (30): devices, gate, faults, protection, system calls,
         output, determinism, round trips mid-run and mid-handler.
   - Moved to slice 4: recorder registers (`RECCS` / `RECBUF`) with `SNDIMG`.
-- [x] Owner decision (2026-11-15): **photos at double resolution** on the PDP-11 core
-      (`PDP11_CPU.md` §6.3): `PHOTO_FORMATS_2X` and the review page `preview.html?photos2x=1`
-      built; link 4 B/tick and recorder 2 KB approved and built on the PDP-11 core; in the game with slice 6.
+- [x] Owner decision (2026-11-15): **photos at double resolution** on the Blue-11
+      (`BLUE11_CPU.md` §6.3): `PHOTO_FORMATS_2X` and the review page `preview.html?photos2x=1`
+      built; link 4 B/tick and recorder 2 KB approved and built on the Blue-11; in the game with slice 6.
 - [x] Slice 4: ROM, default firmware, lessons; cycle budget measured
-      (`PDP11_CPU.md` §10, §14.5; `PDP11_IO.md` §12; decisions there, owner may veto).
-  - [x] ROM in MACRO-11 (`src/core/machine/rom.ts`): drivers `STEP SCAN SLEEP ACT USE SNAP
+      (`BLUE11_CPU.md` §10, §14.5; `BLUE11_IO.md` §12; decisions there, owner may veto).
+  - [x] ROM in the original assembler (`src/core/machine/rom.ts`): drivers `STEP SCAN SLEEP ACT USE SNAP
         SEND ERASE RUN LOG PUTMSG SNDIMG`, helpers `MUL16 DIV16 ABS DIRTO PLOT`; their
         addresses are predefined symbols (`JSR PC, STEP`); system names moved to `names.ts`.
   - [x] Recorder registers `RECCS` / `RECBUF` / `RECFRE`; `SNDIMG` frames a photo as `T.IMG`
         messages, ground reassembles it into the Gallery; `F.SEND` retired, `IMGSIZ` new.
-  - [x] Photos at double resolution on the PDP-11 engine (64×64 base, image memory 1 KB on
+  - [x] Photos at double resolution on the Blue-11 engine (64×64 base, image memory 1 KB on
         Mk-I); image lessons and `PLOT` written for them.
   - [x] Safe mode in the boot ROM: `BOOTCS` (reason, latched `SAFE`), `BOOTCT`; built-in
         safe firmware; a firmware upload ends it.
   - [x] Default firmware (326 B): line-clock housekeeping, `RUN` slices, watchdog, fault
         protection (the *Fault protection* template merges into it); *Minimal* firmware
         lesson; the three all-in-one firmwares; all 13 program lessons and 6 image lessons
-        in `src/core/programs-pdp11.ts`, each assembled and run by a test (Rover-ASM
+        in `src/core/programs.ts`, each assembled and run by a test (Rover-ASM
         versions kept in `programs.ts`). Largest lesson 116 B of the 1 KB program region.
   - [x] Cycle budget measured (`RoverMachine.meter`): idle firmware 24 cycles a tick of 48;
-        **proposal: Mk-I 64** (`PDP11.cyclesPerRoverCycle` 8), not changed in `balance.ts`.
+        **proposal: Mk-I 64** (`BLUE11.cyclesPerRoverCycle` 8), not changed in `balance.ts`.
   - [x] Save v20 (recorder stream, photo assembly, boot status); 48 new tests.
-  - [x] Owner decisions after review (2026-11-15): budget **Mk-I 64** (`PDP11.cyclesPerRoverCycle`
-        8; overclock 96 / 128); link and recorder ×2 on the PDP-11 core (`PDP11.linkScale`,
+  - [x] Owner decisions after review (2026-11-15): budget **Mk-I 64** (`BLUE11.cyclesPerRoverCycle`
+        8; overclock 96 / 128); link and recorder ×2 on the Blue-11 (`BLUE11.linkScale`,
         `recorderScale`: Mk-I 4 B/tick, 2 KB; upgrades 6 B/tick, 4 / 8 KB).
-- [x] Slice 5 (in review): UI for the PDP-11 core (`PDP11_CPU.md` §14.6). A world with the PDP-11
-      core starts from **Admin → New PDP-11 world** (or `?cpu=pdp11`); saves remember their computer.
+- [x] Slice 5: UI for the Blue-11 (`BLUE11_CPU.md` §14.6). A world with the Blue-11
+      core starts from **Admin → New Blue-11 world** (or `?cpu=… (gone since slice 6)`); saves remember their computer.
       The default game stays Rover-ASM until slice 6.
-  - [x] Code tab through `src/ui/toolchain.ts` (one interface, both cores): MACRO-11 highlighting,
-        assembler errors and warnings in the editor, the PDP-11 templates, the two core regions
-        instead of the flash bar, the octal MACRO-11 listing, MACRO-11 hints and warnings.
+  - [x] Code tab through `src/ui/toolchain.ts` (one interface, both cores): the original assembler highlighting,
+        assembler errors and warnings in the editor, the Blue-11 templates, the two core regions
+        instead of the flash bar, the octal the original assembler listing, the original assembler hints and warnings.
   - [x] Admin debugger: `R0`–`PC` in octal (decimal on hover), `PSW` with priority, mode and
         `T N Z V C`, the next instruction disassembled (ROM routine named), the stack, the I/O
         page, cycles this tick; the current line in the editor for both contexts. Reads go
         through `RoverMachine.peek` / `ioSnapshot` (no side effects; `TICKL` would latch `TICKH`).
-  - [x] Dumps of the PDP-11 core: register dump (kinds 5 / 7: state, `PSW`, `R0`–`PC`) and stack
+  - [x] Dumps of the Blue-11: register dump (kinds 5 / 7: state, `PSW`, `R0`–`PC`) and stack
         dump (6 / 8: `SP` and up to 8 words), words low byte first; `BPT` and a firmware `HALT`
         send one by themselves. Comms and the Code tab's dump box decode them byte by byte.
   - [x] Comms shows the framed messages (`T.LOG` named from the `L.` symbols with source links,
         `T.TEXT`, `T.ERR`, the player's own types, broken / incomplete ones with their bytes);
         photo chunks show as the photo in SCI. Link box: TX FIFO, recorder, `TXLOST`.
   - [x] Gallery: photos at double resolution (`productFrame` no longer cuts them to the 1× size).
-  - [x] Reference for the PDP-11 core: Basics, Instructions (every one with flags, a test checks),
+  - [x] Reference for the Blue-11: Basics, Instructions (every one with flags, a test checks),
         Modes, Flags, I/O page, ROM (from the ROM source's comments), Symbols, Radio.
-  - [x] 21 new tests (`pdp-dumps.test.ts`, `pdp-ui.test.ts`).
-- [ ] Slice 6: switch over, delete Rover-ASM, reset saves, rewrite SPEC §5 and CLAUDE.md.
+  - [x] 21 new tests (`blue11-dumps.test.ts`, `blue11-ui.test.ts`).
+- [x] Slice 6: switch over, delete Rover-ASM, reset saves, rewrite SPEC §5 and CLAUDE.md
+      (`BLUE11_CPU.md` §14.7).
+  - [x] `new SimulationEngine()` runs the machine only; the engine's `cpu` option, its getter, the
+        `?cpu=` URL and the Admin computer switch removed; `Unit.cpu` (`CpuStatus`) for power, halts and faults.
+  - [x] Rover-ASM deleted: `src/core/vm/`, `migrateSource.ts`, the M14 ROM and templates,
+        `ports.ts` (the I/O page reads the world itself), the editor language, listing and
+        Reference, every Rover-ASM branch in the UI, dump kinds 1–4, Rover-ASM-only tests; the
+        game-rule tests ported to Blue-11 code.
+  - [x] Balance folded into the chassis (64 cycles, 2 KB recorder, 4 B/tick); upgrades
+        `CPU_96` / `CPU_128`, `REC_4K` / `REC_8K`, `LINK_6`; flash, RAM, register and trace
+        buffer upgrades removed. Memory boards and EIS: designed, not in the catalogue yet.
+  - [x] Save v21, no migrations: older saves raise `OldSaveError`, the game says so plainly
+        and starts a new world.
+  - [x] Photos little-endian (first pixel in the low bits; ROM `PLOT`).
+  - [x] Owner decision (2026-11-16): the computer is the **Blue-11**, the language **Blue-11
+        assembly**; the library folder → `src/blue11/`, design docs → `BLUE11_*.md`, every name
+        players see, the simulator page ("Blue-11 simulator"), the docs.
+  - [x] SPEC v2.0 (§2–§3.9 for the Blue-11, §5 the language), CLAUDE.md rewritten; the M12
+        image guide and the M14 design marked historical.
 
 ## M14 — Assembler core (in progress)
 
@@ -921,19 +939,20 @@ window with a fixed dish?
 | 2026-11-14 | `ccr-298af329-qtcfs9` | M14 slice 3: devices behind ports (15 ports 49–63, `WAIT` 12, `ERR_BUSY`, chassis interlock, `@DRIVE_N 0` stop), ROM library at 0xF000 (drivers, Reference → ROM listing, argument check), `CALL PROGRAM` + `@SLICE` timer interrupt, top-level `RET`; hardware instructions, `RUN`, `@TX_DATA` retired, `LDF` = 13; Mk-I 8 cycles / 16-deep data stack; save v18 with code rewrite; template *Drive yourself*; `tests/devices.test.ts`. |
 | 2026-11-14 | `ccr-298af329-qtcfs9` (2) | Owner decisions on slice 3: ROM helpers may change `r0`/`r1` → helpers `ABS`, `DIR_TO`, `PUT16`, `GET16`, `PLOT` built (ROM 330 B; Stamp / Plot templates renamed their routines `put2` / `pixel`); retired port numbers 30, 33, 34 to be reused once before the extended operand; tick-start preemption and radar timing accepted. |
 | 2026-11-14 | `claude/m14-slice4-lessons` | M14 slice 4: lesson templates *Count with a variable* and *Drive and scan at once*, the course order in the Code tab, device wording in every template header; `IMAGE_MEMORY.md` on the ROM (`SNAP` driver, *With the ROM* Stamp / Plot, tested); Reference tabs *CPU*, *Devices*, *Memory map*, Image tab fixes; `tests/reference.test.ts`. Owner review: *CPU* / *Memory map* as parts of Basics; *Image: Stamp* / *Plot* on `PUT16` / `PLOT`, hand-written versions kept in the guide. |
-| 2026-11-15 | `claude/kind-meitner-6u9fuj` | Design discussion with the owner: Rover-ASM against RISC-V, MIPS, x86 and retro CPUs; decision to rewrite the CPU layer as a PDP-11-style machine (M15). Drafts `docs/PDP11_CPU.md` (ISA, MACRO-11 subset, octal, cycles per bus access, memory map, gate, traps, interrupts, `MUL16` / `DIV16`, EIS) and `docs/PDP11_IO.md` (DEC-style device registers, I/O page map, 16-bit fixes, device interrupts, port audit); then 64 KB addressable with a small core at first (Mk-I 2 KB, memory boards, boot ROM probes the size). M14 frozen. Documentation only. |
-| 2026-11-15 | `claude/kind-meitner-6u9fuj` (2) | M15 design: owner decision 11, the CPU and assembler as a standalone, reusable library `src/pdp11/` (`PDP11_CPU.md` §14: what goes where, the gate outside the CPU, interface sketch, boundary test); plan slices 2–3 updated. Documentation only. |
-| 2026-11-15 | `ccr-3e1733dc-lef7dz` | M15 owner answers (cycles per bus access, fixed `PRGBAS`, reload on reboot, firmware-only handlers, `TRAP` as system call, DEC six-character names, little-endian photos, simulator page); slice 2: standalone library `src/pdp11/` (CPU, MACRO-11 assembler, disassembler, `SimpleMachine`, CodeMirror mode, README) with 78 tests incl. the boundary test, and the standalone simulator page `simulator.html` with seven tested examples. Game unchanged. |
-| 2026-11-15 | `ccr-3e1733dc-lef7dz` (2) | M15 owner answers: DEC-style short names approved, cycle budget and core sizes start from the draft and get tuned later; owner idea of framed standard output (one stream, start / end codes, message types) recorded for slice 3 (`PDP11_IO.md` §3.5a). Documentation only. |
-| 2026-11-15 | `ccr-3e1733dc-lef7dz` (3) | Framed standard output: owner decisions (the program frames, a reboot leaves a message incomplete); proposal for the rest after the CCSDS practice (packets with a type, real-time vs store-and-forward channels): `TX` device replacing the log registers, messages into the recorder (`SNDIMG` for photos), `SOH type len body ETX`, types, 64 B FIFO, costs (`PDP11_IO.md` §3.5a). Documentation only. |
-| 2026-11-15 | `ccr-3e1733dc-lef7dz` (4) | Owner approved the output proposal (channels, format, types, 64 B FIFO, costs); `PDP11_IO.md` §3.5 rewritten as the `TX` device + recorder registers, §3.5a moved beside it; six-character name table (`PDP11_IO.md` §10: `E.` / `F.` / `T.` / `A.` / `P.` / `PR.` families, telemetry, tiles) applied to both design documents. Documentation only. |
+| 2026-11-15 | `claude/kind-meitner-6u9fuj` | Design discussion with the owner: Rover-ASM against RISC-V, MIPS, x86 and retro CPUs; decision to rewrite the CPU layer as a PDP-11-style machine (M15). Drafts `docs/BLUE11_CPU.md` (ISA, MACRO-11 subset, octal, cycles per bus access, memory map, gate, traps, interrupts, `MUL16` / `DIV16`, EIS) and `docs/BLUE11_IO.md` (DEC-style device registers, I/O page map, 16-bit fixes, device interrupts, port audit); then 64 KB addressable with a small core at first (Mk-I 2 KB, memory boards, boot ROM probes the size). M14 frozen. Documentation only. |
+| 2026-11-15 | `claude/kind-meitner-6u9fuj` (2) | M15 design: owner decision 11, the CPU and assembler as a standalone, reusable library `src/blue11/` (`BLUE11_CPU.md` §14: what goes where, the gate outside the CPU, interface sketch, boundary test); plan slices 2–3 updated. Documentation only. |
+| 2026-11-15 | `ccr-3e1733dc-lef7dz` | M15 owner answers (cycles per bus access, fixed `PRGBAS`, reload on reboot, firmware-only handlers, `TRAP` as system call, DEC six-character names, little-endian photos, simulator page); slice 2: standalone library `src/blue11/` (CPU, MACRO-11 assembler, disassembler, `SimpleMachine`, CodeMirror mode, README) with 78 tests incl. the boundary test, and the standalone simulator page `simulator.html` with seven tested examples. Game unchanged. |
+| 2026-11-15 | `ccr-3e1733dc-lef7dz` (2) | M15 owner answers: DEC-style short names approved, cycle budget and core sizes start from the draft and get tuned later; owner idea of framed standard output (one stream, start / end codes, message types) recorded for slice 3 (`BLUE11_IO.md` §3.5a). Documentation only. |
+| 2026-11-15 | `ccr-3e1733dc-lef7dz` (3) | Framed standard output: owner decisions (the program frames, a reboot leaves a message incomplete); proposal for the rest after the CCSDS practice (packets with a type, real-time vs store-and-forward channels): `TX` device replacing the log registers, messages into the recorder (`SNDIMG` for photos), `SOH type len body ETX`, types, 64 B FIFO, costs (`BLUE11_IO.md` §3.5a). Documentation only. |
+| 2026-11-15 | `ccr-3e1733dc-lef7dz` (4) | Owner approved the output proposal (channels, format, types, 64 B FIFO, costs); `BLUE11_IO.md` §3.5 rewritten as the `TX` device + recorder registers, §3.5a moved beside it; six-character name table (`BLUE11_IO.md` §10: `E.` / `F.` / `T.` / `A.` / `P.` / `PR.` families, telemetry, tiles) applied to both design documents. Documentation only. |
 | 2026-11-15 | `claude/relaxed-keller-ff4622` | M15 slice 3: Rover's side of the PDP-11 core behind `cpu: 'pdp11'` (`src/core/machine/`): I/O page over the existing devices, six-character names (tile `shortName`), bus with protection, boot ROM, gate and program exits, `TRAP` system call, interrupts at tick starts with handlers on the firmware's SP, `REBOOT`, library option `protectModes`, `TX` device + ground message parser, save v19; 32 new tests. Game unchanged. |
-| 2026-11-15 | `claude/relaxed-keller-ff4622` (2) | Owner decision: photos at double resolution on the PDP-11 core (64×64 base, 128×128 hi-res, image window 4 KB); `PHOTO_FORMATS_2X` in the generator, review page `preview.html?photos2x=1` (today vs doubled), link / recorder scaling proposed (`PDP11_CPU.md` §6.3). Game unchanged. |
-| 2026-11-15 | `claude/m15-slice4-rom` | M15 slice 4: ROM drivers and helpers in MACRO-11 (exported as predefined symbols), recorder registers and `SNDIMG` (photos as `T.IMG` messages, reassembled by ground), 2× photos on the PDP-11 engine, safe mode (`BOOTCS` / `BOOTCT`, built-in safe firmware), default firmware (326 B: line clock, `RUN`, watchdog, fault protection) and every firmware / program / image lesson in `programs-pdp11.ts`, each run by a test; cycle budget measured, proposal Mk-I 64 (owner to decide); save v20; 48 new tests. Game unchanged. |
+| 2026-11-15 | `claude/relaxed-keller-ff4622` (2) | Owner decision: photos at double resolution on the PDP-11 core (64×64 base, 128×128 hi-res, image window 4 KB); `PHOTO_FORMATS_2X` in the generator, review page `preview.html?photos2x=1` (today vs doubled), link / recorder scaling proposed (`BLUE11_CPU.md` §6.3). Game unchanged. |
+| 2026-11-15 | `claude/m15-slice4-rom` | M15 slice 4: ROM drivers and helpers in MACRO-11 (exported as predefined symbols), recorder registers and `SNDIMG` (photos as `T.IMG` messages, reassembled by ground), 2× photos on the PDP-11 engine, safe mode (`BOOTCS` / `BOOTCT`, built-in safe firmware), default firmware (326 B: line clock, `RUN`, watchdog, fault protection) and every firmware / program / image lesson in `programs.ts`, each run by a test; cycle budget measured, proposal Mk-I 64 (owner to decide); save v20; 48 new tests. Game unchanged. |
 | 2026-11-15 | `claude/m15-balance` | M15 owner decisions after slice 4: Mk-I budget 64 cycles a tick on the PDP-11 core (overclock 96 / 128); link and recorder ×2 there (4 B/tick, 2 KB; upgrades 6 B/tick, 4 / 8 KB) through `Unit.linkBytesPerTick` / `recorderBytes`; photo review page shows the new air times. Rover-ASM game unchanged. |
 | 2026-11-16 | `claude/amazing-heisenberg-0hfxsi` | PDP-11 library fixes from an external review: odd-byte writes to `SimpleMachine` device registers are no-ops (they cleared `IE` / `DONE`), host word access at the top of RAM stays in bounds, `SOB` refuses offset 0, `WAIT` with only keyboard interrupts sleeps out the budget at once, `CLC!CLV`-style combinations assemble (disassembler round-trip), local label references highlighted; 5 new tests. Game unchanged. |
 | 2026-11-16 | `claude/amazing-heisenberg-0hfxsi` (2) | PDP-11 library, rest of the review: `DeviceMachine` + `Device` interface (`devices.ts`: RAM, CPU, memory-mapped devices with interrupts, time and `WAIT` wake-up; `DL11`, `KW11L` included) with `SimpleMachine` rebuilt on it (API unchanged), `Cpu.onInstruction` hook, opt-in `^X` hexadecimal (`hex: true`; not MACRO-11, off by default); 8 new tests. Rover's own machine unchanged. Game unchanged. |
 | 2026-11-16 | `claude/amazing-heisenberg-0hfxsi` (3) | PDP-11 assembler closer to MACRO-11: implicit `.WORD` (an expression where the instruction goes; syntactic rule so typos like `MOVV R0, R1` stay "unknown instruction"), instruction names as values (`MOV #NOP, X`), `warnings` in the result (value cut to 16 bits, symbol named like an instruction) shown in the simulator; `CLC!SEC` stays an error (deliberate deviation). Macros / conditionals / `.PSECT` deferred. 7 new tests. Game unchanged. |
-| 2026-11-16 | `claude/amazing-heisenberg-0hfxsi` (4) | PDP-11 library README rewritten as a complete reference for people and AI agents: which layer to use, conventions, full API tables (assembler options/result, CPU members, stop reasons, trap causes, `Device` contract), host recipes, pitfalls, contributor map; every code block run by `tests/pdp11/readme-examples.test.ts`, which also fails if a README block is untested. Documentation and tests only. |
-| 2026-11-16 | `claude/amazing-heisenberg-0hfxsi` (5) | Salvaged from the abandoned PR 40 (package move not taken: `PDP11_CPU.md` §14.3 keeps a folder until a second project needs it): MACRO-11 compatibility section (same / different / not supported) with its claim tests (`macro11.test.ts`), cycle table (corrected: `CLR`/`SXT` write only, `TRAP` 5) and instruction set table in the README, hosting advice, `src/pdp11/AGENTS.md` (+ `CLAUDE.md` importing it) as contributor rules; cycle examples tested. Documentation and tests only. |
+| 2026-11-16 | `claude/amazing-heisenberg-0hfxsi` (4) | PDP-11 library README rewritten as a complete reference for people and AI agents: which layer to use, conventions, full API tables (assembler options/result, CPU members, stop reasons, trap causes, `Device` contract), host recipes, pitfalls, contributor map; every code block run by `tests/blue11/readme-examples.test.ts`, which also fails if a README block is untested. Documentation and tests only. |
+| 2026-11-16 | `claude/amazing-heisenberg-0hfxsi` (5) | Salvaged from the abandoned PR 40 (package move not taken: `BLUE11_CPU.md` §14.3 keeps a folder until a second project needs it): MACRO-11 compatibility section (same / different / not supported) with its claim tests (`syntax.test.ts`), cycle table (corrected: `CLR`/`SXT` write only, `TRAP` 5) and instruction set table in the README, hosting advice, `src/blue11/AGENTS.md` (+ `CLAUDE.md` importing it) as contributor rules; cycle examples tested. Documentation and tests only. |
 | 2026-11-16 | `ccr-1e5e736c-64ollq` | M15 slice 5: UI for the PDP-11 core behind Admin → New PDP-11 world / `?cpu=pdp11`: Code tab through `ui/toolchain.ts` (MACRO-11 editor with warnings, templates, core regions, octal listing), admin debugger (octal registers, PSW / NZVC, disassembly, stack, I/O page via side-effect-free `peek` / `ioSnapshot`), PDP-11 register and stack dumps (kinds 5–8; `BPT` / `HALT` report themselves) decoded in Comms and the dump box, framed TX / recorder messages in Comms, double-resolution photos in the Gallery, Reference (Instructions, Modes, Flags, I/O page, ROM, Symbols, Radio); 21 new tests. Rover-ASM game unchanged. |
+| 2026-11-16 | `m15-slice6-blue11` | M15 slice 6, M15 complete: the Blue-11 is the only core (`cpu` option, URL and Admin switch gone; `CpuStatus` on the unit); Rover-ASM deleted (compiler, VM, ISA, migrations, M14 ROM and templates, `ports.ts`, editor language, listing, Reference, UI branches, dump kinds 1–4); balance folded into the chassis (64 cycles, 2 KB recorder, 4 B/tick), upgrades `CPU_96`/`CPU_128`, `REC_4K`/`REC_8K`, `LINK_6` (flash/RAM/register/trace upgrades removed); save v21 with `OldSaveError` and a plain message for older saves; little-endian photos (ROM `PLOT`); Reference Tools and Image tabs rewritten; owner rename to **Blue-11** / Blue-11 assembly (`src/blue11/`, `BLUE11_*.md`, simulator page, all player-visible text); SPEC v2.0 (§2–§3.9, §5 rewritten), CLAUDE.md rewritten; game-rule tests ported to Blue-11 code (`tests/helpers/rover.ts`), 382 tests. |

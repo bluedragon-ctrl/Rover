@@ -4,56 +4,38 @@
  * request. Shared by the Comms tab, the Code tab's dump box and Reference → Radio.
  */
 import { BOOT_REASON_NAMES, decodeDump, decodeFrame, hex, SYSTEM_TAG, type DecodedDump, type ReceivedFrame } from '../core/downlink';
-import type { SentKind, SentRecord, SimulationEngine } from '../core/SimulationEngine';
+import type { SentKind, SentRecord, SimulationEngine, Slot } from '../core/SimulationEngine';
 import { Status } from '../core/types';
 import type { Unit } from '../core/Unit';
-import type { CompileResult, Slot } from '../core/vm/Compiler';
-import { formatAddr } from '../core/vm/isa';
 import { IMG_CHUNK, MSG_TYPE_NAMES, MsgType, SOH, ETX, type ReceivedMessage } from '../core/messages';
 import { ERROR_NAMES } from '../core/machine/names';
 import { ROM_EXPORTS } from '../core/machine/rom';
-import { PDP11 } from '../core/balance';
+import { BLUE11 } from '../core/balance';
 import { oct6, toolchain, type SlotBuild } from './toolchain';
 
-export type LogDictionary = CompileResult['logTags'];
+/** Log tags a slot names: the names and the lines that use them. */
+export type LogDictionary = Record<number, { names: string[]; lines: number[] }>;
 
 /** What mission control knows about one uploaded slot: its log tags and where its instructions are. */
 export interface SlotDictionary {
   tags: LogDictionary;
-  /** `ALIAS` names per register number. */
-  regs: Record<number, string[]>;
   /** Source line of the instruction at a byte address (0 if none). */
   lineAt: (addr: number) => number;
-  /** M15: the PDP-11 core (octal addresses). */
-  pdp?: boolean;
 }
 
 export type Dictionaries = Record<Slot, SlotDictionary>;
 
-export const emptyDictionary = (): SlotDictionary => ({ tags: {}, regs: {}, lineAt: () => 0 });
-
-/** Dictionary of a compiled slot. */
-export function slotDictionary(res: CompileResult): SlotDictionary {
-  const p = res.program;
-  return {
-    tags: res.logTags,
-    regs: res.regNames ?? {},
-    lineAt: (addr) => {
-      const k = p?.indexAt.get(addr);
-      return k === undefined ? 0 : p!.instrs[k].line;
-    },
-  };
-}
+export const emptyDictionary = (): SlotDictionary => ({ tags: {}, lineAt: () => 0 });
 
 /**
- * M15: dictionary of an assembled MACRO-11 slot. Log tags are the `L.` symbols it defines
+ * Dictionary of an assembled slot. Log tags are the `L.` symbols it defines
  * (`L.BAT = 1`); their lines are the lines that use the name, the definition excluded.
  */
-export function pdpDictionary(b: SlotBuild): SlotDictionary {
+export function slotDictionary(b: SlotBuild): SlotDictionary {
   const tags: LogDictionary = {};
-  const asm = b.pdp?.asm;
-  if (asm) {
-    const lines = (b.pdp!.image?.source ?? '').split('\n').map((l) => l.replace(/;.*$/, ''));
+  const asm = b.result.asm;
+  {
+    const lines = (b.result.image?.source ?? '').split('\n').map((l) => l.replace(/;.*$/, ''));
     for (const [name, v] of asm.symbols) {
       if (!name.startsWith('L.') || asm.labels.has(name)) continue;
       const re = new RegExp(`(^|[^A-Z0-9.$])${name.replace(/[.$]/g, '\\$&')}(?![A-Z0-9.$])`, 'i');
@@ -64,18 +46,18 @@ export function pdpDictionary(b: SlotBuild): SlotDictionary {
       t.lines.push(...used);
     }
   }
-  return { tags, regs: {}, lineAt: b.lineAt, pdp: true };
+  return { tags, lineAt: b.lineAt };
 }
 
 const ROM_SORTED = Object.entries(ROM_EXPORTS).sort((a, b) => b[1] - a[1]);
-/** M15: the ROM routine an address lies in (`STEP`), or '' outside the ROM's routines. */
+/** The ROM routine an address lies in (`STEP`), or '' outside the ROM's routines. */
 export function romRoutineAt(addr: number): string {
-  if (addr < PDP11.romBase || addr >= PDP11.ioBase) return '';
+  if (addr < BLUE11.romBase || addr >= BLUE11.ioBase) return '';
   return ROM_SORTED.find(([, a]) => a <= addr)?.[0] ?? '';
 }
 
-/** An address as its slot's dictionary writes it: `fw:0x02A` or, M15, `002052`. */
-export const dictAddr = (addr: number, slot: Slot, d: Dictionaries): string => (d[slot].pdp ? oct6(addr) : formatAddr(addr, slot));
+/** An address as mission control writes it: octal, `002052`. */
+export const dictAddr = (addr: number): string => oct6(addr);
 
 /**
  * Name of a log tag from both slots' CONSTs (SPEC §3.9.3): names of one slot joined by
@@ -104,35 +86,26 @@ export function tagSource(tag: number, d: Dictionaries): { short: string; long: 
   return { short: parts.join(' · '), long: long.length ? `Sent by LOG in the ${long.join(' and the ')}` : 'No LOG with this tag in the uploaded code' };
 }
 
-/** `fw:0x02A (L13)`: a byte address in a slot, with its source line if mission control knows it. */
+/** `002052 (L13)`: a byte address in a slot, with its source line if mission control knows it. */
 export function addrText(addr: number, slot: Slot, d: Dictionaries): string {
   const line = d[slot].lineAt(addr);
-  return `${dictAddr(addr, slot, d)}${line ? ` (L${line})` : ''}`;
+  return `${dictAddr(addr)}${line ? ` (L${line})` : ''}`;
 }
 
 export function describeDump(dump: DecodedDump, taken: number | undefined, d: Dictionaries): string {
   const at = `snapshot t${taken ?? '?'}`;
   const who = dump.slot === 'program' ? 'PROGRAM' : 'FIRMWARE';
-  if (dump.kind === 1) {
-    const regs = dump.regs.map((v, i) => `r${i}=${v}`).join(' ');
-    return `${who} DUMP (${at}): next ${addrText(dump.ip, dump.slot, d)} · ${dump.state} · @STATUS ${Status[dump.status] ?? dump.status} · ${regs} · stacks ${dump.dsDepth}/${dump.csDepth}`;
-  }
-  if (dump.kind === 3) {
+  if (dump.kind === 'regs') {
     const regs = dump.r.slice(0, 6).map((v, i) => `R${i}=${oct6(v)}`).join(' ');
     return `${who} DUMP (${at}): PC ${addrText(dump.r[7], dump.slot, d)} · ${dump.state} · PSW ${oct6(dump.psw)} ${psWFlags(dump.psw)} · ${regs} SP=${oct6(dump.r[6])}`;
   }
-  if (dump.kind === 4) {
-    const words = dump.words.length ? `[${dump.words.map(oct6).join(' ')}]` : '(empty)';
-    return `${who} STACK (${at}): SP ${oct6(dump.sp)} · ${words}`;
-  }
-  const ds = dump.dataStack.length ? `[${dump.dataStack.join(' ')}]` : '(empty)';
-  const cs = dump.callStack.length ? `[${dump.callStack.map((a) => addrText(a, dump.slot, d)).join(' ')}]` : '(empty)';
-  return `${who} STACKS (${at}): data ${ds} · return to ${cs}`;
+  const words = dump.words.length ? `[${dump.words.map(oct6).join(' ')}]` : '(empty)';
+  return `${who} STACK (${at}): SP ${oct6(dump.sp)} · ${words}`;
 }
 
 /**
  * Decoded text of a received frame, like a defmt / spacecraft-EVR dictionary: tags are
- * named from the CONSTs the uploaded code logged them with (SPEC §3.8.3, §3.9.3).
+ * named from the `L.` symbols the uploaded code defines (SPEC §3.8.3, §3.9.3).
  */
 export function describeFrame(f: ReceivedFrame, d: Dictionaries): string {
   const dump = decodeDump(f.bytes);
@@ -159,17 +132,11 @@ export class DictionaryCache {
     const key = `${u.sourceCode}\u0000${u.programSource}`;
     if (key === this.key) return { d: this.dicts, changed: false };
     this.key = key;
-    if (this.engine.pdp11) {
-      const tc = toolchain(this.engine);
-      this.dicts = {
-        firmware: pdpDictionary(tc.build(u, u.sourceCode, 'firmware')),
-        program: u.programSource ? pdpDictionary(tc.build(u, u.programSource, 'program')) : { ...emptyDictionary(), pdp: true },
-      };
-    } else
-      this.dicts = {
-        firmware: slotDictionary(this.engine.compileFor(u, u.sourceCode, 'firmware')),
-        program: u.programSource ? slotDictionary(this.engine.compileFor(u, u.programSource, 'program')) : emptyDictionary(),
-      };
+    const tc = toolchain(this.engine);
+    this.dicts = {
+      firmware: slotDictionary(tc.build(u, u.sourceCode, 'firmware')),
+      program: u.programSource ? slotDictionary(tc.build(u, u.programSource, 'program')) : emptyDictionary(),
+    };
     return { d: this.dicts, changed: true };
   }
 }
@@ -177,11 +144,11 @@ export class DictionaryCache {
 // ---------------------------------------------------------------- snapshots (memory dumps)
 
 /** What a snapshot request asks the rover to copy. */
-export type SnapKind = 'regs' | 'stacks';
+export type SnapKind = 'regs' | 'stack';
 
-export const snapKindOf = (k: SentKind): SnapKind | null => (k === 'DUMP' ? 'regs' : k === 'DUMP_STACKS' ? 'stacks' : null);
+export const snapKindOf = (k: SentKind): SnapKind | null => (k === 'DUMP' ? 'regs' : k === 'DUMP_STACKS' ? 'stack' : null);
 
-const dumpSnapKind = (d: DecodedDump): SnapKind => (d.kind === 1 || d.kind === 3 ? 'regs' : 'stacks');
+const dumpSnapKind = (d: DecodedDump): SnapKind => d.kind;
 
 /** `NZvc`: PSW condition codes, capitals for the ones set. */
 export const psWFlags = (psw: number): string => ['N', 'Z', 'V', 'C'].map((f, i) => (psw & (8 >> i) ? f : f.toLowerCase())).join('');
@@ -252,9 +219,9 @@ export function sentText(r: SentRecord): string {
     case 'DUMP':
       return `Dump the ${s}'s registers`;
     case 'DUMP_STACKS':
-      return `Dump the ${s}'s stacks`;
+      return `Dump the ${s}'s stack`;
     case 'CONTINUE':
-      return `Resume the ${s} after BRK`;
+      return `Resume the ${s} after a breakpoint`;
     case 'RUN_AGAIN':
       return 'Restart the program from its first line';
     case 'PROGRAM':
@@ -281,21 +248,21 @@ export interface FrameField {
 /** What each dumped state means, for the comment next to it (item: value-specific comments). */
 export const STATE_NOTES: Record<string, string> = {
   PROG_NONE: 'not running: no program started, or it finished and the firmware acknowledged it',
-  PROG_READY: 'waiting for its next time slice (CALL RUN); continues at "next"',
-  PROG_RUNNING: 'running in a time slice right now',
-  PROG_DONE: 'finished with END; the firmware has not acknowledged it yet',
+  PROG_READY: 'waiting for its next run (the gate: RUN or PRGCS); continues at PC',
+  PROG_RUNNING: 'running right now',
+  PROG_DONE: 'finished with HALT (result in R0); the firmware has not acknowledged it yet',
   PROG_FAULT: 'crashed; the firmware took over',
-  PROG_HALTED: 'stopped by BRK; ▶ Resume after BRK continues at "next"',
+  PROG_HALTED: 'stopped by BPT; ▶ Resume continues after it',
   RUNNING: 'running',
-  BLOCKED: 'asleep in WAIT until a device is done (CALL STEP, CALL SLEEP… wait inside the ROM), or in CALL PROGRAM while the program has its slice',
-  HALTED: 'stopped by BRK; ▶ Resume after BRK continues at "next"',
-  FAULT: 'crashed; the watchdog reboots it',
+  BLOCKED: 'asleep in WAIT until an interrupt',
+  HALTED: 'stopped by HALT or BPT; ▶ Resume continues after it',
+  FAULT: 'crashed (a double fault); the watchdog reboots it',
 };
 
-/** What each @STATUS value says about the last instruction that set it. */
+/** What each error code (E.…, a device's `xxER`) says. */
 export const STATUS_NOTES: Record<number, string> = {
-  [Status.OK]: 'the last device start was accepted, or the device finished its work',
-  [Status.ERR_INVALID]: 'bad argument or nothing usable there (bad direction or slot, DIV by 0…)',
+  [Status.OK]: 'accepted, or the device finished its work',
+  [Status.ERR_INVALID]: 'bad argument or nothing usable there (bad direction or slot…)',
   [Status.ERR_FULL]: 'no room: cargo, recorder or log queue full',
   [Status.ERR_LOW_POWER]: 'not enough battery for it',
   [Status.ERR_BLOCKED]: 'the drive hit an obstacle',
@@ -303,25 +270,23 @@ export const STATUS_NOTES: Record<number, string> = {
   [Status.ERR_NO_SIGNAL]: 'the dish does not reach the orbiter',
   [Status.ERR_HAZARD]: 'the drive moved onto a hazard',
   [Status.ERR_DEPLOYED]: 'the drive refused: the solar array is open',
-  [Status.ERR_PREEMPTED]: 'stopped by a command before it finished (a drive stopped with @DRIVE_N 0)',
+  [Status.ERR_PREEMPTED]: 'stopped by a command before it finished (a drive stopped with DRVCNT 0)',
   [Status.ERR_BUSY]: 'the device (or one it shares the chassis with) is still working',
 };
 
 /** False for a program that is not running (finished or never started): its "next" means nothing. */
 export const dumpRunning = (state: string): boolean => state !== 'PROG_NONE' && state !== 'PROG_DONE';
-/** Stopped by BRK (only BRK halts a CPU). */
+/** Stopped at a breakpoint (BPT, or a firmware HALT). */
 export const dumpHalted = (state: string): boolean => state === 'HALTED' || state === 'PROG_HALTED';
 
-/** Bytes on the air of a register dump for a chassis with `registers` registers (M15: 22 B on the PDP-11 core). */
-export const registerDumpBytes = (registers: number, pdp = false): number => (pdp ? 22 : 9 + 4 * registers);
-/** Smallest stack dump (both stacks empty); each value adds 4 B, each return 2 B. */
-export const STACK_DUMP_MIN_BYTES = 5;
-/** M15: smallest PDP-11 stack dump (no words); each word adds 2 B. */
-export const STACK11_DUMP_MIN_BYTES = 6;
+/** Bytes on the air of a register dump. */
+export const REGISTER_DUMP_BYTES = 22;
+/** Smallest stack dump (no words); each word adds 2 B. */
+export const STACK_DUMP_MIN_BYTES = 6;
 
 /**
  * The request a received dump answers, if mission control asked for it. A register dump
- * nobody asked for while the slot is halted was sent by BRK.
+ * nobody asked for while the slot is halted was sent by a breakpoint.
  */
 export function requestFor(f: ReceivedFrame, sent: readonly SentRecord[]): SentRecord | undefined {
   const dump = decodeDump(f.bytes);
@@ -330,44 +295,24 @@ export function requestFor(f: ReceivedFrame, sent: readonly SentRecord[]): SentR
   return sent.find((r) => r.unitId === f.unitId && !r.rejected && r.tick === f.taken && r.slot === dump.slot && snapKindOf(r.kind) === kind);
 }
 
-export function sentByBrk(f: ReceivedFrame, sent: readonly SentRecord[]): boolean {
+export function sentByBreakpoint(f: ReceivedFrame, sent: readonly SentRecord[]): boolean {
   const dump = decodeDump(f.bytes);
-  return !!dump && (dump.kind === 1 || dump.kind === 3) && dumpHalted(dump.state) && !requestFor(f, sent);
+  return !!dump && dump.kind === 'regs' && dumpHalted(dump.state) && !requestFor(f, sent);
 }
 
 const SIZE_OF_CODE = [0, 1, 2, 4];
 const bits = (b: number) => `${b >> 7}|${((b >> 3) & 15).toString(2).padStart(4, '0')}|${((b >> 1) & 3).toString(2).padStart(2, '0')}|${b & 1}`;
 const DUMP_KIND_TEXT: Record<number, string> = {
-  1: 'firmware registers',
-  2: 'firmware stacks',
-  3: 'program registers',
-  4: 'program stacks',
-  5: 'firmware registers (PDP-11)',
-  6: 'firmware stack (PDP-11)',
-  7: 'program registers (PDP-11)',
-  8: 'program stack (PDP-11)',
-};
-
-/** What each dumped state means on the PDP-11 core, where it differs from Rover-ASM. */
-export const STATE_NOTES_11: Record<string, string> = {
-  PROG_READY: 'waiting for its next time slice (the gate, JSR PC, RUN); continues at PC',
-  PROG_DONE: 'finished with HALT (result in R0); the firmware has not acknowledged it yet',
-  PROG_HALTED: 'stopped by BPT; ▶ Resume continues after it',
-  BLOCKED: 'asleep in WAIT until an interrupt',
-  HALTED: 'stopped by HALT or BPT; ▶ Resume continues after it',
-  FAULT: 'crashed (a double fault); the watchdog reboots it',
+  5: 'firmware registers',
+  6: 'firmware stack',
+  7: 'program registers',
+  8: 'program stack',
 };
 
 /** `prog:0x026 → line 18` */
 function addrValue(addr: number, slot: Slot, d: Dictionaries): string {
   const line = d[slot].lineAt(addr);
-  return `${dictAddr(addr, slot, d)}${line ? ` → line ${line}` : ''}`;
-}
-
-/** Register name with its ALIASes: `r1 seen`. */
-export function regLabel(i: number, slot: Slot, d: Dictionaries): string {
-  const names = d[slot].regs[i];
-  return names?.length ? `r${i} ${names.join('/')}` : `r${i}`;
+  return `${dictAddr(addr)}${line ? ` → line ${line}` : ''}`;
 }
 
 /**
@@ -387,13 +332,12 @@ export function frameFields(b: readonly number[], d: Dictionaries): FrameField[]
   if (dump) {
     const slot = dump.slot;
     out.push({ bytes: take(0, 1), name: 'header', value: 'dump', note: `bits ${bits(b[0])}: system frame (tag 15) with a length byte` });
-    const k11 = dump.kind === 3 || dump.kind === 4;
-    out.push({ bytes: take(1, 1), name: 'kind', value: DUMP_KIND_TEXT[b[1]] ?? `kind ${b[1]}`, note: k11 ? '5/6 firmware, 7/8 program; odd = registers, even = stack' : '1/2 firmware, 3/4 program; odd = registers, even = stacks' });
+    out.push({ bytes: take(1, 1), name: 'kind', value: DUMP_KIND_TEXT[b[1]] ?? `kind ${b[1]}`, note: '5/6 firmware, 7/8 program; odd = registers, even = stack' });
     out.push({ bytes: take(2, 1), name: 'length', value: `${b[2]} bytes follow`, note: '' });
-    if (dump.kind === 3) {
+    if (dump.kind === 'regs') {
       const prog = slot === 'program';
       const running = dumpRunning(dump.state);
-      out.push({ bytes: take(3, 1), name: 'state', value: dump.state, note: `${prog ? 'PRGST' : 'CPU'}: ${STATE_NOTES_11[dump.state] ?? STATE_NOTES[dump.state] ?? '?'}` });
+      out.push({ bytes: take(3, 1), name: 'state', value: dump.state, note: `${prog ? 'PRGST' : 'CPU'}: ${STATE_NOTES[dump.state] ?? '?'}` });
       out.push({ bytes: take(4, 2), name: 'PSW', value: `${oct6(dump.psw)} ${psWFlags(dump.psw)}`, note: `words low byte first · priority ${(dump.psw >> 5) & 7}, ${((dump.psw >> 14) & 3) === 3 ? 'user' : 'kernel'} mode; flags N Z V C (capital = set)` });
       dump.r.forEach((v, i) => {
         const name = i === 6 ? 'SP' : i === 7 ? 'PC' : `R${i}`;
@@ -408,7 +352,7 @@ export function frameFields(b: readonly number[], d: Dictionaries): FrameField[]
               ? 'means nothing while the program is not running'
               : bptLine
                 ? `the instruction after the BPT on line ${bptLine}`
-                : v >= PDP11.romBase && v < PDP11.ioBase
+                : v >= BLUE11.romBase && v < BLUE11.ioBase
                   ? `in the ROM${romRoutineAt(v) ? `, routine ${romRoutineAt(v)}` : ''} (called from your code: Dump stack shows the return address)`
                   : 'address of the instruction it runs next',
             goto: running && line ? { slot, line } : undefined,
@@ -417,7 +361,7 @@ export function frameFields(b: readonly number[], d: Dictionaries): FrameField[]
       });
       return out;
     }
-    if (dump.kind === 4) {
+    {
       out.push({ bytes: take(3, 2), name: 'SP', value: oct6(dump.sp), note: 'the stack pointer: the top of the stack (it grows down)' });
       out.push({ bytes: take(5, 1), name: 'words', value: `${dump.words.length} follow`, note: `from SP up, at most 8 (the stack ends at ${slot === 'program' ? 'the top of core' : 'the program base, 002000'})` });
       dump.words.forEach((w, i) => {
@@ -432,46 +376,6 @@ export function frameFields(b: readonly number[], d: Dictionaries): FrameField[]
       });
       return out;
     }
-    if (dump.kind === 1) {
-      const prog = slot === 'program';
-      const running = dumpRunning(dump.state);
-      const line = d[slot].lineAt(dump.ip);
-      const brkLine = dumpHalted(dump.state) ? d[slot].lineAt(dump.ip - 1) : 0; // BRK is 1 byte
-      out.push({
-        bytes: take(3, 2),
-        name: 'next',
-        value: running ? addrValue(dump.ip, slot, d) : `${formatAddr(dump.ip, slot)} (not running)`,
-        note: !running ? 'means nothing while the program is not running' : brkLine ? `the instruction after the BRK on line ${brkLine}` : 'address of the instruction it runs next',
-        goto: running && line ? { slot, line } : undefined,
-      });
-      out.push({ bytes: take(5, 1), name: '@STATUS', value: Status[dump.status] ?? String(dump.status), note: STATUS_NOTES[dump.status] ?? 'result of its last hardware instruction' });
-      out.push({ bytes: take(6, 1), name: 'state', value: dump.state, note: `${prog ? '@PROG_STATE' : 'CPU'}: ${STATE_NOTES[dump.state] ?? '?'}` });
-      dump.regs.forEach((v, i) => {
-        const note = i === 0 ? '4 bytes per register, signed, high byte first' : v < 0 ? 'negative: counted down from FF FF FF FF = -1' : '';
-        out.push({ bytes: take(7 + i * 4, 4), name: regLabel(i, slot, d), value: String(v), note });
-      });
-      const at = 7 + dump.regs.length * 4;
-      out.push({ bytes: take(at, 1), name: 'data stack', value: `${dump.dsDepth} value${dump.dsDepth === 1 ? '' : 's'}`, note: 'how many PUSHed values wait (Dump stacks shows them)' });
-      out.push({ bytes: take(at + 1, 1), name: 'call stack', value: `${dump.csDepth} return${dump.csDepth === 1 ? '' : 's'}`, note: 'how many CALLs have not RETurned yet' });
-      return out;
-    }
-    let at = 3;
-    const nd = dump.dataStack.length;
-    out.push({ bytes: take(at, 1), name: 'data stack', value: `${nd} value${nd === 1 ? '' : 's'} follow`, note: '4 bytes each, bottom first' });
-    at++;
-    dump.dataStack.forEach((v, i) => {
-      out.push({ bytes: take(at, 4), name: `data ${i}`, value: String(v), note: i === nd - 1 ? 'top: the next POP gets this' : '' });
-      at += 4;
-    });
-    const nc = dump.callStack.length;
-    out.push({ bytes: take(at, 1), name: 'call stack', value: `${nc} return${nc === 1 ? '' : 's'} follow`, note: '2-byte addresses, oldest CALL first' });
-    at++;
-    dump.callStack.forEach((a, i) => {
-      const line = d[slot].lineAt(a);
-      out.push({ bytes: take(at, 2), name: `return ${i}`, value: addrValue(a, slot, d), note: i === nc - 1 ? 'the next RET continues here' : '', goto: line ? { slot, line } : undefined });
-      at += 2;
-    });
-    return out;
   }
   const h = b[0] ?? 0;
   const tag = (h >> 3) & 15;
@@ -514,7 +418,7 @@ export function fieldsHtml(fields: readonly FrameField[], seenHeaders?: Set<stri
   return `<table class="frame-fields">${rows}</table>`;
 }
 
-// ---------------------------------------------------------------- M15: framed messages (TX / recorder)
+// ---------------------------------------------------------------- framed messages (TX / recorder)
 
 const ERROR_BY_CODE: Record<number, string> = Object.fromEntries(Object.entries(ERROR_NAMES).map(([n, v]) => [v, n]));
 const word = (b: readonly number[], at: number): number => (b[at] ?? 0) | ((b[at + 1] ?? 0) << 8);

@@ -1,10 +1,10 @@
 /**
- * M15 system names of the PDP-11 core (docs/PDP11_IO.md §10): registers, bits, codes and
+ * M15 system names of the Blue-11 (docs/BLUE11_IO.md §10): registers, bits, codes and
  * constants, everything but the tiles (registry) and the ROM's entry points. The ROM is
  * assembled with these; programs get them through symbols.ts. Six characters at most.
  */
 
-import { PDP11 } from '../balance';
+import { BLUE11 } from '../balance';
 import { Alert, Dir, LightColor, ProgState, Preempt, Status } from '../types';
 import { BOOT_SAFE, CARGO_BASE, CSR, IO_REGISTERS, ProgFault, Why } from './iopage';
 import { MsgType, SOH, ETX } from '../messages';
@@ -40,8 +40,8 @@ export function systemSymbols(): Record<string, number> {
   out.SAFE = BOOT_SAFE;
   out.CARGO = CARGO_BASE;
   out.PSW = 0o177776;
-  out.PRGBAS = PDP11.programBase;
-  out.IMGBAS = PDP11.imageBase;
+  out.PRGBAS = BLUE11.programBase;
+  out.IMGBAS = BLUE11.imageBase;
   out.GO = CSR.GO;
   out.IE = CSR.IE;
   out.DONE = CSR.DONE;

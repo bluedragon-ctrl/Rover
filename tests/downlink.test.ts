@@ -1,15 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { BALANCE, CHASSIS_MK1 } from '../src/core/balance';
-import { decodeFrame, Downlink, encodeCpuDump, encodeLog, hex, productFrameBytes, ProductType, SYSTEM_TAG } from '../src/core/downlink';
+import { BALANCE } from '../src/core/balance';
+import { BootReason, decodeFrame, Downlink, encodeLog, hex, productFrameBytes, ProductType, SYSTEM_TAG } from '../src/core/downlink';
 import { productFrame, spectrum } from '../src/core/imaging';
+import { MsgType } from '../src/core/messages';
 import { Status } from '../src/core/types';
 import { T } from '../src/core/WorldRegistry';
-import { deserialize, migrate, serialize } from '../src/core/SaveManager';
+import { deserialize, serialize } from '../src/core/SaveManager';
 import { SimulationEngine } from '../src/core/SimulationEngine';
 import type { Unit } from '../src/core/Unit';
-import { compile } from '../src/core/vm/Compiler';
+import { toolchain } from '../src/ui/toolchain';
+import { factory, fw, HANG, reg, sleep } from './helpers/rover';
 
-const factory = { factory: true };
+const IDLE = `START:${HANG}`;
+/** ROM LOG: tag `tag`, value from `src`. */
+const log = (tag: string, src: string) => `MOV  #${tag}, R0\n        MOV  ${src}, R1\n        JSR  PC, LOG`;
 
 /** Keep the dish on the orbiter (signal = antennaHealth) before every tick. */
 function run(e: SimulationEngine, ticks: number): void {
@@ -44,34 +48,6 @@ describe('frame encoding (SPEC §3.8.2)', () => {
   });
 });
 
-describe('LOG instruction', () => {
-  it('compiles tags from numbers and CONSTs, sizes like immediates, builds a dictionary', () => {
-    const r = compile('CONST T_BAT 5\nLOG T_BAT @BAT\nLOG 2\nLOG T_BAT r0', CHASSIS_MK1);
-    expect(r.errors).toEqual([]);
-    expect(r.lineBytes[2]).toBe(3); // opcode + tag + port
-    expect(r.lineBytes[3]).toBe(2);
-    expect(r.logTags[5]).toEqual({ names: ['T_BAT'], lines: [2, 4] });
-    expect(r.logTags[2]).toEqual({ names: [], lines: [3] });
-  });
-
-  it('rejects tag 15, out-of-range and non-constant tags', () => {
-    expect(compile('LOG 15', CHASSIS_MK1).errors[0].message).toMatch(/reserved/);
-    expect(compile('LOG 16', CHASSIS_MK1).errors[0].message).toMatch(/0–14/);
-    expect(compile('LOG r0', CHASSIS_MK1).errors[0].message).toMatch(/compile-time constant/);
-    expect(compile('LOG @BAT', CHASSIS_MK1).errors.length).toBe(1);
-  });
-
-  it('is a 1-cycle compute instruction that does not touch @STATUS', () => {
-    const { e, u } = rover('MOV r0 7\nLOG 1 r0\nLOG 2\nLOG 3\nWAIT @TICK');
-    u.vm.status = 3;
-    u.link.fifo = []; // drop the boot frame
-    e.advanceTick();
-    // MOV + 3 LOGs in one tick, then WAIT on a port that is never 0 (not a device: no @STATUS).
-    expect(u.link.fifo.map((f) => hex(f.bytes))).toEqual(['0A 07', '10', '18']);
-    expect(u.vm.status).toBe(3);
-  });
-});
-
 describe('log FIFO and transmitter', () => {
   it('drops whole frames when full and counts them in @LOG_LOST', () => {
     const d = new Downlink();
@@ -86,48 +62,49 @@ describe('log FIFO and transmitter', () => {
     expect(d.lost).toBe(255); // saturates
   });
 
-  it('sends 2 B/tick at full signal, proportionally less, nothing below 20', () => {
+  it('sends 4 B/tick at full signal (Mk-I), proportionally less, nothing below 20', () => {
     const rate = (signal: number, ticks: number) => {
       const d = new Downlink();
-      for (let i = 0; i < 16; i++) d.enqueue([1, 2], 64);
+      for (let i = 0; i < 40; i++) d.enqueue([1, 2], 128);
       let sent = 0;
       for (let t = 0; t < ticks; t++) sent += d.pump(signal, BALANCE.linkMinSignal, BALANCE.linkBytesPerTick).sent;
       return sent;
     };
-    expect(rate(100, 10)).toBe(20);
-    expect(rate(50, 10)).toBe(10);
-    expect(rate(25, 10)).toBe(5);
+    expect(rate(100, 10)).toBe(40);
+    expect(rate(50, 10)).toBe(20);
+    expect(rate(25, 10)).toBe(10);
     expect(rate(19, 100)).toBe(0);
   });
 
-  it('a frame arrives when its last byte is sent; mission control decodes it', () => {
-    const { e } = rover('CONST T 4\nloop: LOG T @TICK\nCALL SLEEP 1000');
+  it('the boot frame and the messages arrive when their last byte is sent; mission control decodes them', () => {
+    const { e } = rover(fw(log('4', '@#TICKL')));
     const got: number[] = [];
     e.events.on('DOWNLINK_FRAME', (f) => got.push(f.tick));
-    run(e, 6);
-    const frames = e.received.map((f) => decodeFrame(f.bytes));
-    expect(frames[0]).toEqual({ kind: 0, tag: SYSTEM_TAG, value: 1 }); // boot frame: code upload
-    expect(frames[1].tag).toBe(4);
-    expect(frames[1].value).toBe(1); // logged on tick 1
-    expect(got.length).toBe(2);
+    run(e, 10);
+    expect(e.received.map((f) => decodeFrame(f.bytes))).toEqual([{ kind: 0, tag: SYSTEM_TAG, value: BootReason.UPLOAD }]); // boot frame: code upload
+    expect(got.length).toBe(1);
+    const m = e.messages.filter((x) => x.type === MsgType.LOG);
+    expect(m).toHaveLength(1);
+    expect(m[0].body[0]).toBe(4);
+    expect(m[0].body[1]).toBeGreaterThan(0); // the tick it was logged
   });
 
   it('costs energy only in ticks that send bytes', () => {
-    const { e, u } = rover('CALL SLEEP 100000');
+    const { e, u } = rover(IDLE);
     run(e, 1); // first tick sends the boot frame (2 B)
     const before = u.energy;
     run(e, 20); // idle link: only idle drain, no solar (array stowed)
     expect(before - u.energy).toBe(20 * BALANCE.idleDrainPerTick);
-    u.link.enqueue([1, 2, 3, 4, 5, 6], 32);
+    u.link.enqueue([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], 32); // 3 ticks at 4 B/tick
     const b2 = u.energy;
     run(e, 3);
     expect(b2 - u.energy).toBe(3 * (BALANCE.idleDrainPerTick + BALANCE.linkEnergyPerTick));
   });
 
   it('keeps transmitting while the CPU is faulted, not while powered off', () => {
-    const { e, u } = rover('POP r0');
+    const { e, u } = rover(IDLE);
     u.link.fifo = [];
-    run(e, 1); // faults
+    u.cpu.fault('test', BALANCE.watchdogTicks); // a double fault
     u.link.enqueue([1, 2], 32);
     run(e, 1);
     expect(u.link.fifo).toHaveLength(0);
@@ -139,31 +116,23 @@ describe('log FIFO and transmitter', () => {
   });
 
   it('queues a boot frame with the reason and resets @LOG_LOST on every hard reboot', () => {
-    const { e, u } = rover('CALL SLEEP 1');
+    const { e, u } = rover(IDLE);
     u.link.lost = 9;
-    e.upload(u, 'POP r0', factory);
+    e.upload(u, IDLE, factory);
     expect(u.link.lost).toBe(0);
     expect(decodeFrame(u.link.fifo.at(-1)!.bytes)).toEqual({ kind: 0, tag: 15, value: 1 });
+    run(e, 5);
+    u.cpu.fault('test', BALANCE.watchdogTicks);
     run(e, BALANCE.watchdogTicks + 2);
     expect(e.received.some((f) => hex(f.bytes) === '7A 02')).toBe(true); // watchdog
     e.admin.respawnAtOrigin(u);
     expect(hex(u.link.fifo.at(-1)!.bytes)).toBe('7A 04');
   });
 
-  it('@LOG_FREE and @LOG_LOST ports', () => {
-    const { e, u } = rover('LOG 1 100000\nLOG 1 100000\nLOG 1 100000\nLOG 1 100000\nMOV r0 @LOG_FREE\nMOV r1 @LOG_LOST\nMOV @LOG_LOST 0\nMOV r2 @LOG_LOST\nCALL SLEEP 1000');
-    u.link.fifo = [];
-    u.antennaHealth = 0; // no signal: nothing leaves the FIFO
-    for (let i = 0; i < 3; i++) e.advanceTick();
-    // Tick 1 runs the four LOGs (5 B each); tick 2 reads the ports.
-    expect(u.vm.regs[0]).toBe(32 - 20);
-    expect(u.vm.regs[1]).toBe(0);
-    expect(u.vm.regs[2]).toBe(0);
-  });
 });
 
 describe('downlink determinism and saves', () => {
-  const SRC = 'CONST T_BAT 3\nloop: LOG T_BAT @BAT\nLOG 1 @TICK\nLOG 2 @LOG_LOST\nCALL SLEEP 2\nJMP loop';
+  const SRC = `START:\n1$:     ${log('3', '@#BAT')}\n        ${log('1', '@#TICKL')}\n        ${log('2', '@#TXLOST')}\n        ${sleep(2)}\n        BR   1$`;
 
   it('save mid-frame, load, continue == uninterrupted run', () => {
     const make = () => {
@@ -175,55 +144,38 @@ describe('downlink determinism and saves', () => {
     run(a, 300);
     const b0 = make();
     run(b0, 137);
-    expect(b0.units[0].link.headSent + b0.units[0].link.acc).toBeGreaterThan(0); // mid-frame
     const b = deserialize(JSON.parse(JSON.stringify(serialize(b0))));
     run(b, 163);
     expect(serialize(b)).toEqual(serialize(a));
-    expect(a.received.length).toBeGreaterThan(50);
-    expect(a.units[0].link.lost).toBeGreaterThan(0); // the loop outruns the link
+    expect(a.messages.filter((m) => m.status === 'ok').length).toBeGreaterThan(50);
+    expect(a.units[0].link.tx.length).toBeGreaterThan(0); // the loop outruns the link: the FIFO stays busy
   });
 
-  it('migrates v3 saves to an empty link', () => {
-    const { e } = rover('CALL SLEEP 10');
-    const v3 = serialize(e) as unknown as Record<string, unknown>;
-    v3.version = 3;
-    delete v3.received;
-    for (const u of v3.units as Record<string, unknown>[]) delete u.link;
-    const m = migrate(v3);
-    expect(m.received).toEqual([]);
-    expect(deserialize(v3).units[0].link.fifo).toEqual([]);
-  });
 });
 
 describe('console decoding', async () => {
-  const { describeFrame, emptyDictionary, slotDictionary } = await import('../src/ui/comms');
-  it('names tags from CONSTs and lines, decodes boot frames', () => {
-    const d = { firmware: slotDictionary(compile('CONST T_BAT 5\nLOG T_BAT @BAT', CHASSIS_MK1)), program: emptyDictionary() };
-    const f = (bytes: number[]) => describeFrame({ unitId: 1, tick: 1, bytes, gap: 0 }, d);
-    expect(f(encodeLog(5, 812))).toBe('T_BAT = 812 (fw L2)');
-    expect(f(encodeLog(3, -1))).toBe('tag 3 = -1');
-    expect(f(encodeLog(3, null))).toBe('tag 3');
-    expect(f(encodeLog(15, 2))).toBe('BOOT: watchdog');
+  const { describeFrame, describeMessage, emptyDictionary, slotDictionary } = await import('../src/ui/comms');
+  const dict = (src: string, slot: 'firmware' | 'program' = 'firmware') => {
+    const e = new SimulationEngine({ seed: 1 });
+    return slotDictionary(toolchain(e).build(e.spawnUnit('t'), src, slot));
+  };
+  const msg = (tag: number, v: number) => ({ unitId: 1, tick: 1, type: MsgType.LOG, body: [tag, v & 255, (v >> 8) & 255], status: 'ok' as const });
+
+  it('names log tags from the L. symbols and their lines, decodes boot frames', () => {
+    const d = { firmware: dict(`L.BAT = 5\nSTART:  ${log('L.BAT', '@#BAT')}${HANG}`), program: emptyDictionary() };
+    expect(describeMessage(msg(5, 812), d)).toBe('L.BAT = 812');
+    expect(describeMessage(msg(3, -1), d)).toBe('tag 3 = -1');
+    expect(describeFrame({ unitId: 1, tick: 1, bytes: encodeLog(15, 2), gap: 0 }, d)).toBe('BOOT: watchdog');
   });
 
   it('merges both slots: a tag named differently in each shows both names (SPEC §3.9.3)', () => {
     const d = {
-      firmware: slotDictionary(compile('CONST T_BAT 1\nCONST T_END 14\nLOG T_BAT @BAT\nLOG T_END', CHASSIS_MK1)),
-      program: slotDictionary(compile('CONST T_X 1\nCONST T_END 14\nCALL SLEEP 1\nLOG T_X @X\nLOG T_END 3\nLOG 6', CHASSIS_MK1, {}, { slot: 'program' })),
+      firmware: dict(`L.BAT = 1\nL.END = 14.\nSTART:  ${log('L.BAT', '@#BAT')}\n        ${log('L.END', '#0')}${HANG}`),
+      program: dict(`L.X = 1\nL.END = 14.\nSTART:  ${log('L.X', '@#X')}\n        ${log('L.END', '#3')}\n        HALT`, 'program'),
     };
-    const f = (bytes: number[]) => describeFrame({ unitId: 1, tick: 1, bytes, gap: 0 }, d);
-    expect(f(encodeLog(1, 5))).toBe('T_BAT|T_X = 5 (fw L3, prog L4)');
-    expect(f(encodeLog(14, null))).toBe('T_END (fw L4, prog L5)');
-    expect(f(encodeLog(6, 2))).toBe('tag 6 = 2 (prog L6)');
-  });
-
-  it('decodes program dumps with prog: addresses and program source lines', () => {
-    const res = compile('MOV r0 42\nPUSH 6\nBRK\nCALL SLEEP 1000', CHASSIS_MK1, {}, { slot: 'program' });
-    const d = { firmware: emptyDictionary(), program: slotDictionary(res) };
-    const bytes = encodeCpuDump({ ip: 7, status: 0, state: 5, regs: [42, 0, 0, 0], dsDepth: 1, csDepth: 0 }, 3);
-    expect(describeFrame({ unitId: 1, tick: 9, bytes, gap: 0, taken: 8 }, d)).toBe(
-      'PROGRAM DUMP (snapshot t8): next prog:0x007 (L4) · PROG_HALTED · @STATUS OK · r0=42 r1=0 r2=0 r3=0 · stacks 1/0',
-    );
+    expect(describeMessage(msg(1, 5), d)).toBe('L.BAT|L.X = 5');
+    expect(describeMessage(msg(14, 3), d)).toBe('L.END = 3');
+    expect(d.program.tags[1].lines).toEqual([3]);
   });
 });
 
@@ -256,28 +208,31 @@ describe('science recorder (SPEC §3.8.5)', () => {
     expect([b.done.length, d.recSent, b.partial?.seq]).toEqual([1, 3, 0]);
   });
 
-  it('spectrometer records a spectrum; ERR_FULL keeps the item', () => {
-    const { e, u } = rover('CALL ACT TOOL_2 0\nMOV r0 @STATUS\nMOV r1 @REC_FREE\nCALL ACT TOOL_2 1\nMOV r2 @STATUS\nMOV r3 @SCIENCE_READY\nCALL SLEEP 1000');
+  it('spectrometer records a spectrum; E.FULL keeps the item', () => {
+    const act = (slot: number, dst: string) => `MOV  #${slot}, R0\n        MOV  #F.T2, R1\n        JSR  PC, ACT\n        MOV  R0, ${dst}`;
+    const { e, u } = rover(fw(act(0, 'R2'), 'MOV  @#RECFRE, R3', act(1, 'R4'), 'MOV  @#SCIRDY, R5'));
     u.cargo[0] = T.IRON_ORE;
     u.cargo[1] = T.SILICON_ORE;
     u.antennaHealth = 0; // nothing leaves the recorder
-    for (let i = 0; i < 56; i++) e.recordProduct(u, spec());
-    e.recordProduct(u, spec()); // cannot fit: 16 B left
+    let n = 0;
+    while (e.recordProduct(u, spec())) n++;
+    const left = u.link.recFree(u.recorderBytes);
+    expect(left).toBeLessThan(18);
     for (let i = 0; i < 80; i++) e.advanceTick();
-    expect([u.vm.regs[0], u.vm.regs[1], u.vm.regs[2], u.vm.regs[3]]).toEqual([Status.ERR_FULL, 16, Status.ERR_FULL, 56]);
+    expect([reg(u, 2), reg(u, 3), reg(u, 4), reg(u, 5)]).toEqual([Status.ERR_FULL, left, Status.ERR_FULL, n]);
     expect(u.cargo.slice(0, 2)).toEqual([T.IRON_ORE, T.SILICON_ORE]);
   });
 
   it('delivers in order, pays credits once, shows partial products in the gallery', () => {
-    const { e, u } = rover('CALL SLEEP 100000');
+    const { e, u } = rover(IDLE);
     u.link.fifo = [];
     e.recordProduct(u, { ...spec(T.IRON_ORE), credits: 1 });
     e.recordProduct(u, spec());
     const c0 = e.credits;
-    run(e, 5);
+    run(e, 3);
     expect(e.gallery).toHaveLength(1);
-    expect(e.gallery[0].received).toBe(10);
-    run(e, 13);
+    expect(e.gallery[0].received).toBe(12);
+    run(e, 7);
     expect(e.gallery.map((g) => [g.seq, g.received])).toEqual([
       [0, 18],
       [1, 18],
@@ -309,7 +264,7 @@ describe('science recorder (SPEC §3.8.5)', () => {
   });
 
   it('boot frames alone do not complete First contact', () => {
-    const { e } = rover('CALL SLEEP 100000');
+    const { e } = rover(IDLE);
     run(e, 30);
     expect(e.received.length).toBe(1);
     expect(e.stats.framesReceived).toBe(0);
@@ -318,7 +273,7 @@ describe('science recorder (SPEC §3.8.5)', () => {
 
   it('save mid-product, load, continue == uninterrupted run', () => {
     const make = () => {
-      const { e, u } = rover('CONST T 2\nloop: LOG T @TICK\nCALL SLEEP 7\nJMP loop', 21);
+      const { e, u } = rover(`START:\n1$:     ${log('2', '@#TICKL')}\n        ${sleep(7)}\n        BR   1$`, 21);
       u.antennaHealth = 75;
       for (let i = 0; i < 6; i++) e.recordProduct(u, spec(i % 2 ? T.IRON_ORE : T.SAMPLE));
       return e;
@@ -334,28 +289,6 @@ describe('science recorder (SPEC §3.8.5)', () => {
     expect(a.stats.scienceDelivered).toBe(6);
   });
 
-  it('migrates v4 saves: waiting science packets are credited', () => {
-    const { e } = rover('CALL SLEEP 10');
-    const v4 = serialize(e) as unknown as Record<string, any>;
-    v4.version = 4;
-    delete v4.gallery;
-    v4.stats.packetsSent = 3;
-    delete v4.stats.framesReceived;
-    for (const u of v4.units) {
-      u.scienceReady = 4;
-      u.packetsSent = 3;
-      u.lastTx = null;
-      u.link = { fifo: [], headSent: 0, acc: 0, lost: 0, gap: 0 };
-    }
-    const credits = v4.credits;
-    const m = migrate(v4);
-    expect(m.credits).toBe(credits + 4);
-    expect(m.stats.framesReceived).toBe(3 + m.received.length);
-    expect(m.gallery).toEqual([]);
-    const l = deserialize(v4);
-    expect(l.units[0].link.products).toEqual([]);
-    expect('scienceReady' in m.units[0]).toBe(false);
-  });
 });
 
 describe('gallery rendering', async () => {

@@ -1,18 +1,15 @@
 import './style.css';
 import { BALANCE } from './core/balance';
-import { DEFAULT_FIRMWARE, PROGRAM_FIRST_STEPS } from './core/programs';
-import { PDP_DEFAULT_FIRMWARE, PDP_FIRST_STEPS } from './core/programs-pdp11';
+import { DEFAULT_FIRMWARE, FIRST_STEPS } from './core/programs';
 import { SimClock } from './core/SimClock';
-import { SimulationEngine, type UplinkCommand } from './core/SimulationEngine';
-import type { Slot } from './core/vm/Compiler';
+import { SimulationEngine, type Slot, type UplinkCommand } from './core/SimulationEngine';
 import { CpuState, Layer, ProgState } from './core/types';
 import type { Unit } from './core/Unit';
 import { ThreeScene } from './render/ThreeScene';
 import { DebuggerPanel } from './ui/DebuggerPanel';
 import { CodeWorkspace } from './ui/CodeWorkspace';
 import { RoverBuilds, toolchain } from './ui/toolchain';
-import { renderReference } from './ui/ReferencePanel';
-import { renderReference11 } from './ui/ReferencePdp11';
+import { renderReference } from './ui/ReferenceBlue11';
 import { PerfHud } from './ui/PerfHud';
 import { CompassHud } from './ui/CompassHud';
 import { GoalsPanel } from './ui/GoalsPanel';
@@ -31,12 +28,10 @@ const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySe
 // Startup: resume the autosave unless the URL asks for a different seed.
 const params = new URLSearchParams(location.search);
 const seedParam = params.get('seed') !== null ? Number(params.get('seed')) : null;
-// M15 slice 5: `?cpu=pdp11` starts (or resumes) a world with the PDP-11 core; until slice 6
-// the default stays Rover-ASM. A save remembers its computer.
-const cpuParam = params.get('cpu') === 'pdp11' ? 'pdp11' : params.get('cpu') === 'rover-asm' ? 'rover-asm' : null;
 const startupMessages: string[] = [];
-const loaded = tryLoadAutosave(seedParam, cpuParam);
-if (loaded.error) startupMessages.push(`Autosave could not be loaded (${loaded.error}); starting a new world.`);
+const loaded = tryLoadAutosave(seedParam);
+if (loaded.old) startupMessages.push(`${loaded.error} A new world was started.`);
+else if (loaded.error) startupMessages.push(`Autosave could not be loaded (${loaded.error}); starting a new world.`);
 let engine: SimulationEngine;
 let rover: Unit;
 if (loaded.engine) {
@@ -44,10 +39,10 @@ if (loaded.engine) {
   rover = engine.units[0];
   startupMessages.push(`Resumed autosave: seed ${engine.seed}, tick ${engine.tick}.`);
 } else {
-  engine = new SimulationEngine({ seed: seedParam || Math.floor(Math.random() * 1e9), cpu: cpuParam ?? 'rover-asm' });
+  engine = new SimulationEngine({ seed: seedParam || Math.floor(Math.random() * 1e9) });
   rover = engine.spawnUnit('Rover-1', 0, 0);
   // M10: every rover ships the default firmware and no program (SPEC §3.9.4).
-  engine.upload(rover, engine.pdp11 ? PDP_DEFAULT_FIRMWARE : DEFAULT_FIRMWARE, { factory: true });
+  engine.upload(rover, DEFAULT_FIRMWARE, { factory: true });
 }
 const seed = engine.seed;
 
@@ -57,7 +52,7 @@ clock.tickHz = BALANCE.defaultTickHz;
 // ---------------------------------------------------------------- views
 const scene = new ThreeScene($('#viewport'), engine);
 scene.centerOn(rover);
-// The code on the rover, assembled once per upload (debugger lines, M15 slice 5).
+// The code on the rover, assembled once per upload (debugger lines).
 const roverBuilds = new RoverBuilds(toolchain(engine));
 const debuggerPanel = new DebuggerPanel($('#debugger'), engine, roverBuilds);
 // Dev builds only: handles for browser-console debugging and screenshot scripts.
@@ -93,8 +88,7 @@ engine.events.on('GOAL_COMPLETED', (g) => {
   toasts.appendChild(t);
   setTimeout(() => t.remove(), 5000);
 });
-if (engine.pdp11) renderReference11($('#reference'), engine.registry);
-else renderReference($('#reference'), engine.registry);
+renderReference($('#reference'), engine.registry);
 
 // Code tab: Program / Firmware slots and the machine-code listing (M10; ?listing=0 hides it).
 const code = new CodeWorkspace({
@@ -103,7 +97,7 @@ const code = new CodeWorkspace({
   rover: () => rover,
   log: (level, m) => log(level, m),
   listing: params.get('listing') !== '0',
-  starterProgram: engine.pdp11 ? PDP_FIRST_STEPS : PROGRAM_FIRST_STEPS,
+  starterProgram: FIRST_STEPS,
   inspect: sendCommand,
 });
 // Comms: a source line (fw L55, a dump's next address) opens it in the Code tab.
@@ -128,9 +122,8 @@ engine.events.on('LOG', (e) => {
   if (e.category === 'sent') return;
   log(e.level, `${engine.getUnit(e.unitId)?.name}: ${e.message}`);
 });
-const cpuQuery = engine.pdp11 ? '&cpu=pdp11' : '';
-log('info', `World seed ${seed}${engine.pdp11 ? ', PDP-11 core' : ''}. Open ?seed=${seed}${cpuQuery} to start a fresh copy of this world.`);
-for (const m of startupMessages) log(m.startsWith('Autosave could') ? 'error' : 'info', m);
+log('info', `World seed ${seed}. Open ?seed=${seed} to start a fresh copy of this world.`);
+for (const m of startupMessages) log(m.startsWith('Autosave could') ? 'error' : loaded.old ? 'warn' : 'info', m);
 
 // ---------------------------------------------------------------- persistence
 const saveInfo = $('#save-info');
@@ -178,7 +171,7 @@ engine.events.on('SUPPLY', (s) => {
 const banner = $('#event-banner');
 engine.events.on('WORLD_EVENT', (w) => {
   const name = EVENT_BY_ID[w.def]?.title ?? w.type;
-  if (w.phase === 'ALERT') log('warn', `${name} forecast in ${w.startTick - engine.tick} ticks (@ALERT).`);
+  if (w.phase === 'ALERT') log('warn', `${name} forecast in ${w.startTick - engine.tick} ticks (ALERT).`);
   else if (w.phase === 'START') log('warn', `${name} has begun.`);
   else log('info', `${name} is over.`);
 });
@@ -239,7 +232,7 @@ setAdminDebugger(adminDebugger);
 function stepInstruction(): void {
   if (!adminDebugger) return;
   setSpeed(0);
-  if (!engine.stepInstruction(rover)) log('warn', `Cannot step: CPU is ${rover.vm.state}.`);
+  if (!engine.stepInstruction(rover)) log('warn', `Cannot step: CPU is ${rover.cpu.state}.`);
 }
 $('#btn-step').addEventListener('click', stepInstruction);
 $('#btn-tick').addEventListener('click', () => {
@@ -271,19 +264,7 @@ $('#btn-new').addEventListener('click', () => {
   if (!confirm('Start a new world? The current world will be discarded (save it to a file first if you want to keep it).')) return;
   leaving = true;
   clearAutosave();
-  location.search = `?seed=${Math.floor(Math.random() * 1e9)}${cpuQuery}`;
-});
-// M15 preview: which computer this world's rovers have, and a new world with the other one.
-$('#cpu-info').innerHTML = engine.pdp11
-  ? 'This world runs the <b>PDP-11 core</b> (MACRO-11, octal). Saves made here need this build; the game switches over for good in M15 slice 6.'
-  : 'This world runs <b>Rover-ASM</b>. Try the coming PDP-11 core (MACRO-11, octal) in a new world.';
-const cpuSwitch = $('#btn-cpu-switch');
-cpuSwitch.textContent = engine.pdp11 ? 'New Rover-ASM world' : 'New PDP-11 world';
-cpuSwitch.addEventListener('click', () => {
-  if (!confirm('Start a new world with the other computer? The current world will be discarded (save it to a file first if you want to keep it).')) return;
-  leaving = true;
-  clearAutosave();
-  location.search = `?seed=${Math.floor(Math.random() * 1e9)}&cpu=${engine.pdp11 ? 'rover-asm' : 'pdp11'}`;
+  location.search = `?seed=${Math.floor(Math.random() * 1e9)}`;
 });
 $('#adm-charge').addEventListener('click', () => engine.admin.forceCharge(rover));
 $('#adm-repair').addEventListener('click', () => engine.admin.forceRepair(rover));
@@ -365,19 +346,14 @@ function frame(now: number): void {
     uiTimer = 0;
     if (adminDebugger) {
       debuggerPanel.update(rover, code.slot);
-      const st = rover.vm.state;
+      const st = rover.cpu.state;
       const live = st === CpuState.RUNNING || st === CpuState.BLOCKED || st === CpuState.HALTED || st === CpuState.FAULT;
       const progLive = live && (rover.slice >= 0 || rover.progState === ProgState.PROG_HALTED || rover.progState === ProgState.PROG_READY);
-      if (rover.machine) {
-        // M15: the line of each context's PC (a firmware handler in the program's time marks the firmware).
-        const m = rover.machine;
-        const fwNow = m.context !== 'program';
-        code.setExecLine('firmware', live && fwNow ? roverBuilds.lineAt(rover, 'firmware', m.registers('firmware').r[7]) : 0);
-        code.setExecLine('program', progLive && engine.hasProgram(rover) ? roverBuilds.lineAt(rover, 'program', m.registers('program').r[7]) : 0);
-      } else {
-        code.setExecLine('firmware', live && rover.slice < 0 ? rover.vm.nextLine : 0);
-        code.setExecLine('program', progLive && engine.hasProgram(rover) ? rover.prog.nextLine : 0);
-      }
+      // The line of each context's PC (a firmware handler in the program's time marks the firmware).
+      const m = rover.machine;
+      const fwNow = m.context !== 'program';
+      code.setExecLine('firmware', live && fwNow ? roverBuilds.lineAt(rover, 'firmware', m.registers('firmware').r[7]) : 0);
+      code.setExecLine('program', progLive && engine.hasProgram(rover) ? roverBuilds.lineAt(rover, 'program', m.registers('program').r[7]) : 0);
     }
     const sun = engine.sun;
     clockEl.textContent = `sol ${engine.env.dayNumber(engine.tick)} · ${sun.elevation > 0 ? '☀ day' : '☾ night'} · tick ${engine.tick}`;

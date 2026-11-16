@@ -7,8 +7,7 @@
  */
 import '../style.css';
 import { DEFAULT_FIRMWARE, PROGRAM_TEMPLATES } from '../core/programs';
-import { SimulationEngine, type UplinkCommand } from '../core/SimulationEngine';
-import type { Slot } from '../core/vm/Compiler';
+import { SimulationEngine, type Slot, type UplinkCommand } from '../core/SimulationEngine';
 import { CodeWorkspace } from '../ui/CodeWorkspace';
 import { CommsPanel } from '../ui/CommsPanel';
 import { hint, MISSION_EVENTS_HELP } from '../ui/hint';

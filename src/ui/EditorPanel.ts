@@ -3,7 +3,6 @@ import { linter, lintGutter, type Diagnostic } from '@codemirror/lint';
 import { EditorState, StateEffect, StateField, RangeSetBuilder } from '@codemirror/state';
 import { Decoration, EditorView, highlightActiveLine, keymap, lineNumbers, type DecorationSet } from '@codemirror/view';
 import type { Extension } from '@codemirror/state';
-import { roverAsm, roverAsmHighlight } from './roverAsmLanguage';
 import type { Diag } from './toolchain';
 
 const setExecLine = StateEffect.define<number>();
@@ -27,7 +26,7 @@ const execLineField = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 });
 
-/** What the linter needs from a build: errors, and warnings (M15: the MACRO-11 assembler's). */
+/** What the linter needs from a build: the assembler's errors and warnings. */
 export interface Lintable {
   errors: readonly Diag[];
   warnings?: readonly Diag[];
@@ -39,8 +38,8 @@ export interface EditorPanelOptions<R extends Lintable = Lintable> {
   compile: (src: string) => R;
   onUpload: () => void;
   onChange: (src: string, result: R) => void;
-  /** Syntax highlighting (default Rover-ASM; M15: MACRO-11). */
-  language?: Extension[];
+  /** Syntax highlighting. */
+  language: Extension[];
   /** The cursor moved to another line (1-based): the listing follows it. */
   onCursor?: (line: number) => void;
 }
@@ -73,7 +72,7 @@ export class EditorPanel<R extends Lintable = Lintable> {
           lineNumbers(),
           history(),
           highlightActiveLine(),
-          ...(opts.language ?? [roverAsm, roverAsmHighlight]),
+          ...opts.language,
           lint,
           lintGutter(),
           execLineField,

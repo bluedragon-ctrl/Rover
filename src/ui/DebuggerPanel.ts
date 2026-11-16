@@ -1,11 +1,8 @@
-import { PORTS } from '../core/ports';
-import type { SimulationEngine } from '../core/SimulationEngine';
-import { CpuState, Dir, ProgState, Status } from '../core/types';
-import type { Slot } from '../core/vm/Compiler';
+import type { SimulationEngine, Slot } from '../core/SimulationEngine';
+import { CpuState, Dir, ProgState } from '../core/types';
 import type { Unit } from '../core/Unit';
 import { TOOLS } from '../core/tools';
-import { formatAddr } from '../core/vm/isa';
-import { disassemble } from '../pdp11';
+import { disassemble } from '../blue11';
 import { IO_REGISTERS } from '../core/machine/iopage';
 import { ROM_EXPORTS } from '../core/machine/rom';
 import { STACK11_WORDS } from '../core/downlink';
@@ -15,7 +12,7 @@ import { romRoutineAt } from './comms';
 const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!);
 
 /** Names the disassembler shows for addresses: I/O registers and ROM routines. */
-const PDP_NAMES = new Map<number, string>([...IO_REGISTERS.filter((r) => !r.alias).map((r) => [r.addr, r.name] as [number, string]), ...Object.entries(ROM_EXPORTS).map(([n, a]) => [a, n] as [number, string])]);
+const NAMES = new Map<number, string>([...IO_REGISTERS.filter((r) => !r.alias).map((r) => [r.addr, r.name] as [number, string]), ...Object.entries(ROM_EXPORTS).map(([n, a]) => [a, n] as [number, string])]);
 
 /** PSW flag bits, high to low as DEC prints them. */
 const FLAGS: [string, number, string][] = [
@@ -32,12 +29,12 @@ const signed = (v: number): number => ((v & 0xffff) ^ 0x8000) - 0x8000;
 export class DebuggerPanel {
   private lastHtml = '';
 
-  /** `builds`: the code on the rover (M15: source lines for the PDP-11 view). */
+  /** `builds`: the code on the rover (source lines). */
   constructor(private el: HTMLElement, private engine: SimulationEngine, private builds?: RoverBuilds) {}
 
   /** `slot`: the context to show (the Code tab's slot). */
   update(u: Unit, slot: Slot = 'firmware'): void {
-    const html = u.machine ? this.pdpHtml(u, slot) : this.rasmHtml(u, slot);
+    const html = this.machineHtml(u, slot);
     if (html !== this.lastHtml) {
       this.el.innerHTML = html;
       this.lastHtml = html;
@@ -45,17 +42,16 @@ export class DebuggerPanel {
   }
 
   /** Devices working right now. */
-  private busy(u: Unit, timer = 0): string {
+  private busy(u: Unit): string {
     const busy: string[] = [];
     if (u.action?.kind === 'TOOL') busy.push(`${u.action.tool} ${u.action.ticksLeft}t`);
     else if (u.action?.kind === 'STEP') busy.push(`drive ${Dir[u.action.dir]} (${u.action.tilesLeft} left, ${u.action.ticksLeft}t${u.action.stop ? ', stopping' : ''})`);
     if (u.radarTicks) busy.push(`radar ${Dir[u.radarDir]}`);
     if (u.imgOp) busy.push(`${u.imgOp.kind} ${u.imgOp.ticksLeft}t`);
-    if (timer) busy.push(`timer ${timer}t`);
     return busy.length ? busy.join(' · ') : 'devices idle';
   }
 
-  /** Battery, hull and the other systems, cargo and hardpoints (both cores). */
+  /** Battery, hull and the other systems. */
   private hardwareHtml(u: Unit): string {
     const batPct = (u.energy * 100) / u.chassis.batteryCapacity;
     return `
@@ -79,15 +75,13 @@ export class DebuggerPanel {
 
   private statePill(u: Unit, slot: Slot): string {
     const progCls: Record<number, string> = { [ProgState.PROG_RUNNING]: 'ok', [ProgState.PROG_READY]: 'info', [ProgState.PROG_HALTED]: 'warn', [ProgState.PROG_FAULT]: 'bad' };
-    const st = u.vm.state;
+    const st = u.cpu.state;
     const cls = st === CpuState.RUNNING ? 'ok' : st === CpuState.BLOCKED ? 'info' : st === CpuState.HALTED ? 'warn' : 'bad';
     return `<span class="pill ${slot === 'program' ? (progCls[u.progState] ?? 'dim') : cls}">${slot === 'program' ? ProgState[u.progState] : st}</span>`;
   }
 
-  // ---------------------------------------------------------------- M15: PDP-11 core
-
-  private pdpHtml(u: Unit, slot: Slot): string {
-    const m = u.machine!;
+  private machineHtml(u: Unit, slot: Slot): string {
+    const m = u.machine;
     const { r, psw } = m.registers(slot);
     const pc = r[7];
     const ctxName = m.context;
@@ -98,7 +92,7 @@ export class DebuggerPanel {
         : `FIRMWARE${ctxName === 'handler' ? ' · handler in the program\'s time' : u.slice >= 0 ? ' · the program has the CPU' : ''}`;
     const line = this.builds?.lineAt(u, slot, pc) ?? 0;
     const inRom = pc >= 0o160000 && pc < 0o170000;
-    const dis = disassemble((a) => m.peek(a) ?? 0, pc, { nameOf: (a) => PDP_NAMES.get(a) });
+    const dis = disassemble((a) => m.peek(a) ?? 0, pc, { nameOf: (a) => NAMES.get(a) });
     const where = inRom ? `ROM ${romRoutineAt(pc)}` : line ? `L${line}` : '';
     const reg = (i: number) => {
       const name = i === 6 ? 'SP' : i === 7 ? 'PC' : `R${i}`;
@@ -122,7 +116,7 @@ export class DebuggerPanel {
         <span class="dim">${here ? 'next' : 'resumes at'} ${oct6(pc)}${where ? ` ${esc(where)}` : ''} · ${this.busy(u)}</span>
       </div>
       <div class="dbg-next mono small"><span class="dim">${oct6(pc)}</span> ${esc(dis.text)}</div>
-      ${u.vm.state === CpuState.FAULT ? `<div class="fault">FAULT: ${esc(u.vm.faultReason)} — watchdog ${u.vm.watchdog}t</div>` : ''}
+      ${u.cpu.state === CpuState.FAULT ? `<div class="fault">FAULT: ${esc(u.cpu.faultReason)} — watchdog ${u.cpu.watchdog}t</div>` : ''}
       ${this.hardwareHtml(u)}
       <h4>Registers <small>octal; hover for decimal</small></h4><div class="grid4">${[0, 1, 2, 3, 4, 5, 6, 7].map(reg).join('')}</div>
       <div class="dbg-psw small"><span class="dim">PSW</span> <b class="mono">${oct6(psw)}</b> · priority ${(psw >> 5) & 7} · ${mode === 3 ? 'user (program mode)' : 'kernel'} · <span class="flags">${flags}</span></div>
@@ -131,42 +125,6 @@ export class DebuggerPanel {
       ${this.cargoHtml(u)}
       <h4>I/O page <small>w = writable</small></h4><div class="grid2">${io}</div>
       <div class="dim small">cycles this tick ${meter.tick}/${budget} · peak ${meter.peak} · ${u.chassis.name}: core ${m.coreBytes / 1024} KB</div>
-    `;
-  }
-
-  // ---------------------------------------------------------------- Rover-ASM (until M15 slice 6)
-
-  private rasmHtml(u: Unit, slot: Slot): string {
-    const vm = slot === 'program' ? u.prog : u.vm;
-    const ctx0 = slot === 'program' ? `PROGRAM${u.slice > 0 ? ` · slice ${u.slice}t left` : u.slice === 0 ? ' · no time limit' : ''}` : `FIRMWARE${u.slice >= 0 ? ' · in CALL PROGRAM' : ''}`;
-    const regs = Array.from(vm.regs)
-      .map((v, i) => `<div class="kv"><span>r${i}</span><b>${v}</b></div>`)
-      .join('');
-    const stack = (arr: number[], size: number, fmt: (v: number) => string) =>
-      Array.from({ length: size }, (_, i) => `<span class="slot ${i < arr.length ? 'full' : ''}">${i < arr.length ? fmt(arr[i]) : '·'}</span>`).join('');
-    const ipLine = (ip: number) => `${formatAddr(ip)} L${vm.lineAt(ip) || '?'}`;
-    const ctx = this.engine.portCtx;
-    const ports = PORTS.map((p) => {
-      const v = p.read ? p.read(u, ctx) : '—';
-      return `<div class="kv" title="${esc(p.description)}"><span>@${p.name}${p.write ? '<i>w</i>' : ''}</span><b>${v}</b></div>`;
-    }).join('');
-    return `
-      <div class="dbg-row">
-        ${this.statePill(u, slot)}
-        <span class="pill ${vm.status === Status.OK ? 'dim' : 'warn'}">@STATUS ${Status[vm.status]}</span>
-        <span class="pill dim">${ctx0}</span>
-        <span class="dim">next ${formatAddr(vm.nextIp, slot)} L${vm.nextLine || '-'} · ${this.busy(u, vm.timer)}</span>
-      </div>
-      ${vm.state === CpuState.FAULT ? `<div class="fault">FAULT: ${esc(vm.faultReason)} — watchdog ${vm.watchdog}t</div>` : ''}
-      ${this.hardwareHtml(u)}
-      <h4>RAM <small>${u.ram.length} B, shared</small></h4>
-      <div class="dim small mono">${Array.from(u.ram, (b) => b.toString(16).toUpperCase().padStart(2, '0')).join(' ')}</div>
-      ${this.cargoHtml(u)}
-      <h4>Registers</h4><div class="grid4">${regs}</div>
-      <h4>Data stack <small>${vm.dataStack.length}/${u.chassis.dataStack}</small></h4><div class="stack">${stack(vm.dataStack, u.chassis.dataStack, String)}</div>
-      <h4>Call stack <small>${vm.callStack.length}/${u.chassis.callStack}</small></h4><div class="stack">${stack(vm.callStack, u.chassis.callStack, ipLine)}</div>
-      <h4>Ports</h4><div class="grid2">${ports}</div>
-      <div class="dim small">instructions executed: ${vm.instructionsExecuted} · ${u.chassis.name}: ${u.chassis.cyclesPerTick} cycles/tick</div>
     `;
   }
 }

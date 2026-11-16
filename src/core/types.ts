@@ -23,7 +23,7 @@ export enum Status {
   ERR_NO_SIGNAL = 6,
   ERR_HAZARD = 7,
   ERR_DEPLOYED = 8,
-  /** M14: stopped by a command before it finished (a drive stopped with @DRIVE_N 0). */
+  /** M14: stopped by a command before it finished (a drive stopped with DRVCNT 0). */
   ERR_PREEMPTED = 9,
   /** M14: the device (or one it is interlocked with) is still working. */
   ERR_BUSY = 10,
@@ -37,7 +37,7 @@ export enum LightColor {
   AMBER = 4,
 }
 
-/** Repair targets (@REPAIR_SYS, `CALL USE slot system`). */
+/** Repair targets (F.HULL, F.SOL, F.ANT: ROM USE). */
 export enum SystemId {
   SYS_HULL = 0,
   SYS_SOLAR = 1,
@@ -57,7 +57,7 @@ export enum Layer {
   ACTOR = 3,
 }
 
-/** @PROG_STATE (M10, SPEC §3.9.2). */
+/** `PRGST` (M10, SPEC §3.9.2). */
 export enum ProgState {
   PROG_NONE = 0,
   PROG_READY = 1,
@@ -67,7 +67,7 @@ export enum ProgState {
   PROG_HALTED = 5,
 }
 
-/** @PREEMPT condition bits (SPEC §3.9.2): what ends a program slice at once. */
+/** `PREMPT` condition bits (SPEC §3.9.2): what ends a program slice at once. */
 export enum Preempt {
   PRE_ALERT = 1,
   PRE_DAMAGE = 2,
@@ -77,7 +77,7 @@ export enum Preempt {
 export enum CpuState {
   RUNNING = 'RUNNING',
   BLOCKED = 'BLOCKED',
-  /** Stopped by BRK until Continue or an upload (M9). No watchdog. */
+  /** Stopped by BPT or a firmware HALT until Continue or an upload (M9). No watchdog. */
   HALTED = 'HALTED',
   FAULT = 'FAULT',
   POWER_OFF = 'POWER_OFF',

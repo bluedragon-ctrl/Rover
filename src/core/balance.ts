@@ -4,7 +4,7 @@ import type { ToolId } from './tools';
 export const BALANCE = {
   defaultTickHz: 10,
   watchdogTicks: 50, // FAULT → hard reboot after this many ticks (the fault reset)
-  /** Longest @WDT timeout firmware can arm (SPEC §3.9.5). */
+  /** Longest `WDT` timeout firmware can arm (SPEC §3.9.5). */
   wdtMaxTicks: 30_000,
 
   batteryCapacity: 100_000,
@@ -28,8 +28,8 @@ export const BALANCE = {
   headlightPerTick: 8,
 
   // Thermal (docs/SPEC.md §3.3.4): the rover follows the ambient slowly; heaters hold a floor
-  ambientNightC: -80, // ambient at @SUN_LIGHT 0 (night, total eclipse)
-  ambientDayC: 20, // ambient at @SUN_LIGHT 100; linear in between
+  ambientNightC: -80, // ambient at SUNLIT 0 (night, total eclipse)
+  ambientDayC: 20, // ambient at SUNLIT 100; linear in between
   thermalTicksPerDeg: 4, // the rover's temperature moves 1 °C toward the ambient every N ticks
   heaterSetpointC: -40, // survival heaters (thermostat) keep the rover at or above this
   heaterPerTick: 6, // energy per tick while the heaters run
@@ -45,7 +45,7 @@ export const BALANCE = {
   headlightNearLength: 2, // first tiles of the cone ...
   headlightNearSpread: 1, // ... are 3 wide (|lateral| <= 1)
   headlightFarSpread: 2, // the rest is 5 wide
-  turnEnergy: 5, // @HEADING write: turn in place
+  turnEnergy: 5, // HDG write: turn in place
 
   // Comms
   uploadBase: 500,
@@ -58,20 +58,18 @@ export const BALANCE = {
   /** Dump replies that may wait for the downlink at once. */
   dumpQueueMax: 4,
   // Downlink (docs/SPEC.md §3.8.1): byte-based, shared by the log FIFO and the science recorder
-  linkBytesPerTick: 2, // at @SIGNAL_STR 100, proportional to signal (Mk-I; chassis.linkBytesPerTick)
+  linkBytesPerTick: 4, // at SIGNAL 100, proportional to signal (Mk-I; chassis.linkBytesPerTick)
   linkMinSignal: 20, // nothing is sent below this
   linkEnergyPerTick: 2, // per tick in which at least one byte is sent
 
-  // Camera (docs/SPEC.md §3.8.5): @CAM dir, @CAM_MODE (the ROM's SNAP dir mode)
+  // Camera (docs/SPEC.md §3.8.5): the camera block (the ROM's SNAP)
   snapTicks: 10,
   snapEnergy: 200,
-  sendTicks: 1, // @SEND (M12, §3.8.7): image memory → recorder
-  sendEnergy: 10, // a small cost (= a SCAN); the transmitter pays per byte on top
-  eraseTicks: 2, // @ERASE (M12, §3.8.7): zero image memory on request, like a flash erase
+  eraseTicks: 2, // F.ERAS (§3.8.7): zero image memory on request, like a flash erase
   eraseEnergy: 10,
   snapReach: 2, // subject: first obstacle / item / rover within this many tiles, else a landscape
   horizonRange: 16, // landscape: obstacles up to this far shape the skyline
-  snapMinSunLight: 20, // @SUN_LIGHT needed for a lit photo (or the headlight aimed at the subject)
+  snapMinSunLight: 20, // SUNLIT needed for a lit photo (or the headlight aimed at the subject)
   photoCredits: 1, // lit photo
   photoFirstBonus: 5, // first lit photo of a subject type
   editFirstBonus: 5, // M12: first lit edited photo in each camera mode (photo type 1-5)
@@ -94,48 +92,10 @@ export const BALANCE = {
 } as const;
 
 /**
- * Machine-code size of Rover-ASM (docs/SPEC.md §5.7). Every instruction is one opcode byte
- * plus its operands; compile-time names (labels, ALIAS, CONST) emit nothing themselves.
+ * The rover's computer (docs/BLUE11_CPU.md §2, §6): memory map and sizes. The cycle budget is
+ * the chassis' `cyclesPerTick`.
  */
-export const ENCODING = {
-  opcode: 1,
-  extOpcode: 2, // extension prefix 1F + the instruction's number (AND, OR, SHL, SHR)
-  register: 1, // operand byte: addressing mode + register index
-  port: 1, // operand byte: addressing mode + port number
-  shortImm: 1, // 0..shortImmMax packed into the operand byte itself
-  shortImmMax: 15,
-  imm8: 2, // operand byte + 1 data byte: -128..127
-  imm16: 3, // + 2 data bytes: -32768..32767
-  imm32: 5, // + 4 data bytes: anything else (registers are 32-bit)
-  label: 2, // absolute 16-bit address of a jump / call target
-  memReg: 1, // M14 [r]: operand byte only
-  memAddr: 3, // M14 [n] or [r+n]: operand byte + 16-bit address / offset
-} as const;
-
-/** M14 data address space (docs/ASSEMBLER_CORE.md §7.1): where RAM, image memory and cargo sit. */
-export const MEMORY_MAP = {
-  RAM: 0x000, // RAM: chassis.ramBytes (Mk-I 64 B, upgrades up to 256)
-  IMG: 0x100, // image memory: imageBytes(chassis) (256 / 512 / 1024 B)
-  CARGO: 0x600, // cargo: one read-only byte per slot (the item's tile ID)
-} as const;
-
-/**
- * M15 PDP-11 core (docs/PDP11_CPU.md §2, §6): memory map and budgets. Draft values, to be
- * measured in slice 4 and tuned in playtests (owner, 2026-11-15).
- */
-export const PDP11 = {
-  /**
-   * CPU cycles (bus accesses) per tick for each Rover-ASM cycle of the chassis: Mk-I 8 × 8 = 64,
-   * overclock 96 / 128 (owner, 2026-11-15, after the slice 4 measurement: PDP11_CPU.md §14.5).
-   */
-  cyclesPerRoverCycle: 8,
-  /**
-   * Photos at double resolution are four times bigger, so the downlink and the recorder
-   * scale too (owner, 2026-11-15; PDP11_CPU.md §6.3): × the chassis values, Mk-I link
-   * 4 B/tick (amplifier 6), recorder 2 KB (upgrades 4 / 8 KB).
-   */
-  linkScale: 2,
-  recorderScale: 2,
+export const BLUE11 = {
   /** Core installed on a Mk-I (memory boards: 4 / 8 KB later). */
   coreBytes: 2048,
   /** Firmware image origin (after the vectors) and the program base (fixed per chassis, decision 13). */
@@ -145,9 +105,9 @@ export const PDP11 = {
   imageBase: 0o100000,
   romBase: 0o160000,
   ioBase: 0o170000,
-  /** Real-time output FIFO of the TX device (PDP11_IO.md §3.5a). */
+  /** Real-time output FIFO of the TX device (BLUE11_IO.md §3.5a). */
   txFifoBytes: 64,
-  /** Safe mode (PDP11_CPU.md §10, from M14 §6.3): this many fault / watchdog reboots within... */
+  /** Safe mode (BLUE11_CPU.md §10, from M14 §6.3): this many fault / watchdog reboots within... */
   safeModeBoots: 3,
   /** ...this many ticks make the boot ROM run its built-in safe firmware. */
   safeModeTicks: 500,
@@ -155,13 +115,7 @@ export const PDP11 = {
 
 export interface ChassisDef {
   name: string;
-  /** Program memory in bytes (see ENCODING). */
-  flashBytes: number;
-  /** M14: RAM in bytes, shared by firmware and program (docs/ASSEMBLER_CORE.md §7). */
-  ramBytes: number;
-  registers: number;
-  dataStack: number;
-  callStack: number;
+  /** CPU cycles (bus accesses) per tick (docs/BLUE11_CPU.md §4, §14.5). */
   cyclesPerTick: number;
   /** Log FIFO size in bytes (downlink, §3.8.3). */
   logFifoBytes: number;
@@ -169,13 +123,13 @@ export interface ChassisDef {
   recorderBytes: number;
   /** Downlink bytes per tick at full signal (§3.8.1). */
   linkBytesPerTick: number;
-  /** Camera modes `SNAP dir mode` accepts (= photo product types, §3.8.5). */
+  /** Camera modes the camera takes (= photo product types, §3.8.5). */
   cameraModes: number[];
   sensorRange: number;
   cargoSlots: number;
   /** Tool mounted in each hardpoint TOOL_0..TOOL_3 (null = empty). */
   tools: Array<ToolId | null>;
-  /** Energy units at 100 % (@BAT reports a percentage of this). */
+  /** Energy units at 100 % (BAT reports a percentage of this). */
   batteryCapacity: number;
   /** Solar output multiplier in percent. */
   solarPercent: number;
@@ -185,15 +139,10 @@ export interface ChassisDef {
 
 export const CHASSIS_MK1: ChassisDef = {
   name: 'Rover Mk-I',
-  flashBytes: 512, // shared by firmware and program (128 before M10, 256 before M14)
-  ramBytes: 64, // M14
-  registers: 4,
-  dataStack: 16, // M14 (was 8): ROM calls push their arguments
-  callStack: 8,
-  cyclesPerTick: 8, // M14 (was 4): device code is a few instructions longer than the old hardware instructions
+  cyclesPerTick: 64, // owner, 2026-11-15, after the slice 4 measurement (BLUE11_CPU.md §14.5)
   logFifoBytes: 32,
-  recorderBytes: 1024,
-  linkBytesPerTick: 2,
+  recorderBytes: 2048, // photos at double resolution are four times bigger (BLUE11_CPU.md §6.3)
+  linkBytesPerTick: 4,
   cameraModes: [1, 2],
   sensorRange: 6,
   cargoSlots: 4,
@@ -203,7 +152,7 @@ export const CHASSIS_MK1: ChassisDef = {
   hullArmor: 1,
 };
 
-/** Per-unit mutable copy (upgrades modify it in place, so the VM's reference stays valid). */
+/** Per-unit mutable copy (upgrades modify it in place). */
 export function cloneChassis(c: ChassisDef): ChassisDef {
   return { ...c, tools: [...c.tools], cameraModes: [...c.cameraModes] };
 }

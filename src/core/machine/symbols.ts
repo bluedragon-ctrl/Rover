@@ -1,5 +1,5 @@
 /**
- * M15 predefined symbols of the PDP-11 core (docs/PDP11_IO.md §10): what the MACRO-11
+ * M15 predefined symbols of the Blue-11 (docs/BLUE11_IO.md §10): what the
  * assembler knows before the first line, like DEC's system macro library: the system names
  * (names.ts), the ROM's entry points (rom.ts, so a program writes `JSR PC, STEP`) and the
  * tiles. Six characters at most (owner decision 17); a test checks every one.

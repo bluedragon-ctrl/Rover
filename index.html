@@ -7,7 +7,7 @@
   </head>
   <body>
     <header id="topbar">
-      <div class="brand">ROVER<span>/ASM</span></div>
+      <div class="brand">ROVER<span>/BLUE-11</span></div>
       <div class="group" id="speed">
         <button data-speed="0" title="Pause (Space)">❚❚</button>
         <button data-speed="1">1×</button>
@@ -69,9 +69,6 @@
             <input type="file" id="load-input" accept=".json,application/json" hidden />
           </div>
           <p class="small dim" id="save-info"></p>
-          <h4>Computer <small>M15 preview</small></h4>
-          <p class="small dim" id="cpu-info"></p>
-          <div class="toolbar"><button id="btn-cpu-switch"></button></div>
           <h4>Admin console</h4>
           <p class="small dim">Cheats for testing and for when your rover is stuck. They do not touch the program. Shift+click the map to teleport the rover.</p>
           <div class="toolbar">
@@ -84,7 +81,7 @@
             <button id="adm-event-go">Start event</button>
             <button id="adm-credits">+50 credits</button>
           </div>
-          <label class="small"><input type="checkbox" id="adm-debugger" /> Live debugger (registers, stacks, ports, current line, single-step)</label>
+          <label class="small"><input type="checkbox" id="adm-debugger" /> Live debugger (registers, stack, I/O page, current line, single-step)</label>
           <label class="small"><input type="checkbox" id="adm-invuln" /> Invulnerable (no hull or system damage)</label>
           <label class="small"><input type="checkbox" id="adm-free" /> Free uploads (ignore signal &amp; battery cost)</label>
           <label class="small"><input type="checkbox" id="adm-reveal" /> Reveal map (disable fog of war)</label>

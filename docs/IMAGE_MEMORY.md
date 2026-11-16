@@ -1,5 +1,9 @@
 # Image memory: player guide **[M12]**
 
+> **Historical (M12).** This guide's examples are Rover-ASM, which M15 slice 6 replaced with the
+> Blue-11. The rules carry over (SPEC §3.8.7); the current guide is Reference → Image and the
+> six *Image: …* lessons in Blue-11 assembly (`src/core/programs.ts`).
+
 Status: **in the game** (M12; on the M14 ROM and devices since M14 slice 4). Rules in [`SPEC.md`](SPEC.md) §3.8.7, plan in
 [`ROADMAP.md`](ROADMAP.md) M12. In the game, **Reference → Image** sums this guide up, and the
 six examples are Code tab program templates (*Image: Line* … *Image: Memory map*), word for
