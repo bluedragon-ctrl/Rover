@@ -332,7 +332,7 @@ on pickup and needs no cargo slot. Registers: `DROPS` (landed crates waiting), `
 
 **[M15]** The flash, RAM, register-file and trace-buffer upgrades left the catalogue with
 Rover-ASM. Memory boards (core 4 / 8 KB) and the EIS option (hardware `MUL` / `DIV`) are
-designed ([`BLUE11_CPU.md`](BLUE11_CPU.md) §6.1, §9.2) but not in the catalogue yet. Goal
+designed ([`BLUE11_CPU.md`](BLUE11_CPU.md) §6.1, §9.2) but deferred until the rover works and has been playtested (owner, 2026-11-16). Goal
 *Upgraded*: install a first upgrade.
 
 ## 3.8 Downlink, debugging and science products **[M9]**
@@ -744,7 +744,7 @@ The original /40 model's instruction set (with byte forms `MOVB`, `CMPB`…):
 * **Traps and control:** `TRAP n`, `EMT n`, `BPT`, `IOT`, `RTI`, `RTT`, `HALT`, `WAIT`,
   `RESET`, `NOP`, the flag operations `CLC CLV CLZ CLN SEC SEV SEZ SEN CCC SCC`.
 * **Multiply and divide** are ROM routines (`MUL16`, `DIV16`); the hardware `MUL DIV ASH
-  ASHC` come with the EIS option (designed as an upgrade, not in the catalogue yet), and
+  ASHC` come with the EIS option (designed as an upgrade, deferred until after playtesting), and
   without it they are illegal instructions (trap to `010`).
 
 Every instruction's syntax, effect and flags are in Reference → Instructions (generated; a

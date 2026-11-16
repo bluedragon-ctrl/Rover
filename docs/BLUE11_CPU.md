@@ -880,7 +880,8 @@ Decisions taken while building it:
   4 B/tick link); `cyclesPerRoverCycle`, `linkScale`, `recorderScale` are gone. Upgrades:
   `CPU_96` / `CPU_128`, `REC_4K` / `REC_8K`, `LINK_6`; the flash, RAM, register and trace
   buffer upgrades left (they had nothing to act on). Memory boards and EIS stay designed,
-  not in the catalogue.
+  not in the catalogue: deferred until the rover works and has been playtested (owner,
+  2026-11-16; ROADMAP backlog).
 * **Saves reset** (decision 3): `SAVE_VERSION` 21 and no migrations; an older save raises
   `OldSaveError`, the game says so and starts a new world (the autosave is cleared).
 * **Photos little-endian** (decision 18): the first pixel of a byte in its low bits; the
