@@ -149,26 +149,11 @@ input[type=checkbox] { width: auto; }
 #cw-cost.bad { color: var(--warn); }
 .cw-warn { border: 1px solid #ffb02088; background: #3a2a0844; color: #ffd591; border-radius: 4px; padding: 4px 8px; }
 .cw-warn[hidden] { display: none; }
+.cw-lst-toggle { display: inline-flex; align-items: center; gap: 4px; color: var(--dim); cursor: pointer; margin-left: auto; user-select: none; }
+.cw-lst-toggle:has(input:checked) { color: var(--accent); }
 .cw-editors { flex: 1 1 55%; min-height: 110px; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; display: flex; }
 .code-ws.slot-firmware .cw-editors { border-color: #6f8cff66; }
 .cw-editor { flex: 1; min-width: 0; } .cw-editor[hidden] { display: none; } .cw-editor .cm-editor { height: 100%; }
-.cw-listing { flex: 1 1 40%; min-height: 90px; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 4px; font-family: var(--mono); font-size: 11px; transition: box-shadow 0.3s; }
-.lst-head { display: flex; justify-content: space-between; gap: 8px; padding: 3px 8px; border-bottom: 1px solid var(--line); color: var(--dim); }
-.lst-head b { color: var(--accent); font-weight: 600; } .lst-head .bad { color: var(--bad); }
-.lst-cols, .lst-row { display: grid; grid-template-columns: 10ch 17ch minmax(0, 1fr); gap: 8px; padding: 0 8px; white-space: pre; }
-.lst-cols { color: #4a5a70; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; padding-top: 2px; }
-.lst-body { flex: 1; min-height: 0; overflow: auto; padding-bottom: 4px; }
-.lst-row { cursor: pointer; line-height: 1.55; }
-.lst-row:hover { background: #ffffff0a; }
-.lst-row .a { color: #8796ad; } .lst-row .pfx { color: #4a5a70; }
-.lst-row .h { color: #ffd23a; }
-.lst-row .s { overflow: hidden; text-overflow: ellipsis; color: var(--text); } .lst-row .s i { color: #4a5a70; font-style: normal; }
-.lst-row.label .s { color: var(--info); } .lst-row.directive .s { color: var(--dim); }
-.lst-row.cont .a { opacity: 0.55; }
-.lst-row.cursor { background: #3affc812; box-shadow: inset 2px 0 0 #3affc888; }
-.lst-row.exec { background: #3affc826; box-shadow: inset 3px 0 0 #3affc8; }
-.lst-row.err { background: #ff4d4d14; } .lst-row.err .h { color: var(--bad); }
-.lst-foot { border-top: 1px solid var(--line); padding: 3px 8px; color: var(--dim); text-align: right; }
 
 .panel-box { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; display: flex; flex-direction: column; gap: 6px; }
 .panel-box header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
@@ -236,8 +221,6 @@ b.up, b.down, .ins-flow .up, .ins-flow .down { color: var(--dir); }
 .ins-card .dim, .ins-card .kv2 i { font-family: var(--mono); }
 .ins-wait { color: #ffd591; }
 button.link { border: none; background: none; padding: 0; color: var(--info); text-decoration: underline; cursor: pointer; font: inherit; }
-.lst-row.snap { background: #5ad0ff1c; box-shadow: inset 3px 0 0 #5ad0ff; }
-.lst-row.snap .a::before { content: '◆'; color: #5ad0ff; position: absolute; margin-left: -9px; }
 #log-head { display: flex; align-items: center; padding: 3px 8px 0; border-top: 1px solid var(--line); font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 1px; }
 #log-head + #log { border-top: none; }
 /* Byte-by-byte frame tables (Comms "Decode bytes", dumps; Reference → Radio). */
@@ -263,7 +246,6 @@ button.link { border: none; background: none; padding: 0; color: var(--info); te
 #comms-list .src .link { color: #5d7a9a; }
 
 /* The Blue-11 in the Code tab and the debugger (octal listing, registers) */
-.octal .lst-cols, .octal .lst-row { grid-template-columns: 7ch 20ch minmax(0, 1fr); }
 .dbg-next { margin: 4px 0; padding: 2px 6px; background: #0f1520; border-left: 3px solid var(--accent); }
 .dbg-psw { margin-top: 4px; font-family: var(--mono); }
 .dbg-psw .flags { display: inline-flex; gap: 2px; }

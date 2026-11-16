@@ -29,7 +29,7 @@ export interface SlotBuild {
   result: ImageResult;
 }
 
-/** One row of the listing pane. */
+/** One row of the assembler's listing. */
 export interface ListingRowView {
   line: number;
   /** Address column, '' for rows without one. */
@@ -98,6 +98,26 @@ export function listingRows(b: SlotBuild): ListingRowView[] {
     seen.add(r.line);
     return { line: r.line, addr, code: words ? words.split(/\s+/) : [], source, kind, error: first ? errs.get(r.line) : undefined };
   });
+}
+
+/** One source line of the listing: its address and words in octal (as the assembler writes them). */
+export interface ListingLine {
+  addr: string;
+  words: readonly string[];
+}
+
+/** The listing grouped by source line: the line's first address and all its words (for the editor's column). */
+export function listingByLine(b: SlotBuild): Map<number, ListingLine> {
+  const out = new Map<number, { addr: string; words: string[] }>();
+  for (const r of listingRows(b)) {
+    const l = out.get(r.line);
+    if (!l) out.set(r.line, { addr: r.addr, words: [...r.code] });
+    else {
+      if (!l.addr) l.addr = r.addr;
+      l.words.push(...r.code);
+    }
+  }
+  return out;
 }
 
 export function toolchain(e: SimulationEngine): Toolchain {
