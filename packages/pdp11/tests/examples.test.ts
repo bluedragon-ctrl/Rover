@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { assemble, SimpleMachine } from '../../src/pdp11';
-import { EXAMPLES, SIM_SYMBOLS } from '../../src/simulator/examples';
+import { assemble, SimpleMachine } from '../src';
+import { EXAMPLES, SIM_SYMBOLS } from '../examples/examples';
 
 describe('simulator examples', () => {
   it.each(EXAMPLES.map((e) => [e.name, e] as const))('%s assembles and runs', (_name, ex) => {

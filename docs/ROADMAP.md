@@ -121,7 +121,16 @@ codes, a type per message: text, error codes, science data…), sketched in
   - [x] Owner decisions after review (2026-11-15): budget **Mk-I 64** (`PDP11.cyclesPerRoverCycle`
         8; overclock 96 / 128); link and recorder ×2 on the PDP-11 core (`PDP11.linkScale`,
         `recorderScale`: Mk-I 4 B/tick, 2 KB; upgrades 6 B/tick, 4 / 8 KB).
+- [x] The library as a package of its own (owner, 2026-11-16: several projects will use it):
+      `packages/pdp11/` (npm workspace `pdp11`, entry points `pdp11`, `pdp11/codemirror`,
+      `pdp11/examples`), its tests, examples and docs inside it; self-contained README with
+      a host guide, the full API, cycle table, instruction set and a **MACRO-11
+      compatibility** section; `AGENTS.md`, `CHANGELOG.md` 0.1.0; tested examples
+      `examples/host.ts` (hosting the CPU in your own machine) and the README's quick start;
+      95 package tests, runnable on their own (`npm run test:pdp11`).
 - [ ] Slice 5: UI (editor, listing, debugger, Comms dumps, Reference).
+      Generic panels (registers, PSW, memory, listing, stepping) go into the package as an
+      optional `pdp11/ui` entry point; Rover and the simulator page both use them.
 - [ ] Slice 6: switch over, delete Rover-ASM, reset saves, rewrite SPEC §5 and CLAUDE.md.
 
 ## M14 — Assembler core (in progress)
@@ -912,3 +921,4 @@ window with a fixed dish?
 | 2026-11-15 | `claude/relaxed-keller-ff4622` (2) | Owner decision: photos at double resolution on the PDP-11 core (64×64 base, 128×128 hi-res, image window 4 KB); `PHOTO_FORMATS_2X` in the generator, review page `preview.html?photos2x=1` (today vs doubled), link / recorder scaling proposed (`PDP11_CPU.md` §6.3). Game unchanged. |
 | 2026-11-15 | `claude/m15-slice4-rom` | M15 slice 4: ROM drivers and helpers in MACRO-11 (exported as predefined symbols), recorder registers and `SNDIMG` (photos as `T.IMG` messages, reassembled by ground), 2× photos on the PDP-11 engine, safe mode (`BOOTCS` / `BOOTCT`, built-in safe firmware), default firmware (326 B: line clock, `RUN`, watchdog, fault protection) and every firmware / program / image lesson in `programs-pdp11.ts`, each run by a test; cycle budget measured, proposal Mk-I 64 (owner to decide); save v20; 48 new tests. Game unchanged. |
 | 2026-11-15 | `claude/m15-balance` | M15 owner decisions after slice 4: Mk-I budget 64 cycles a tick on the PDP-11 core (overclock 96 / 128); link and recorder ×2 there (4 B/tick, 2 KB; upgrades 6 B/tick, 4 / 8 KB) through `Unit.linkBytesPerTick` / `recorderBytes`; photo review page shows the new air times. Rover-ASM game unchanged. |
+| 2026-11-16 | `claude/m15-balance` (2) | M15: the PDP-11 library becomes the workspace package `packages/pdp11/` (owner: it will be used by several projects): own `package.json`, tests, examples, self-contained README (host guide, API, cycles, instruction set, MACRO-11 compatibility), `AGENTS.md`, `CHANGELOG.md`; new tests for the host example, the README quick start and each MACRO-11 compatibility claim. Rover imports it as `pdp11`; behaviour unchanged. |

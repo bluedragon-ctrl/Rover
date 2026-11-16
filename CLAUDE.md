@@ -47,10 +47,14 @@ npm run build      # typecheck + production bundle in dist/
   Repair materials: `repairs` on the tile in `WorldRegistry`.
   New upgrades: `UPGRADES` in `src/core/upgrades.ts` (modify the rover's own `chassis`;
   never the shared `CHASSIS_MK1`).
-- `src/pdp11/` (M15) is a **standalone library** (CPU, assembler, disassembler): nothing in
-  it may import from the game (a test enforces it); Rover-specific things (memory map,
-  I/O page, gate, ROM) live outside it. API: `src/pdp11/README.md`. `simulator.html`
-  (`src/simulator/`) is its standalone page; its examples are tested.
+- `packages/pdp11/` (M15) is a **standalone, reusable library** and an npm workspace package
+  (`pdp11`: CPU, assembler, disassembler; entry points `pdp11`, `pdp11/codemirror`,
+  `pdp11/examples`). Other projects are expected to use it: nothing in it may import from
+  the game, it has no runtime dependencies, and its code, tests, examples and docs stay
+  inside the package (`tests/boundary.test.ts` there enforces it). Read its `AGENTS.md`
+  before changing it; keep its `README.md` self-contained and add to its `CHANGELOG.md`.
+  Rover-specific things (memory map, I/O page, gate, ROM) live outside it.
+  `simulator.html` (`src/simulator/`) is its standalone page.
 - M15 slice 3: Rover's side of the PDP-11 core lives in `src/core/machine/` (I/O page
   `iopage.ts`: new registers go there and become predefined symbols, six characters at
   most; bus, gate and interrupts `RoverMachine.ts`; boot ROM `rom.ts`). The engine uses it

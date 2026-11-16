@@ -2,7 +2,7 @@
  * M15 Rover's side of the PDP-11 core (docs/PDP11_CPU.md §6–§8, §14.1): the bus (core,
  * image memory, ROM, I/O page), write protection, the two contexts and the gate, when
  * interrupts arrive, and program faults leaving through the gate. The CPU itself is the
- * standalone library in src/pdp11/; nothing here changes how it executes.
+ * standalone library in packages/pdp11/; nothing here changes how it executes.
  *
  * Contexts: the gate (`MOV #GO, @#PRGCS`) swaps the whole register set, PC and PSW (two
  * saved CPU states). An interrupt or `TRAP` during the program swaps only the stack
@@ -11,7 +11,7 @@
  * into program mode restores the program's SP.
  */
 
-import { BUS_ERROR, Cpu, PSW_ADDRESS, assemble, type AssembleResult, type Bus, type CpuState as Pdp11State, type TrapInfo } from '../../pdp11';
+import { BUS_ERROR, Cpu, PSW_ADDRESS, assemble, type AssembleResult, type Bus, type CpuState as Pdp11State, type TrapInfo } from 'pdp11';
 import { PDP11 } from '../balance';
 import { TX_BOOT } from '../downlink';
 import { freshParser, parseStream, type ParserState } from '../messages';

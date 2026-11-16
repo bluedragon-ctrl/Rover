@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assemble, disassemble, INSTRUCTIONS, octal, SimpleMachine } from '../../src/pdp11';
+import { assemble, disassemble, INSTRUCTIONS, octal, SimpleMachine } from '../src';
 import { runAsm, words } from './helpers';
 
 const err = (src: string, opts = {}): string => {

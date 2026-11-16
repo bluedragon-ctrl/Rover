@@ -644,7 +644,7 @@ page, a command-line assembler). Rover is its first user, not its owner.
 
 ### 14.1 What goes where
 
-| Library `src/pdp11/` | Rover (`src/core/` and the UI) |
+| Library `packages/pdp11/` | Rover (`src/core/` and the UI) |
 | :--- | :--- |
 | CPU: registers, `PSW`, the eight addressing modes, the instruction set (§9.3), flags, traps, interrupts, `WAIT` / `HALT` / `RESET` | the memory map (§6): core size, image memory, ROM, write protection |
 | Options: EIS on / off, cycle model (per bus access as in §4, or flat), long names and `_` | the I/O page and every device ([`PDP11_IO.md`](PDP11_IO.md)) |
@@ -663,7 +663,7 @@ machine behaved.
 
 ### 14.2 Interface (built in slice 2)
 
-The full reference is [`src/pdp11/README.md`](../src/pdp11/README.md). In short:
+The full reference is [`packages/pdp11/README.md`](../packages/pdp11/README.md). In short:
 
 ```ts
 interface Bus {                       // supplied by the host (Rover: memory + I/O page)
@@ -694,10 +694,14 @@ program: "finished").
 
 ### 14.3 Rules
 
-* **A folder, not a package, for now:** `src/pdp11/` with its own `index.ts` (the only
-  entry point) and its own tests in `tests/pdp11/`. It moves to an npm workspace or its
-  own repository only when a second project needs it.
-* **No imports from the game.** A test fails if any file in `src/pdp11/` imports from
+* **A package of its own** (owner, 2026-11-16: several projects are expected to use it):
+  `packages/pdp11/`, an npm workspace package named `pdp11` with its own `package.json`
+  (entry points `.`, `./codemirror`, `./examples`; no runtime dependencies, CodeMirror an
+  optional peer), tests, examples, a self-contained `README.md` (including MACRO-11
+  compatibility), `AGENTS.md` for AI coders and `CHANGELOG.md` (0.1.0). Rover and the
+  simulator page import it as `pdp11`, like any other project would. It can move to its
+  own repository unchanged.
+* **No imports from the game.** A test fails if any file in the package imports from
   outside the folder, so the boundary can't erode quietly (like the determinism test).
 * **The game's core rules apply inside:** no DOM, no `Math.random`, no wall-clock time,
   integer arithmetic only. The library is deterministic by construction, which helps any

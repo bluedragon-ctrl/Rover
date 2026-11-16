@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 /** Every source file of the library, as text (new files are picked up automatically). */
-const FILES = import.meta.glob('../../src/pdp11/*.ts', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+const FILES = import.meta.glob('../src/*.ts', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+/** The examples and the package manifest. */
+const EXAMPLE_FILES = import.meta.glob('../examples/*.ts', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+const PKG = (import.meta.glob('../package.json', { query: '?raw', import: 'default', eager: true }) as Record<string, string>)['../package.json'];
 const entries = Object.entries(FILES).map(([path, src]) => [path.split('/').pop()!, src] as const);
 
 describe('pdp11 library boundary', () => {
@@ -30,5 +33,21 @@ describe('pdp11 library boundary', () => {
       if (f === 'codemirror.ts') continue;
       expect(src, f).not.toMatch(/Math\.(random|sin|cos)|Date\.now|new Date|performance\.now|document\.|window\./);
     }
+  });
+
+  it('examples import only the package itself and follow the same rules', () => {
+    const ex = Object.entries(EXAMPLE_FILES);
+    expect(ex.length).toBeGreaterThan(0);
+    for (const [path, src] of ex) {
+      for (const m of src.matchAll(/(?:import|export)[^'";]*from\s*['"]([^'"]+)['"]/g))
+        expect(m[1] === '../src' || m[1].startsWith('./'), `${path} imports ${m[1]}`).toBe(true);
+      expect(src, path).not.toMatch(/Math\.(random|sin|cos)|Date\.now|new Date|performance\.now|document\.|window\./);
+    }
+  });
+
+  it('the package declares its entry points and no runtime dependencies', () => {
+    const pkg = JSON.parse(PKG) as { exports: Record<string, string>; dependencies?: object };
+    expect(Object.keys(pkg.exports)).toEqual(['.', './codemirror', './examples']);
+    expect(pkg.dependencies).toBeUndefined();
   });
 });

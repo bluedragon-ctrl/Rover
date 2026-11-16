@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:pdp11": "npm test --workspace pdp11"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",
@@ -18,12 +19,16 @@
     "@codemirror/state": "^6.7.6",
     "@codemirror/view": "^6.43.15",
     "@lezer/highlight": "^1.2.5",
-    "three": "^0.187.0"
+    "three": "^0.187.0",
+    "pdp11": "*"
   },
   "devDependencies": {
     "@types/three": "^0.187.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.8",
     "vitest": "^5.1.0"
-  }
+  },
+  "workspaces": [
+    "packages/*"
+  ]
 }

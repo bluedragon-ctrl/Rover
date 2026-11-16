@@ -11,7 +11,7 @@
  * set `STKLIM` to the end of the firmware image (PDP11_CPU.md §6.2).
  */
 
-import { assemble, type AssembleResult } from '../../pdp11';
+import { assemble, type AssembleResult } from 'pdp11';
 import { BootReason } from '../downlink';
 import { PDP11 } from '../balance';
 import { IMG_CHUNK } from '../messages';

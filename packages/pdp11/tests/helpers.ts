@@ -1,4 +1,4 @@
-import { assemble, SimpleMachine, type AssembleOptions, type MachineOptions } from '../../src/pdp11';
+import { assemble, SimpleMachine, type AssembleOptions, type MachineOptions } from '../src';
 
 /** Assemble at 001000, boot a SimpleMachine, run until HALT (or the budget). */
 export function runAsm(src: string, opts: MachineOptions & { asm?: AssembleOptions; budget?: number } = {}) {

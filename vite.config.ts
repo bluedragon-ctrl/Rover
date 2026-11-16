@@ -7,5 +7,5 @@ export default defineConfig({
     chunkSizeWarningLimit: 1200,
     rollupOptions: { input: { main: 'index.html', preview: 'preview.html', simulator: 'simulator.html' } },
   },
-  test: { include: ['tests/**/*.test.ts'], environment: 'node' },
+  test: { include: ['tests/**/*.test.ts', 'packages/*/tests/**/*.test.ts'], environment: 'node' },
 });

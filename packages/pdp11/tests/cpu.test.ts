@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BUS_ERROR, Cpu, PSW, SimpleMachine, assemble, type Bus } from '../../src/pdp11';
+import { BUS_ERROR, Cpu, PSW, SimpleMachine, assemble, type Bus } from '../src';
 import { o, runAsm } from './helpers';
 
 /** Run a snippet followed by HALT; return the CPU. */

@@ -1,0 +1,26 @@
+{
+  "name": "pdp11",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A PDP-11 compatible CPU, MACRO-11 subset assembler and disassembler in TypeScript: deterministic, integer-only, no dependencies.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./codemirror": "./src/codemirror.ts",
+    "./examples": "./examples/examples.ts"
+  },
+  "files": ["src", "examples", "README.md", "AGENTS.md", "CHANGELOG.md"],
+  "scripts": {
+    "test": "vitest run --root .",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "peerDependencies": {
+    "@codemirror/language": "^6.0.0",
+    "@lezer/highlight": "^1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@codemirror/language": { "optional": true },
+    "@lezer/highlight": { "optional": true }
+  }
+}
