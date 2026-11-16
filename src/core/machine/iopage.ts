@@ -228,10 +228,10 @@ function deviceRegisters(b: DeviceBlock): IoRegister[] {
   const hasFn = key !== 'drv' && key !== 'rad';
   const fnText: Record<DevKey, string> = {
     drv: '', rad: '',
-    tol: ' FN (bits 3–1): hardpoint F.T0…F.T3.',
-    rep: ' FN: system F.HULL, F.SOL, F.ANT.',
-    cam: ' FN: camera mode F.M1…F.M5.',
-    img: ' FN: F.ERAS (zero image memory). Photos go home through the recorder (ROM SNDIMG).',
+    tol: ' FN (bits 3–1) picks the tool: F.T0…F.T3.',
+    rep: ' FN picks what to repair: F.HULL, F.SOL or F.ANT.',
+    cam: ' FN picks the camera mode: F.M1…F.M5.',
+    img: ' FN = F.ERAS clears image memory to 0. To send a photo home use the ROM\'s SNDIMG.',
   };
   const left = (d: Device) => (h: IoHost) => h.u.deviceLeft(d);
   const regs: IoRegister[] = [
@@ -239,11 +239,11 @@ function deviceRegisters(b: DeviceBlock): IoRegister[] {
       addr: base,
       name: `${p}CS`,
       access: 'RW',
-      description: `${b.title} control/status: GO (bit 0) starts it, DONE (bit 7) idle, ERR (bit 15) refused or failed, IE (bit 6, firmware) interrupt at vector ${b.vector.toString(8)}.${fnText[key]}`,
+      description: `${b.title} control and status. Write GO (bit 0) to start it. DONE (bit 7) = 1: finished, ready for the next job. ERR (bit 15) = 1: it refused or failed, ${p}ER says why. IE (bit 6, firmware only): interrupt at vector ${b.vector.toString(8)} when done.${fnText[key]}`,
       read: (h) => csrRead(h, key),
       write: (h, v) => csrWrite(h, key, v, hasFn),
     },
-    { addr: base + 2, name: `${p}ER`, access: 'RO', description: `${b.title} error: OK or why the last start was refused or the last run failed (E.…)`, read: (h) => h.u.results[unitDevice(h, key)] },
+    { addr: base + 2, name: `${p}ER`, access: 'RO', description: `${b.title} error code: OK (0) if the last job went well, or an E.… code saying why it was refused or failed`, read: (h) => h.u.results[unitDevice(h, key)] },
   ];
   const arg = (name: string, description: string, max = 0xffff): IoRegister => ({
     addr: base + 4,
@@ -256,12 +256,12 @@ function deviceRegisters(b: DeviceBlock): IoRegister[] {
   switch (key) {
     case 'drv':
       regs.push(
-        arg('DRVDIR', 'Direction of the next drive: NORTH…WEST'),
+        arg('DRVDIR', 'Which way the next drive goes: NORTH, EAST, SOUTH or WEST'),
         {
           addr: base + 6,
           name: 'DRVCNT',
           access: 'RW',
-          description: 'Tiles to drive; counts down while driving and reads 0 after the drive. Written while driving: the tiles left; 0 stops at the end of this tile (E.PRE)',
+          description: 'How many tiles to drive. It counts down as the rover moves and reads 0 when it arrives. Writing it while driving changes the tiles left; 0 stops at the end of this tile (error E.PRE)',
           read: (h) => {
             const a = h.u.action;
             if (a?.kind === 'STEP') return a.stop ? 0 : a.tilesLeft;
@@ -277,9 +277,9 @@ function deviceRegisters(b: DeviceBlock): IoRegister[] {
       break;
     case 'rad':
       regs.push(
-        arg('RADDIR', 'Direction of the next sweep'),
-        { addr: base + 6, name: 'RADHIT', access: 'RO', description: 'First thing the last sweep found (a tile), NONE if nothing', read: (h) => h.u.radarHit },
-        { addr: base + 8, name: 'RADDST', access: 'RO', description: 'Its distance in tiles, 0 if nothing', read: (h) => h.u.radarDist },
+        arg('RADDIR', 'Which way the next radar sweep looks: NORTH…WEST'),
+        { addr: base + 6, name: 'RADHIT', access: 'RO', description: 'What the last sweep found first (a tile name like ROCK), NONE if nothing', read: (h) => h.u.radarHit },
+        { addr: base + 8, name: 'RADDST', access: 'RO', description: 'How many tiles away it is, 0 if nothing', read: (h) => h.u.radarDist },
       );
       break;
     case 'tol':
@@ -288,26 +288,26 @@ function deviceRegisters(b: DeviceBlock): IoRegister[] {
           addr: base + 4,
           name: 'TOLARG',
           access: 'RW',
-          description: 'Argument of the next tool use: a direction or a cargo slot',
+          description: 'What the next tool works on: a direction (drill, grabber…) or a cargo slot, depending on the tool',
           read: (h) => h.u.toolArg,
           write: (h, v) => (h.u.toolArg = v & 0xffff),
         },
-        { addr: base + 6, name: 'TOLLFT', access: 'RO', description: 'Ticks left of the tool use', read: left('tool') },
-        { addr: base + 8, name: 'SEITYP', access: 'RO', description: 'Ore found by the last seismic scan (F.T3), 0 = none', read: (h) => h.u.seismicType },
-        { addr: base + 10, name: 'SEIDST', access: 'RO', description: 'Distance to it, 0 = none', read: (h) => h.u.seismicDist },
+        { addr: base + 6, name: 'TOLLFT', access: 'RO', description: 'Ticks until the tool is finished', read: left('tool') },
+        { addr: base + 8, name: 'SEITYP', access: 'RO', description: 'Ore found by the last seismic scan (tool F.T3), 0 = none', read: (h) => h.u.seismicType },
+        { addr: base + 10, name: 'SEIDST', access: 'RO', description: 'How far away it is in tiles, 0 = none', read: (h) => h.u.seismicDist },
       );
       break;
     case 'rep':
-      regs.push(arg('REPSLT', 'Cargo slot with the repair material'), { addr: base + 6, name: 'REPLFT', access: 'RO', description: 'Ticks left of the repair', read: left('repair') });
+      regs.push(arg('REPSLT', 'Which cargo slot holds the repair material'), { addr: base + 6, name: 'REPLFT', access: 'RO', description: 'Ticks until the repair is finished', read: left('repair') });
       break;
     case 'cam':
-      regs.push(arg('CAMDIR', 'Direction of the next photo'), { addr: base + 6, name: 'CAMLFT', access: 'RO', description: 'Ticks left of the exposure', read: left('cam') });
+      regs.push(arg('CAMDIR', 'Which way the next photo looks: NORTH…WEST'), { addr: base + 6, name: 'CAMLFT', access: 'RO', description: 'Ticks until the photo is taken', read: left('cam') });
       break;
     case 'img':
       regs.push(
-        { addr: base + 4, name: 'IMGTYP', access: 'RO', description: 'Mode of the last photo the camera took (1–5): ROM SNDIMG with R0 = 0 sends that', read: (h) => h.u.snapMode },
-        { addr: base + 6, name: 'IMGLFT', access: 'RO', description: 'Ticks left of the erase', read: (h) => h.u.deviceLeft('send') || h.u.deviceLeft('erase') },
-        { addr: base + 8, name: 'IMGSIZ', access: 'RO', description: 'Bytes of image memory the installed camera has (from IMGBAS)', read: (h) => h.u.imageMemory().length },
+        { addr: base + 4, name: 'IMGTYP', access: 'RO', description: 'Camera mode (1–5) of the last photo taken. SNDIMG with R0 = 0 uses it', read: (h) => h.u.snapMode },
+        { addr: base + 6, name: 'IMGLFT', access: 'RO', description: 'Ticks until the erase is finished', read: (h) => h.u.deviceLeft('send') || h.u.deviceLeft('erase') },
+        { addr: base + 8, name: 'IMGSIZ', access: 'RO', description: 'How many bytes of image memory the camera has, starting at IMGBAS', read: (h) => h.u.imageMemory().length },
       );
       break;
   }
@@ -318,43 +318,43 @@ type Read = (u: Unit, c: IoContext) => number;
 
 /** Telemetry (176000, read-only). */
 const TELEMETRY: Array<[name: string, read: Read | null, description: string]> = [
-  ['BAT', (u) => u.batteryPercent, 'Battery 0–100 %'],
-  ['HULL', (u) => u.hull, 'Hull integrity 0–100'],
-  ['SOLHLT', (u) => u.solarHealth, 'Solar array integrity 0–100 (scales charging)'],
-  ['ANTHLT', (u) => u.antennaHealth, 'Dish integrity 0–100 (scales signal)'],
-  ['X', (u) => u.x, 'World X (east +), signed'],
-  ['Y', (u) => u.y, 'World Y (north +), signed'],
-  ['TICKL', null, 'Ticks since world start, low word; reading it freezes TICKH'],
-  ['TICKH', null, 'High word of the tick counter, as frozen by the last TICKL read'],
-  ['GROUND', (u, c) => c.world.getTile(u.x, u.y, 0), 'Terrain tile under the rover'],
-  ['GNDHAZ', (u, c) => c.registry.get(c.world.getTile(u.x, u.y, 0))?.hazardLevel ?? 0, 'Hazard level of the terrain under the rover 0–2'],
-  ['TEMP', (u) => u.temp, `Internal temperature in °C, signed (${BALANCE.ambientDayC} °C in full sun, ${BALANCE.ambientNightC} °C at night; the heaters hold ${BALANCE.heaterSetpointC} °C)`],
-  ['HEATER', (u) => u.heater, `1 while the survival heaters run (${BALANCE.heaterPerTick} energy a tick)`],
-  ['CRGFRE', (u) => u.cargo.filter((c) => c === 0).length, 'Empty cargo slots'],
-  ['SCIRDY', (u) => u.link.products.length, 'Science products waiting for the downlink'],
-  ['RECFRE', null, 'Free recorder bytes'],
-  ['RADRNG', (u, c) => c.sensorRange(u), 'Radar range in tiles'],
-  ['ALERT', (_u, c) => c.alert().type, 'Announced or active world event: A.NONE, A.ECL, A.SQL'],
-  ['ALRETA', (_u, c) => c.alert().eta, 'Ticks until it starts'],
-  ['DROPS', (_u, c) => c.drops().length, 'Landed supply crates'],
-  ['DROPX', (u, c) => c.nearestDrop(u)?.x ?? u.x, 'X of the nearest landed crate (own X if none), signed'],
-  ['DROPY', (u, c) => c.nearestDrop(u)?.y ?? u.y, 'Y of the nearest landed crate, signed'],
-  ['SUNAZ', (_u, c) => c.sun.azimuth, 'Sun bearing 0–359'],
-  ['SUNEL', (_u, c) => c.sun.elevation, 'Sun elevation in degrees, signed (<= 0 is night)'],
-  ['SUNLIT', (_u, c) => c.sun.light, 'Illumination 0–100'],
-  ['SOLDST', (u) => u.solarDust, 'Dust on the solar array 0–100 %'],
-  ['ORBAZ', (_u, c) => c.orbitAzimuth, 'Relay orbiter bearing 0–359'],
-  ['SIGNAL', (u, c) => Math.floor((signalStrength(u.antennaAngle, c.orbitAzimuth) * u.antennaHealth) / 100), 'Uplink quality 0–100'],
+  ['BAT', (u) => u.batteryPercent, 'Battery charge, 0–100 %'],
+  ['HULL', (u) => u.hull, 'Hull health, 0–100 (0 = destroyed)'],
+  ['SOLHLT', (u) => u.solarHealth, 'Solar array health, 0–100: a damaged array charges less'],
+  ['ANTHLT', (u) => u.antennaHealth, 'Radio dish health, 0–100: a damaged dish gives a weaker signal'],
+  ['X', (u) => u.x, 'The rover\'s X position: grows going east, can be negative (signed)'],
+  ['Y', (u) => u.y, 'The rover\'s Y position: grows going north, can be negative (signed)'],
+  ['TICKL', null, 'Clock: ticks since the world started, low 16 bits. Reading it also saves the matching high word in TICKH'],
+  ['TICKH', null, 'Clock, high 16 bits: read TICKL first, then TICKH, and the two belong together'],
+  ['GROUND', (u, c) => c.world.getTile(u.x, u.y, 0), 'The ground under the rover (a tile name: SAND, GRAVEL, VENT…)'],
+  ['GNDHAZ', (u, c) => c.registry.get(c.world.getTile(u.x, u.y, 0))?.hazardLevel ?? 0, 'How risky the ground under the rover is: 0 safe, 1 slow going, 2 damages the rover'],
+  ['TEMP', (u) => u.temp, `Temperature inside the rover in °C, can be negative (signed; ${BALANCE.ambientDayC} °C in full sun, ${BALANCE.ambientNightC} °C at night; the heaters hold ${BALANCE.heaterSetpointC} °C)`],
+  ['HEATER', (u) => u.heater, `1 while the heaters run to keep the rover from freezing (they cost ${BALANCE.heaterPerTick} energy a tick)`],
+  ['CRGFRE', (u) => u.cargo.filter((c) => c === 0).length, 'How many cargo slots are empty'],
+  ['SCIRDY', (u) => u.link.products.length, 'How many science results (photos, scans) are waiting to be sent home'],
+  ['RECFRE', null, 'How many bytes the recorder still has room for'],
+  ['RADRNG', (u, c) => c.sensorRange(u), 'How far the radar can see, in tiles'],
+  ['ALERT', (_u, c) => c.alert().type, 'Warning of a world event coming or happening: A.NONE (none), A.ECL (eclipse), A.SQL (dust squall)'],
+  ['ALRETA', (_u, c) => c.alert().eta, 'Ticks until that event starts'],
+  ['DROPS', (_u, c) => c.drops().length, 'How many supply crates have landed'],
+  ['DROPX', (u, c) => c.nearestDrop(u)?.x ?? u.x, 'X of the nearest landed crate (your own X if there is none), signed'],
+  ['DROPY', (u, c) => c.nearestDrop(u)?.y ?? u.y, 'Y of the nearest landed crate (your own Y if there is none), signed'],
+  ['SUNAZ', (_u, c) => c.sun.azimuth, 'Where the sun is: compass bearing in degrees (0 north, 90 east, 180 south, 270 west)'],
+  ['SUNEL', (_u, c) => c.sun.elevation, 'How high the sun is, in degrees, signed: 0 or less means night'],
+  ['SUNLIT', (_u, c) => c.sun.light, 'How much light there is, 0 (dark) to 100 (full sun)'],
+  ['SOLDST', (u) => u.solarDust, 'Dust on the solar array, 0–100 %: dust means less charging. Stowing the array shakes it off'],
+  ['ORBAZ', (_u, c) => c.orbitAzimuth, 'Where the relay satellite is: compass bearing in degrees, for pointing the dish (ANTANG)'],
+  ['SIGNAL', (u, c) => Math.floor((signalStrength(u.antennaAngle, c.orbitAzimuth) * u.antennaHealth) / 100), 'Radio link quality, 0 (none) to 100 (perfect)'],
 ];
 
 /** Actuators (176200, read/write): read, write (already wrapped or clamped), and the clamp range or 'angle'. */
 const ACTUATORS: Array<[name: string, read: (u: Unit) => number, write: (u: Unit, v: number, c: IoContext) => void, range: [number, number] | 'angle', description: string]> = [
-  ['HDG', (u) => u.heading, (u, v, c) => c.turn(u, ((v % 4) + 4) % 4), [-32768, 32767], `Direction the rover faces; write turns in place (${BALANCE.turnEnergy} energy, wraps mod 4)`],
-  ['LIGHT', (u) => u.headlight, (u, v) => (u.headlight = v), [0, 1], `Headlight 0 / 1 (${BALANCE.headlightPerTick} energy a tick)`],
-  ['SOLOPN', (u) => u.solarOpen, (u, v) => (u.solarOpen = v), [0, 1], 'Solar array 0 stow, 1 deploy'],
-  ['SOLANG', (u) => u.solarAngle, (u, v) => (u.solarTarget = v), 'angle', 'Panel bearing: write the target, read the current one'],
-  ['ANTANG', (u) => u.antennaAngle, (u, v) => (u.antennaTarget = v), 'angle', 'Dish bearing: write the target, read the current one'],
-  ...[1, 2, 3].map((n): (typeof ACTUATORS)[number] => [`IND${n}`, (u) => u.indicators[n - 1], (u, v) => (u.indicators[n - 1] = v), [0, 4], n === 1 ? 'Status lamp 1: OFF, RED, GREEN, BLUE, AMBER' : `Status lamp ${n}`]),
+  ['HDG', (u) => u.heading, (u, v, c) => c.turn(u, ((v % 4) + 4) % 4), [-32768, 32767], `Which way the rover faces: NORTH, EAST, SOUTH, WEST (0–3). Write to turn on the spot (${BALANCE.turnEnergy} energy); 4 counts as NORTH again`],
+  ['LIGHT', (u) => u.headlight, (u, v) => (u.headlight = v), [0, 1], `Headlight: 0 off, 1 on (costs ${BALANCE.headlightPerTick} energy a tick)`],
+  ['SOLOPN', (u) => u.solarOpen, (u, v) => (u.solarOpen = v), [0, 1], 'Solar array: 0 folded away (stowed), 1 opened (deployed) to charge'],
+  ['SOLANG', (u) => u.solarAngle, (u, v) => (u.solarTarget = v), 'angle', 'Solar panel direction in degrees: write where to point it (at SUNAZ); read where it points now, as it turns'],
+  ['ANTANG', (u) => u.antennaAngle, (u, v) => (u.antennaTarget = v), 'angle', 'Radio dish direction in degrees: write where to point it (at ORBAZ); read where it points now, as it turns'],
+  ...[1, 2, 3].map((n): (typeof ACTUATORS)[number] => [`IND${n}`, (u) => u.indicators[n - 1], (u, v) => (u.indicators[n - 1] = v), [0, 4], n === 1 ? 'Status lamp 1 on the rover, for showing what your code is doing: OFF, RED, GREEN, BLUE or AMBER' : `Status lamp ${n}`]),
 ];
 
 function telemetryAndActuators(): IoRegister[] {
@@ -395,39 +395,39 @@ const CONTROL: IoRegister[] = [
     addr: 0o177000,
     name: 'PRGCS',
     access: 'FW',
-    description: 'Program control. Write GO: the gate, run the program. Read: bits 3–1 why the last run ended (W.…), bit 15 the gate was refused (not P.RDY)',
+    description: 'Program control (firmware). Write GO to run the program ("the gate"); the firmware continues when it comes back. Read: bits 3–1 why the last run ended (W.…); bit 15 = the program could not run (it was not P.RDY)',
     read: (h) => (h.io.prg.err ? CSR.ERR : 0) | (h.io.prg.why << 1),
     write: (h, v) => {
       if (v & CSR.GO) h.gate();
     },
   },
-  { addr: 0o177002, name: 'PRGER', access: 'RO', description: 'Program fault code (PF.…) of the last fault', read: (h) => h.io.prg.code },
+  { addr: 0o177002, name: 'PRGER', access: 'RO', description: 'Why the program crashed last time: a PF.… code', read: (h) => h.io.prg.code },
   {
     addr: 0o177004,
     name: 'PRGST',
     access: 'FW',
-    description: 'Program state P.NONE…P.HLT; write P.NONE to acknowledge, P.RDY to restart it from the top',
+    description: 'Program state P.NONE…P.HLT (none, ready, done, faulted, halted). The firmware writes P.NONE to clear it, P.RDY to start the program again from the top',
     read: (h) => h.u.progState,
     write: (h, v) => h.ctx.setProgState(h.u, v === ProgState.PROG_NONE || v === ProgState.PROG_READY ? v : -1),
   },
-  { addr: 0o177006, name: 'PRGRES', access: 'RO', description: 'The program\'s R0 when it ended (its exit code)', read: (h) => h.u.progResult & 0xffff },
-  { addr: 0o177010, name: 'PRGPC', access: 'RO', description: 'The program\'s PC when it last came back', read: (h) => h.io.prg.pc },
+  { addr: 0o177006, name: 'PRGRES', access: 'RO', description: 'The program\'s result: what was in its R0 when it ended', read: (h) => h.u.progResult & 0xffff },
+  { addr: 0o177010, name: 'PRGPC', access: 'RO', description: 'Where the program was (its PC) when it last stopped: find a crash in the listing', read: (h) => h.io.prg.pc },
   {
     addr: 0o177012,
     name: 'SLICE',
     access: 'FW',
-    description: 'Ticks the next program run may last, 0 = no limit; read in the program: ticks left',
+    description: 'How many ticks the next program run may take (0 = no limit). A program reading it gets the ticks it has left',
     read: (h) => (h.u.slice >= 0 ? h.u.slice : h.u.sliceSet) & 0xffff,
     write: (h, v) => (h.u.sliceSet = clamp(v, 0, 30_000)),
   },
-  { addr: 0o177014, name: 'PREMPT', access: 'FW', description: 'What ends a program run at once: PR.ALR, PR.DMG, PR.BAT', read: (h) => h.u.preemptMask, write: (h, v) => (h.u.preemptMask = v & 7) },
-  { addr: 0o177016, name: 'PRMPTD', access: 'RO', description: 'The PREMPT bits that ended the last run', read: (h) => h.u.preempted },
-  { addr: 0o177020, name: 'BATALM', access: 'FW', description: 'Battery threshold for PR.BAT, 0–100 %', read: (h) => h.u.batAlarm, write: (h, v) => (h.u.batAlarm = clamp(v, 0, 100)) },
+  { addr: 0o177014, name: 'PREMPT', access: 'FW', description: 'Which emergencies stop the program at once: PR.ALR (event warning), PR.DMG (damage), PR.BAT (low battery). Add the bits you want', read: (h) => h.u.preemptMask, write: (h, v) => (h.u.preemptMask = v & 7) },
+  { addr: 0o177016, name: 'PRMPTD', access: 'RO', description: 'Which of those emergencies stopped the last run', read: (h) => h.u.preempted },
+  { addr: 0o177020, name: 'BATALM', access: 'FW', description: 'Battery level, 0–100 %, below which PR.BAT counts as an emergency', read: (h) => h.u.batAlarm, write: (h, v) => (h.u.batAlarm = clamp(v, 0, 100)) },
   {
     addr: 0o177022,
     name: 'WDT',
     access: 'FW',
-    description: 'Watchdog: write n > 0 to arm and kick it; read: ticks left',
+    description: 'Watchdog: write n to start a countdown of n ticks; if it reaches 0 the rover reboots, so healthy firmware writes it again regularly. Read: ticks left',
     read: (h) => h.u.wdt & 0xffff,
     write: (h, v) => {
       if (v > 0) h.u.wdt = Math.min(v, BALANCE.wdtMaxTicks);
@@ -437,7 +437,7 @@ const CONTROL: IoRegister[] = [
     addr: 0o177026,
     name: 'BOOTCS',
     access: 'FW',
-    description: 'Boot status: bits 7–0 why the rover booted (RO); bit 8 SAFE, safe mode latched: kept through reboots, cleared by a firmware upload (the boot ROM sets it)',
+    description: 'Boot status: bits 7–0 say why the rover last started (read only). Bit 8 SAFE: the rover is in safe mode after too many crashes; it stays on through reboots until you upload firmware',
     read: (h) => (h.u.bootReason & 0xff) | (h.u.safeMode ? BOOT_SAFE : 0),
     write: (h, v) => (h.u.safeMode = (v & BOOT_SAFE) !== 0),
   },
@@ -445,14 +445,14 @@ const CONTROL: IoRegister[] = [
     addr: 0o177030,
     name: 'BOOTCT',
     access: 'RO',
-    description: `Fault and watchdog reboots in the last ${BLUE11.safeModeTicks} ticks, this boot included`,
+    description: `How many crash and watchdog reboots happened in the last ${BLUE11.safeModeTicks} ticks, this one included (too many: safe mode)`,
     read: (h) => h.u.faultBoots.length,
   },
   {
     addr: 0o177024,
     name: 'REBOOT',
     access: 'FW',
-    description: 'Write a boot reason: hard reboot after this instruction (the ROM\'s fault handlers use it)',
+    description: 'Write a boot reason to restart the rover straight after this instruction (the ROM\'s crash handlers do)',
     read: () => 0,
     write: (h, v) => h.reboot(v & 0xff),
   },
@@ -464,7 +464,7 @@ const OUTPUT: IoRegister[] = [
     addr: 0o176540,
     name: 'TXCS',
     access: 'RW',
-    description: `TX control/status: bit 7 READY (room for a byte), bit 6 IE (firmware) interrupt at vector ${TX_VECTOR.toString(8)} when room comes back`,
+    description: `Radio transmitter status: bit 7 READY = there is room for another byte. Bit 6 IE (firmware only): interrupt at vector ${TX_VECTOR.toString(8)} when room comes back`,
     read: (h) => (h.u.link.txFree(BLUE11.txFifoBytes) > 0 ? CSR.DONE : 0) | (h.io.tx.ie ? CSR.IE : 0),
     write: (h, v) => {
       if (h.program) return;
@@ -474,14 +474,14 @@ const OUTPUT: IoRegister[] = [
       if (raise) h.io.tx.ev = true;
     },
   },
-  { addr: 0o176542, name: 'TXBUF', access: 'WO', description: 'Queue one byte for the downlink (dropped and counted in TXLOST if the FIFO is full)', read: () => 0,
+  { addr: 0o176542, name: 'TXBUF', access: 'WO', description: 'Write a byte here to send it home live. It waits in a queue (FIFO); if the queue is full the byte is lost and counted in TXLOST', read: () => 0,
     write: (h, v) => {
       h.u.link.txPut(v, BLUE11.txFifoBytes);
       h.io.tx.ready = h.u.link.txFree(BLUE11.txFifoBytes) > 0;
     },
   },
-  { addr: 0o176544, name: 'TXFREE', access: 'RO', description: `Free FIFO bytes (${BLUE11.txFifoBytes} on Mk-I)`, read: (h) => h.u.link.txFree(BLUE11.txFifoBytes) },
-  { addr: 0o176546, name: 'TXLOST', access: 'RW', description: 'Bytes dropped since boot (saturates at 255; write to set)', read: (h) => h.u.link.txLost, write: (h, v) => (h.u.link.txLost = clamp(v, 0, 255)) },
+  { addr: 0o176544, name: 'TXFREE', access: 'RO', description: `How many more bytes fit in the transmit queue (it holds ${BLUE11.txFifoBytes} on Mk-I)`, read: (h) => h.u.link.txFree(BLUE11.txFifoBytes) },
+  { addr: 0o176546, name: 'TXLOST', access: 'RW', description: 'How many bytes were lost because the queue was full, since boot (stops at 255; write 0 to reset)', read: (h) => h.u.link.txLost, write: (h, v) => (h.u.link.txLost = clamp(v, 0, 255)) },
 ];
 
 /** The recorder: CPU messages stored and forwarded (BLUE11_IO.md §3.5). */
@@ -491,18 +491,18 @@ const RECORDER: IoRegister[] = [
     addr: 0o176550,
     name: 'RECCS',
     access: 'RO',
-    description: 'Recorder status: bit 7 READY (room for a byte)',
+    description: 'Recorder status: bit 7 READY = there is room for another byte',
     read: (h) => (recFree(h) > 0 ? CSR.DONE : 0),
   },
   {
     addr: 0o176552,
     name: 'RECBUF',
     access: 'WO',
-    description: 'Store one byte of a message in the recorder (store and forward: it reaches ground even through a bad link). Dropped if the recorder is full: check RECFRE first',
+    description: 'Write a byte here to store it in the recorder, which sends it home later, safely, even when the link is bad. If the recorder is full it is lost: check RECFRE first',
     read: () => 0,
     write: (h, v) => recordByte(h.u, v),
   },
-  { addr: 0o176554, name: 'RECFRE', access: 'RO', description: 'Free recorder bytes', read: recFree },
+  { addr: 0o176554, name: 'RECFRE', access: 'RO', description: 'How many bytes the recorder still has room for', read: recFree },
 ];
 
 /**
@@ -525,7 +525,7 @@ const SYSTEM: IoRegister[] = [
     addr: 0o177546,
     name: 'LKS',
     access: 'FW',
-    description: `Line clock (KW11-L): bit 7 set every tick (write 0 to clear), bit 6 IE: interrupt at vector ${CLOCK_VECTOR.toString(8)}`,
+    description: `Line clock (firmware): bit 7 turns on every tick (write 0 to clear it). Bit 6 IE: an interrupt at vector ${CLOCK_VECTOR.toString(8)} every tick, to wake WAIT`,
     read: (h) => h.io.lks,
     write: (h, v) => (h.io.lks = (h.io.lks & v & CSR.DONE) | (v & CSR.IE)),
   },
@@ -533,7 +533,7 @@ const SYSTEM: IoRegister[] = [
     addr: 0o177570,
     name: 'DISP',
     access: 'RW',
-    description: 'Console display register: the two-digit display on the back of the cabin (0–255)',
+    description: 'The two-digit number display on the back of the rover: write 0–255 to show it',
     read: (h) => h.u.post,
     write: (h, v) => (h.u.post = v & 0xff),
   },
@@ -541,7 +541,7 @@ const SYSTEM: IoRegister[] = [
     addr: 0o177774,
     name: 'STKLIM',
     access: 'FW',
-    description: 'The firmware\'s stack limit: a push below it traps to 4',
+    description: 'The firmware\'s stack limit: pushing below this address is an error (trap 4), so a runaway stack is caught',
     read: (h) => h.fwStackLimit,
     write: (h, v) => (h.fwStackLimit = v & 0xfffe),
   },

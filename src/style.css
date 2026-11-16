@@ -279,4 +279,4 @@ button.link { border: none; background: none; padding: 0; color: var(--info); te
 #reference.ref11 .ref-pane[data-ref=instr] td:nth-child(4) { width: 52px; }
 #reference.ref11 .ref-pane[data-ref=basics] td:first-child { width: 150px; }
 #reference.ref11 table.keycol td:first-child { width: 96px; }
-#reference.ref11 .ref-pane[data-ref=modes] pre, #reference.ref11 .ref-pane[data-ref=flags] pre { margin: 4px 0; }
+#reference.ref11 .ref-pane pre:not(.rom-src) { margin: 4px 0; overflow-x: auto; }

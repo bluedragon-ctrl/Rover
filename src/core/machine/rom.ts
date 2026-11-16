@@ -98,21 +98,24 @@ SAFLEN = . - SAFMSG
 ; Every driver follows the same path (BLUE11_IO.md §3.1): parameters, GO, wait for DONE,
 ; R0 = the device's error register: OK, or why it was refused or failed.
 
-; STEP: drive R1 tiles in direction R0.
+; STEP: drive R1 tiles in direction R0 (NORTH...WEST). Waits until the rover stops: R0 = OK,
+; or an error code (E.xxx) saying why it stopped early (blocked, hazard, low power...).
 STEP:   MOV  R1, @#DRVCNT       ; how far
         MOV  R0, @#DRVDIR       ; which way
         BIS  #GO, @#DRVCS       ; start (BIS keeps IE); refused: DONE + ERR at once
         MOV  #DRVCS, R1
         BR   DWAIT
 
-; SCAN: one radar sweep in direction R0. Then RADHIT = what it found, RADDST = how far.
+; SCAN: one radar sweep in direction R0. Waits for it; then RADHIT = the first thing it saw
+; (a tile name, NONE if nothing) and RADDST = how many tiles away. R0 = OK or an error code (E.xxx).
 SCAN:   MOV  R0, @#RADDIR
         BIS  #GO, @#RADCS
         MOV  #RADCS, R1
         BR   DWAIT
 
-; ACT: use a tool. R0 = its argument (a direction, or a cargo slot), R1 = the hardpoint
-; F.T0 ... F.T3. Mk-I: F.T0 drill, F.T1 grabber, F.T2 spectrometer.
+; ACT: use a tool and wait until it is done. R1 = which tool, F.T0 ... F.T3 (Mk-I: F.T0 drill,
+; F.T1 grabber, F.T2 spectrometer); R0 = what it works on (a direction, or a cargo slot).
+; R0 = OK or an error code (E.xxx).
 ACT:    MOV  R0, @#TOLARG
         BIS  #GO, R1            ; function + GO
         BIC  #16, @#TOLCS       ; clear the old function (keeps IE)...
@@ -120,7 +123,8 @@ ACT:    MOV  R0, @#TOLARG
         MOV  #TOLCS, R1
         BR   DWAIT
 
-; USE: repair a system with the item in cargo slot R0. R1 = F.HULL, F.SOL or F.ANT.
+; USE: repair part of the rover with the item in cargo slot R0. R1 = what to repair: F.HULL
+; (the body), F.SOL (solar array) or F.ANT (radio dish). Waits; R0 = OK or an error code (E.xxx).
 USE:    MOV  R0, @#REPSLT
         BIS  #GO, R1
         BIC  #16, @#REPCS
@@ -128,7 +132,8 @@ USE:    MOV  R0, @#REPSLT
         MOV  #REPCS, R1
         BR   DWAIT
 
-; SNAP: take a photo in direction R0 into image memory. R1 = the mode F.M1 ... F.M5.
+; SNAP: take a photo in direction R0 into image memory. R1 = the camera mode F.M1 ... F.M5.
+; Waits; R0 = OK or an error code (E.xxx). SNDIMG then sends it home.
 SNAP:   MOV  R0, @#CAMDIR
         BIS  #GO, R1
         BIC  #16, @#CAMCS
@@ -136,7 +141,7 @@ SNAP:   MOV  R0, @#CAMDIR
         MOV  #CAMCS, R1
         BR   DWAIT
 
-; ERASE: zero image memory.
+; ERASE: wipe image memory (every byte 0), e.g. before drawing with PLOT. Waits; R0 = OK.
 ERASE:  MOV  #F.ERAS!GO, R0
         BIC  #16, @#IMGCS
         BIS  R0, @#IMGCS
@@ -152,7 +157,7 @@ DWAIT:
 2$:     MOV  2(R1), R0          ; OK (0) or why not; Z set if OK
         RTS  PC
 
-; SLEEP: wait R0 ticks (up to 32767).
+; SLEEP: wait R0 ticks (up to 32767), asleep, so waiting costs almost no cycles. R0 = OK.
 SLEEP:  MOV  @#TICKL, R1        ; now...
         ADD  R0, R1             ; ...+ R0 = wake-up time (may wrap past 177777: fine)
 1$:     WAIT
@@ -161,16 +166,17 @@ SLEEP:  MOV  @#TICKL, R1        ; now...
         CLR  R0
         RTS  PC
 
-; RUN: let the program run for R0 ticks (0 = no limit). Firmware only. Returns R0 = the
-; program's state when it came back (P.RDY: time up or preempted; P.DONE, P.FLT, P.HLT);
-; PRGCS says why.
+; RUN: firmware only: let the program run for up to R0 ticks (0 = no limit). When it
+; comes back, R0 = the program's state: P.RDY (time up or stopped by an emergency: it can
+; go on), P.DONE (finished), P.FLT (crashed) or P.HLT (HALT). PRGCS says why.
 RUN:    MOV  R0, @#SLICE
         MOV  #GO, @#PRGCS       ; the gate: the program runs from here...
         MOV  @#PRGST, R0        ; ...and the firmware continues here when it comes back
         RTS  PC
 
-; LOG: a T.LOG message on the real-time stream: tag R0 (one byte), value R1 (one word,
-; low byte first). All or nothing: R0 = OK, or E.FULL if the TX FIFO has no room for it.
+; LOG: send one number home live, as a T.LOG message: R0 = a tag (0-255) saying what it
+; is, R1 = the value. Comms shows it. All or nothing: R0 = OK, or E.FULL if the transmit
+; queue has no room (then nothing is sent).
 LOG:    CMP  @#TXFREE, #7       ; SOH, type, length, tag, low, high, ETX
         BLO  9$
         MOVB #SOH, @#TXBUF
@@ -186,9 +192,9 @@ LOG:    CMP  @#TXFREE, #7       ; SOH, type, length, tag, low, high, ETX
 9$:     MOV  #E.FULL, R0
         RTS  PC
 
-; PUTMSG: one message on the real-time stream, all or nothing. R0 = its type, R1 = the
-; address of its body, R2 = the body's length (0-255; kept). R0 = OK, E.FULL if the TX
-; FIFO has no room for all of it (nothing is written), E.INV if R2 > 255.
+; PUTMSG: send one message home live, all or nothing. R0 = its type (T.TEXT...), R1 = the
+; address of its bytes, R2 = how many bytes (0-255; R2 is kept). R0 = OK, E.FULL if the
+; transmit queue has no room for all of it (nothing is sent), E.INV if R2 > 255.
 PUTMSG: CMP  R2, #255.
         BHI  8$
         MOV  R2, -(SP)          ; room needed: the body + 4
@@ -210,8 +216,8 @@ PUTMSG: CMP  R2, #255.
 9$:     MOV  #E.FULL, R0
         RTS  PC
 
-; SEND: the same message into the recorder instead (store and forward: it reaches ground
-; even through a bad link). R0 = type, R1 = body, R2 = length (kept). Waits until the
+; SEND: like PUTMSG, but into the recorder, which sends it later and safely, even through a
+; bad link. R0 = type, R1 = the address of its bytes, R2 = how many (kept). Waits until the
 ; recorder has room. R0 = OK, or E.INV if R2 > 255.
 SEND:   CMP  R2, #255.
         BHI  8$
@@ -235,10 +241,10 @@ SEND:   CMP  R2, #255.
 8$:     MOV  #E.INV, R0
         RTS  PC
 
-; SNDIMG: send the photo in image memory home through the recorder, as T.IMG messages of
-; CHUNK bytes; each body is: type, chunk number, chunks, the bytes. Ground puts them back
-; together. R0 = photo type 1-5 (0 = the mode of the last photo, IMGTYP). Waits for room
-; in the recorder. R0 = OK, or E.INV (no such type, or bigger than this camera's memory).
+; SNDIMG: send the photo in image memory home through the recorder, in pieces (T.IMG
+; messages of CHUNK bytes: type, piece number, pieces, the bytes) that ground puts back
+; together. R0 = the photo's mode 1-5, or 0 for the mode of the last photo (IMGTYP). Waits
+; for room in the recorder. R0 = OK, or E.INV (no such mode, or too big for this camera).
 SNDIMG: TST  R0
         BNE  1$
         MOV  @#IMGTYP, R0       ; 0: the last photo's mode
@@ -291,7 +297,8 @@ NCHUNK: .WORD 8., 8., 16., 32., 32. ; 64x64 2 bpp, dithered, 4 bpp; 128x128; 64x
 
 ; ---------------------------------------------------------------- helpers
 
-; MUL16: R0 = R0 x R1 (low 16 bits; the same for signed and unsigned). Shift and add.
+; MUL16: multiply: R0 = R0 x R1. Only the low 16 bits are kept, so the answer must fit
+; (works for signed and unsigned numbers). Takes a loop of shifts and adds.
 MUL16:  MOV  R2, -(SP)          ; save R2
         CLR  R2                 ; R2 = running sum
 1$:     TST  R1                 ; multiplier used up?
@@ -307,7 +314,8 @@ MUL16:  MOV  R2, -(SP)          ; save R2
         TST  R0
         RTS  PC
 
-; DIV16: R0 = R0 / R1, R1 = remainder (unsigned). C = 1 if R1 was 0 (R0, R1 unchanged).
+; DIV16: divide: R0 = R0 / R1 rounded down, R1 = the remainder (unsigned numbers). Dividing
+; by 0 sets C = 1 and leaves R0, R1 unchanged.
 DIV16:  TST  R1
         BNE  1$
         SEC                     ; divide by zero: report it in the carry flag
@@ -330,14 +338,16 @@ DIV16:  TST  R1
         CLC
         RTS  PC
 
-; ABS: R0 = |R0| (100000 stays 100000: it has no positive twin).
+; ABS: R0 without its sign: -5 becomes 5, 5 stays 5. (100000, -32768, stays as it is:
+; +32768 does not fit in a word.)
 ABS:    TST  R0
         BPL  1$
         NEG  R0
 1$:     RTS  PC
 
-; DIRTO: the direction that takes you closer along the larger of |dx| = |R0| (east +)
-; and |dy| = |R1| (north +): R0 = NORTH ... WEST, or -1 (N set) if both are 0.
+; DIRTO: which way to go. R0 = how far east the target is (dx; negative = west), R1 = how
+; far north (dy; negative = south). R0 = NORTH ... WEST, along whichever distance is bigger,
+; or -1 (N set) if both are 0: you are there.
 DIRTO:  MOV  R2, -(SP)
         MOV  R0, R2             ; R2 = |dx|
         BPL  1$
@@ -364,9 +374,10 @@ DIRTO:  MOV  R2, -(SP)
         TST  R0
         RTS  PC
 
-; PLOT: set pixel (x = R0, y = R1) of a 64x64 2-bpp photo (modes 1 and 2) to grey R2
-; (0 black ... 3 white; R2 is kept). A row is 16 bytes, four pixels a byte, the leftmost
-; in the low bits (little-endian, like the words). R0 = OK, or E.INV (nothing drawn) if x or y is outside 0-63.
+; PLOT: draw one pixel in image memory, for photos in modes 1 and 2 (64x64 pixels, four
+; greys): x = R0, y = R1 (0-63), grey R2 (0 black ... 3 white; R2 is kept). R0 = OK, or
+; E.INV (nothing drawn) if x or y is outside 0-63. In memory a row is 16 bytes, four pixels
+; a byte, the leftmost in the low bits.
 PLOT:   CMP  R0, #63.
         BHI  9$                 ; unsigned: negative numbers are too big as well
         CMP  R1, #63.

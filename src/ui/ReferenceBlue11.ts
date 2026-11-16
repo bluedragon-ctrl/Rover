@@ -306,39 +306,70 @@ function flagsHtml(): string {
     </table>`;
 }
 
-/** I/O page groups: address range → title. Device blocks come from DEVICE_BLOCKS. */
-function ioGroups(): [string, (r: IoRegister) => boolean][] {
-  const dev = DEVICE_BLOCKS.map((b): [string, (r: IoRegister) => boolean] => [`${b.title} (${o(b.base)}, interrupt ${o(b.vector, 3)})`, (r) => r.addr >= b.base && r.addr < b.base + 0o20]);
+/** Using a device by hand, step by step (the I/O page tab; a test runs it). */
+export const IO_DEVICE_EXAMPLE = `      MOV  #EAST, @#RADDIR ; 1. set up: look east
+      BIS  #GO, @#RADCS    ; 2. start it
+1$:   BIT  #DONE, @#RADCS  ; 3. wait for DONE
+      BEQ  1$              ;    (not yet: again)
+      TST  @#RADER         ; 4. worked? 0 = OK
+      BNE  FAILED          ;    no: RADER says why
+      MOV  @#RADHIT, R0    ; 5. read the result`;
+
+/** The ROM routine each device has (its driver does steps 1–5 for you). */
+const DEVICE_ROM: Record<string, string> = { drv: 'STEP', rad: 'SCAN', tol: 'ACT', rep: 'USE', cam: 'SNAP', img: 'ERASE' };
+
+/** I/O page groups: address range → title and what the group is for. Device blocks come from DEVICE_BLOCKS. */
+function ioGroups(): [string, (r: IoRegister) => boolean, string][] {
+  const dev = DEVICE_BLOCKS.map((b): [string, (r: IoRegister) => boolean, string] => [
+    `${b.title} (${o(b.base)}, interrupt ${o(b.vector, 3)})`,
+    (r) => r.addr >= b.base && r.addr < b.base + 0o20,
+    `A device: set it up, write <code>GO</code>, wait for <code>DONE</code>, check <code>${b.prefix}ER</code> (see above). Or let the ROM do it all: <code>JSR PC, ${DEVICE_ROM[b.key]}</code>.`,
+  ]);
   return [
-    ['Telemetry (read only, sampled each tick)', (r) => r.addr >= 0o176000 && r.addr < 0o176200],
-    ['Actuators', (r) => r.addr >= 0o176200 && r.addr < 0o176400],
+    ['Telemetry: sensors (read only, updated every tick)', (r) => r.addr >= 0o176000 && r.addr < 0o176200,
+      'What the rover knows about itself and its surroundings. Read them whenever you like: <code>MOV @#BAT, R0</code> ; R0 = battery %. Writing to them does nothing.'],
+    ['Actuators: parts you set', (r) => r.addr >= 0o176200 && r.addr < 0o176400,
+      'Write to change them, read to see how they are: <code>MOV #GREEN, @#IND1</code> ; lamp 1 turns green. They are physical: they stay as they are through a reboot, so set them yourself rather than assume.'],
     ...dev,
-    [`Output: TX (interrupt ${o(TX_VECTOR, 3)}) and the recorder`, (r) => r.addr >= 0o176540 && r.addr < 0o176600],
-    ['Program control and system (FW = firmware only)', (r) => r.addr >= 0o177000 && r.addr < 0o177100],
-    ['Clock, display, stack limit', (r) => r.addr >= 0o177100],
+    [`Output: sending bytes home (TX interrupt ${o(TX_VECTOR, 3)}) and the recorder`, (r) => r.addr >= 0o176540 && r.addr < 0o176600,
+      'Two ways home: <b>TX</b> sends at once but loses bytes when its queue is full; the <b>recorder</b> keeps them and sends them later, safely. The ROM\'s <code>LOG</code>, <code>PUTMSG</code>, <code>SEND</code> and <code>SNDIMG</code> send whole messages for you (Radio tab).'],
+    ['Program control and system (FW = firmware only)', (r) => r.addr >= 0o177000 && r.addr < 0o177100,
+      'How the firmware runs your program and keeps the rover safe (Basics → Firmware, program and the gate). A program may read these, but writing an FW register from a program is a fault.'],
+    ['Clock, display, stack limit', (r) => r.addr >= 0o177100,
+      'The line clock wakes the firmware every tick; <code>DISP</code> shows a number on the rover (<code>MOV R0, @#DISP</code>); <code>STKLIM</code> guards the firmware\'s stack.'],
   ];
 }
 
 function ioHtml(): string {
   const regs = IO_REGISTERS.filter((r) => !r.alias);
   const used = new Set<IoRegister>();
-  const groups = ioGroups().map(([title, f]) => {
+  const groups = ioGroups().map(([title, f, blurb]) => {
     const rows = regs.filter((r) => f(r) && !used.has(r));
     rows.forEach((r) => used.add(r));
-    return [title, rows] as const;
+    return [title, rows, blurb] as const;
   });
   const rest = regs.filter((r) => !used.has(r));
-  if (rest.length) groups.push(['Other', rest]);
-  const csr = `<p class="small">Every device has a <b>CSR</b> (control and status register): write a function and <code>GO</code> (bit 0) to
-    start it; <code>DONE</code> (bit 7) says it is idle again, <code>ERR</code> (bit 15) that it refused or failed, and then its
-    <code>xxER</code> register says why (<code>E.BLK</code>, …). <code>IE</code> (bit 6) asks for an interrupt when it is done.
-    The ROM drivers (ROM tab) do this for you. Names are predefined symbols: <code>MOV @#BAT, R0</code>.
-    Cargo slots are bytes at <code>${o(CARGO_BASE)}</code> (CARGO).</p>`;
+  if (rest.length) groups.push(['Other', rest, '']);
+  const intro = `<p class="small">The rover's sensors, motors and radio appear to the CPU as <b>memory words at fixed addresses</b>,
+    the <b>I/O page</b>. Each has a name, so you never type the address: read one with <code>MOV @#BAT, R0</code> (battery level into R0),
+    write one with <code>MOV #1, @#LIGHT</code> (headlight on). Always write the <code>@#</code>: it means "the word at this address".</p>
+    <p class="small dim">Columns: name, address (octal), access, what it is. Access: <b>RO</b> read only, <b>RW</b> read and write,
+    <b>WO</b> write only, <b>FW</b> firmware only (a program may read it; writing it is a fault). Most values are unsigned; the ones
+    marked <i>signed</i> can be negative. Cargo slots are bytes at <code>${o(CARGO_BASE)}</code> (<code>CARGO</code>).</p>
+    <h4>Devices, step by step</h4>
+    <p class="small">Slow jobs (driving, radar, tools, repair, camera) are <b>devices</b>. Each has a <b>CSR</b> (control and status
+    register, <code>xxCS</code>) with these bits: <code>GO</code> (bit 0) start; <code>DONE</code> (bit 7) finished and ready;
+    <code>ERR</code> (bit 15) refused or failed; <code>IE</code> (bit 6, firmware) interrupt when done. Some also take a function
+    <code>FN</code> (bits 3–1). The <code>xxER</code> register after it holds the error code: <code>OK</code> (0) or an <code>E.…</code>
+    code (Symbols tab). A radar sweep by hand (<code>BIS</code> sets GO and keeps the other bits):</p>
+<pre class="small">${esc(IO_DEVICE_EXAMPLE)}</pre>
+    <p class="small dim">If the device refuses (busy, no power…), <code>DONE</code> and <code>ERR</code> are set straight away, so
+    step 3 never waits forever. The ROM routines (ROM tab) do all five steps for you and sleep while they wait.</p>`;
   return (
-    csr +
+    intro +
     groups
       .filter(([, rows]) => rows.length)
-      .map(([title, rows]) => `<h4>${esc(title)}</h4><table>${rows.map((r) => `<tr><td><code>${r.name}</code></td><td class="dim small">${o(r.addr)}</td><td class="dim small">${r.access}</td><td class="small">${esc(r.description)}</td></tr>`).join('')}</table>`)
+      .map(([title, rows, blurb]) => `<h4>${esc(title)}</h4>${blurb ? `<p class="small">${blurb}</p>` : ''}<table>${rows.map((r) => `<tr><td><code>${r.name}</code></td><td class="dim small">${o(r.addr)}</td><td class="dim small">${r.access}</td><td class="small">${esc(r.description)}</td></tr>`).join('')}</table>`)
       .join('')
   );
 }
@@ -352,23 +383,66 @@ export function romDocs(): Record<string, string> {
     if (i < 0) continue;
     const text = [lines[i].slice(name.length + 3).trim()];
     for (let j = i + 1; j < lines.length && lines[j].startsWith(';') && !/^; [A-Z0-9]+:/.test(lines[j]); j++) text.push(lines[j].slice(1).trim());
-    out[name] = text.join(' ').trim().replace(/^the same message into/, 'like PUTMSG, but into');
+    out[name] = text.join(' ').trim();
   }
   return out;
 }
+
+/** An example call for every ROM routine (a test assembles them; MSG is a short text). */
+export const ROM_EXAMPLES: Record<string, [string, string]> = {
+  STEP: ['MOV #NORTH, R0 · MOV #3, R1 · JSR PC, STEP · BNE STUCK', 'drive 3 tiles north; if that fails, go to STUCK'],
+  SCAN: ['MOV #EAST, R0 · JSR PC, SCAN · MOV @#RADHIT, R2', 'look east; R2 = what is there'],
+  SLEEP: ['MOV #10., R0 · JSR PC, SLEEP', 'wait 10 ticks'],
+  ACT: ['MOV #EAST, R0 · MOV #F.T0, R1 · JSR PC, ACT', 'drill to the east'],
+  USE: ['CLR R0 · MOV #F.HULL, R1 · JSR PC, USE', 'repair the hull with the item in cargo slot 0'],
+  SNAP: ['MOV #NORTH, R0 · MOV #F.M1, R1 · JSR PC, SNAP', 'take a photo to the north in mode 1'],
+  SEND: ['MOV #T.TEXT, R0 · MOV #MSG, R1 · MOV #2, R2 · JSR PC, SEND', 'store the 2 characters at MSG in the recorder'],
+  ERASE: ['JSR PC, ERASE', 'wipe image memory'],
+  RUN: ['MOV #10., R0 · JSR PC, RUN', 'firmware: run the program for up to 10 ticks'],
+  LOG: ['MOV #1, R0 · MOV @#BAT, R1 · JSR PC, LOG', 'send "tag 1 = battery level" home live'],
+  PUTMSG: ['MOV #T.TEXT, R0 · MOV #MSG, R1 · MOV #2, R2 · JSR PC, PUTMSG', 'send the 2 characters at MSG home live'],
+  SNDIMG: ['CLR R0 · JSR PC, SNDIMG', 'send the last photo home'],
+  MUL16: ['MOV #6, R0 · MOV #7, R1 · JSR PC, MUL16', 'R0 = 52 (6 × 7 = forty-two)'],
+  DIV16: ['MOV #17, R0 · MOV #4, R1 · JSR PC, DIV16', 'R0 = 3, R1 = 3 (fifteen ÷ four = 3, 3 left over)'],
+  ABS: ['MOV #-5, R0 · JSR PC, ABS', 'R0 = 5'],
+  DIRTO: ['MOV @#DROPX, R0 · SUB @#X, R0 · MOV @#DROPY, R1 · SUB @#Y, R1 · JSR PC, DIRTO', 'R0 = the way to the nearest crate'],
+  PLOT: ['MOV #10, R0 · MOV #20, R1 · MOV #3, R2 · JSR PC, PLOT', 'a white pixel at x = 8, y = 16'],
+};
+
+/** How to call a ROM routine, step by step. */
+const ROM_CALL_EXAMPLE = `      MOV  #NORTH, R0 ; 1. inputs: which way
+      MOV  #3, R1     ;    and how far
+      JSR  PC, STEP   ; 2. call it
+      BNE  STUCK      ; 3. R0 not OK? to STUCK
+      MOV  @#X, R2    ;    OK: carry on`;
 
 function romHtml(): string {
   const docs = romDocs();
   const drivers = ROM_ROUTINES.filter((n) => !['MUL16', 'DIV16', 'ABS', 'DIRTO', 'PLOT'].includes(n));
   const helpers = ROM_ROUTINES.filter((n) => !drivers.includes(n));
   const table = (names: readonly string[]) =>
-    `<table>${names.map((n) => `<tr><td><code>JSR PC, ${n}</code></td><td class="dim small">${o(ROM_EXPORTS[n])}</td><td class="small">${esc(docs[n] ?? '')}</td></tr>`).join('')}</table>`;
-  return `<p class="small">The ROM at <code>${o(BLUE11.romBase)}</code> boots the rover, serves the default trap handlers and offers routines.
-    Call one with <code>JSR PC, NAME</code>: arguments in <code>R0</code>, <code>R1</code> (a third in <code>R2</code>, kept), the result in
-    <code>R0</code> with its flags (<code>BNE</code> = not OK). <code>R0</code> and <code>R1</code> are scratch; every other register is kept.
-    Drivers return the device's error code (<code>OK</code> = 0).</p>
-    <h4>Drivers</h4>${table(drivers)}
-    <h4>Helpers</h4>${table(helpers)}
+    `<table>${names
+      .map((n) => {
+        const ex = ROM_EXAMPLES[n];
+        return `<tr><td><code>JSR PC, ${n}</code></td><td class="dim small">${o(ROM_EXPORTS[n])}</td><td class="small">${esc(docs[n] ?? '')}${ex ? `<br><span class="dim">e.g. <code>${esc(ex[0])}</code> ; ${esc(ex[1])}</span>` : ''}</td></tr>`;
+      })
+      .join('')}</table>`;
+  return `<p class="small">The <b>ROM</b> is ready-made code built into the rover (at <code>${o(BLUE11.romBase)}</code>): it drives,
+    scans, takes photos, sends messages and does maths, so you don't have to talk to the devices yourself. A piece of it you can
+    call is a <b>routine</b>.</p>
+    <h4>Calling a routine, step by step</h4>
+    <ol class="small">
+      <li>Put its inputs in <code>R0</code> and <code>R1</code> (a few also take <code>R2</code>).</li>
+      <li>Call it: <code>JSR PC, NAME</code>. It runs and comes back to the next line.</li>
+      <li>The answer is in <code>R0</code>. For the device routines it is <code>OK</code> (0) or an error code <code>E.…</code>
+      (Symbols tab), and the flags are already set from it, so a <code>BNE</code> straight after catches any error.</li>
+    </ol>
+<pre class="small">${esc(ROM_CALL_EXAMPLE)}</pre>
+    <p class="small dim">A routine may change <code>R0</code> and <code>R1</code>; it keeps <code>R2</code>–<code>R5</code>, so store
+    your own values there. Device routines wait until the job is done, asleep (<code>WAIT</code>), so waiting costs almost nothing.
+    Examples joined by · are separate lines.</p>
+    <h4>Devices, messages and time</h4>${table(drivers)}
+    <h4>Maths and drawing</h4>${table(helpers)}
     <details class="small"><summary>The whole ROM source</summary><pre class="rom-src">${esc(ROM_SOURCE)}</pre></details>`;
 }
 

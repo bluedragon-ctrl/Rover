@@ -155,6 +155,40 @@ describe('Reference', () => {
     }
   });
 
+  it('every ROM routine has an example that assembles; the maths examples give what they say', async () => {
+    const { ROM_EXAMPLES } = await import('../src/ui/ReferenceBlue11');
+    const { ROM_ROUTINES } = await import('../src/core/machine/rom');
+    const { assemble } = await import('../src/blue11');
+    const { predefinedSymbols } = await import('../src/core/machine/symbols');
+    const { createDefaultRegistry } = await import('../src/core/WorldRegistry');
+    const { rover, run, reg, HANG } = await import('./helpers/rover');
+    const symbols = predefinedSymbols(createDefaultRegistry());
+    expect(Object.keys(ROM_EXAMPLES).sort()).toEqual([...ROM_ROUTINES].sort());
+    const lines = (n: string) => ROM_EXAMPLES[n][0].split(' · ').join('\n        ');
+    for (const n of ROM_ROUTINES) {
+      const r = assemble(`${lines(n)}\nSTUCK: HALT\nMSG: .ASCII /HI/\n`, { symbols });
+      expect(r.errors.map((e) => e.message), n).toEqual([]);
+      expect(ROM_EXAMPLES[n][0], n).toContain(`JSR PC, ${n}`);
+    }
+    for (const [n, r0, r1] of [['MUL16', 0o52, null], ['DIV16', 3, 3], ['ABS', 5, null]] as const) {
+      const { e, u } = rover(`START:  ${lines(n)}${HANG}`);
+      run(e, 10);
+      expect(reg(u, 0), n).toBe(r0);
+      if (r1 !== null) expect(reg(u, 1), n).toBe(r1);
+    }
+  });
+
+  it('the I/O page tab\'s radar-by-hand example works', async () => {
+    const { IO_DEVICE_EXAMPLE } = await import('../src/ui/ReferenceBlue11');
+    const { rover, run, reg, HANG } = await import('./helpers/rover');
+    const { Layer } = await import('../src/core/types');
+    const { T } = await import('../src/core/WorldRegistry');
+    const fw = `START:${IO_DEVICE_EXAMPLE.slice(6)}${HANG}\nFAILED: MOV #-1, R0${HANG.replace(/9\$/g, '8$')}`;
+    const { e, u } = rover(fw, { flat: true, setup: (e) => e.world.setTile(2, 0, Layer.OBSTACLE, T.IRON_ORE) });
+    run(e, 20);
+    expect(reg(u, 0)).toBe(T.IRON_ORE);
+  });
+
   it('every Modes and Flags example assembles', async () => {
     const { MODE_DOC, PC_MODE_DOC, MODE_PATTERNS, FLAG_DOC } = await import('../src/ui/ReferenceBlue11');
     const { assemble } = await import('../src/blue11');
