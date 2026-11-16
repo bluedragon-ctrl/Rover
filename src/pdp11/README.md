@@ -55,6 +55,7 @@ traps to 10 (models differed here; 10 is the illegal-instruction vector). Not in
 ```ts
 const a = assemble(source, { origin: 0o1000, symbols: { XCSR: 0o177564 }, names: 'dec' });
 if (!a.ok) a.errors;          // [{ line, column, message }]
+a.warnings;                   // same shape; assembled anyway (ok stays true)
 a.bytes; a.origin; a.start;   // the image
 a.lineAt.get(pc);             // source line of an instruction
 a.listing;                    // MACRO-11 style listing
@@ -64,7 +65,13 @@ Syntax: `label: OP src, dst ; comment`, `NAME = expr`, `NAME = %3`, `. = . + 10`
 local labels `1$` between two ordinary labels. Numbers are **octal**; `10.` is decimal;
 `^D ^O ^B`; `'A`, `"AB`. Expressions run left to right; `< >` groups; `+ - * / & !`,
 unary `-`, `^C`. Flag operations combine with `!` as the disassembler writes them
-(`CLC!CLV` = 000243; clears and sets not mixed). Directives: `.WORD .BYTE .ASCII .ASCIZ .BLKW .BLKB .EVEN .ODD .END`
+(`CLC!CLV` = 000243; clears and sets not mixed, unlike MACRO-11, which would quietly make
+it a set). As in MACRO-11, instruction names are symbols with their opcode as value
+(`MOV #NOP, X`; a user symbol of the same name wins, with a warning), and an expression
+where the instruction goes is an implicit `.WORD` (`TABLE: CMD1, CMD2`, `1234`). An
+instruction name first on a line is always the instruction, and a name followed by
+operands is an unknown instruction (`MOVV R0, R1`), not data. Warnings: a value cut to
+16 bits in `=`, a symbol named like an instruction. Directives: `.WORD .BYTE .ASCII .ASCIZ .BLKW .BLKB .EVEN .ODD .END`
 (`.TITLE` and friends are ignored). Names: `dec` (default) = 1–6 characters of letters,
 digits, `.`, `$`; `long` = any length, `_` allowed. Option `hex: true` adds `^X`
 hexadecimal (`^XFF`); it is not MACRO-11, so it is off by default (an error without it). Not included: macros, `.PSECT`,

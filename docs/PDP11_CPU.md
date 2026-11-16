@@ -683,7 +683,7 @@ cpu.stackLimit = 0o1000;              // a push below it traps to 4
 cpu.save() / cpu.load(state);         // plain JSON; swapping the two register sets
 
 assemble(source, { origin, symbols, names: 'dec', hex: false });   // hex: opt-in ^X, not MACRO-11
-// → { ok, errors[{line, column, message}], origin, bytes, start, symbols, labels,
+// → { ok, errors[{line, column, message}], warnings[same], origin, bytes, start, symbols, labels,
 //     lines, lineAt (address → line), listing, listingRows }
 disassemble(readWord, address, { nameOf });   // → { address, words, text }
 new DeviceMachine({ memory, eis }).add(device);    // RAM + CPU + memory-mapped Device objects

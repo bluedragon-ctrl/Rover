@@ -68,6 +68,8 @@ export interface AssembleResult {
   listing: string;
   /** The listing row by row, with the source line each row belongs to. */
   listingRows: Array<{ line: number; text: string }>;
+  /** Things that assemble but are probably not meant (they don't affect `ok`). */
+  warnings: AsmError[];
 }
 
 const REGISTERS: Record<string, number> = { R0: 0, R1: 1, R2: 2, R3: 3, R4: 4, R5: 5, R6: 6, R7: 7, SP: 6, PC: 7 };
@@ -106,6 +108,7 @@ class Assembler {
   /** Labels defined so far in this pass (duplicates). */
   private definedThisPass = new Set<string>();
   private errors: AsmError[] = [];
+  private warnings: AsmError[] = [];
   private pass = 1;
   private lc = 0;
   private scope = 0;
@@ -131,6 +134,7 @@ class Assembler {
       this.scope = 0;
       this.definedThisPass = new Set();
       this.errors = [];
+      this.warnings = [];
       this.mem.clear();
       this.lines = [];
       this.start = null;
@@ -161,6 +165,7 @@ class Assembler {
       lineAt,
       listing: listingRows.map((r) => r.text).join('\n'),
       listingRows,
+      warnings: this.warnings.sort((a, b) => a.line - b.line || a.column - b.column),
     };
   }
 
@@ -205,14 +210,22 @@ class Assembler {
         return true;
       }
       const om = /^([A-Za-z.][A-Za-z0-9.$_]*)\s*(.*)$/.exec(rest);
-      if (!om) throw new AsmFail(`can't read "${rest}"`, pos);
-      const name = om[1].toUpperCase();
-      const argCol = pos + rest.length - om[2].length;
-      const args = om[2];
-      if (name.startsWith('.')) return this.directive(name, args, argCol, pos);
-      const op = BY_NAME.get(name);
-      if (!op) throw new AsmFail(`unknown instruction ${om[1]}`, pos);
-      this.instruction(op, args, argCol);
+      if (om && om[1].startsWith('.') && om[1] !== '.') return this.directive(om[1].toUpperCase(), om[2], pos + rest.length - om[2].length, pos);
+      const op = om ? BY_NAME.get(om[1].toUpperCase()) : undefined;
+      if (op) {
+        this.instruction(op, om![2], pos + rest.length - om![2].length);
+      } else if (dataLine(rest, om)) {
+        // MACRO-11: an expression where the instruction goes is an implicit .WORD. A name
+        // alone that is still undefined in pass 2 was more likely meant as an instruction.
+        if (this.pass === 2 && om && om[2] === '' && !this.defined(om[1], pos)) {
+          throw new AsmFail(`unknown instruction ${om[1]} (for data, use .WORD)`, pos);
+        }
+        return this.directive('.WORD', rest, pos, pos);
+      } else if (om) {
+        throw new AsmFail(`unknown instruction ${om[1]}`, pos);
+      } else {
+        throw new AsmFail(`can't read "${rest}"`, pos);
+      }
     } catch (e) {
       if (!(e instanceof AsmFail)) throw e;
       this.error(e.message, e.column);
@@ -222,6 +235,11 @@ class Assembler {
       this.lines.push({ line: this.lineNo, address: here, bytes: [], code: false });
     }
     return true;
+  }
+
+  private warn(message: string, column = 0): void {
+    if (this.pass !== 2) return;
+    this.warnings.push({ line: this.lineNo, column: column + 1, message });
   }
 
   private record(address: number, bytes: number[], code: boolean): void {
@@ -256,6 +274,7 @@ class Assembler {
       this.labels.add(key);
     }
     this.defineSymbol(key, this.lc, column, true);
+    if (!/^\d/.test(key) && BY_NAME.has(key)) this.warn(`${key} is also an instruction; as a value it now means this label`, column);
   }
 
   private defineSymbol(key: string, value: number, column: number, label: boolean): void {
@@ -290,6 +309,8 @@ class Assembler {
     if (this.labels.has(key)) throw new AsmFail(`${name} is a label`, column);
     const v = this.expr(exprText, exprCol);
     if (!v.undef || this.pass === 1) this.symbols.set(key, v.value & 0xffff);
+    if (!v.undef && (v.value < -0x8000 || v.value > 0xffff)) this.warn(`${v.value < 0 ? "-" : ""}${Math.abs(v.value).toString(8)} doesn't fit 16 bits: ${key} = ${octal(v.value & 0xffff)}`, exprCol);
+    if (BY_NAME.has(key)) this.warn(`${key} is also an instruction; as a value it now means this symbol`, column);
   }
 
   // ------------------------------------------------------------------ directives
@@ -559,6 +580,10 @@ class Assembler {
     return v;
   }
 
+  private defined(name: string, column: number): boolean {
+    try { return this.lookup(name, column) !== null; } catch { return false; }
+  }
+
   private lookup(name: string, column: number): number | null {
     if (name === '.') return this.lc;
     if (/^\d+\$$/.test(name)) {
@@ -567,7 +592,8 @@ class Assembler {
     }
     const up = this.checkName(name, column);
     if (up in REGISTERS || this.regSymbols.has(up)) throw new AsmFail(`${name} is a register; a value is needed here`, column);
-    return this.symbols.get(up) ?? this.predefined.get(up) ?? null;
+    // MACRO-11: instruction names are permanent symbols with their opcode as value (MOV #NOP, X).
+    return this.symbols.get(up) ?? this.predefined.get(up) ?? BY_NAME.get(up)?.opcode ?? null;
   }
 
   // ------------------------------------------------------------------ listing
@@ -781,4 +807,15 @@ class ExprParser {
     }
     throw new AsmFail(`can't read "${s.slice(this.i)}"`, at);
   }
+}
+
+/**
+ * Is this line an implicit .WORD (MACRO-11: an expression where the instruction goes)?
+ * Yes when it starts with a number, a character, `<`, a sign, or is a name alone or
+ * followed by an operator or a comma. A name followed by operands (`MOVV R0, R1`) is an
+ * unknown instruction, so typos keep a clear message. Purely syntactic: both passes agree.
+ */
+function dataLine(rest: string, om: RegExpExecArray | null): boolean {
+  if (!om) return /^[0-9'"^<+-]/.test(rest);
+  return om[2] === '' || /^[-+*/&!,]/.test(om[2]);
 }
