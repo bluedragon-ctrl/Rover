@@ -60,6 +60,11 @@ npm run build      # typecheck + production bundle in dist/
   predefined symbols; system names live in `names.ts`. Shipped PDP-11 code (default firmware,
   lessons) is in `src/core/programs-pdp11.ts`, next to the Rover-ASM `programs.ts` until
   slice 6; every template there must assemble and is run by `tests/pdp-programs.test.ts`.
+- M15 slice 5: the UI serves both cores through `src/ui/toolchain.ts` (`engine.pdp11` picks);
+  a PDP-11 world starts from Admin → *New PDP-11 world* or `?cpu=pdp11`. The PDP-11 Reference is
+  `src/ui/ReferencePdp11.ts` (a new instruction needs a row in `INSTR_DOC`; a test checks). UI code
+  reads the machine only through `registers`, `stackWords`, `peek` and `ioSnapshot` (never
+  `read`: `TICKL` has a side effect).
 - Shapes are drawn only in `src/render/VectorFactory.ts` (keeps M8 visual work local).
 - New or changed visuals go into `preview.html` (`src/preview/`) first; the owner reviews
   screenshots before they replace what the game renders.

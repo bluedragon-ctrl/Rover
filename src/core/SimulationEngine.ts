@@ -8,6 +8,9 @@ import {
   BootReason,
   DumpKind,
   encodeCpuDump,
+  encodeCpu11Dump,
+  encodeStack11Dump,
+  STACK11_WORDS,
   encodeLog,
   encodeStackDump,
   GALLERY_KEEP,
@@ -231,10 +234,14 @@ export class SimulationEngine {
         if (fault) {
           unit.vm.fault(fault, BALANCE.watchdogTicks);
           this.log(unit, 'error', `CPU FAULT: ${fault}. Watchdog reboot in ${BALANCE.watchdogTicks} ticks.`, 'rover');
-        } else unit.vm.halt();
+        } else {
+          unit.vm.halt();
+          this.queueBreakDump(unit, 'firmware'); // HALT, or BPT (the ROM handler halts): it reports itself
+        }
         this.events.emit('UNIT_STATE', { unitId: unit.id, state: unit.vm.state });
       },
       programFault: (unit, why) => this.log(unit, 'error', `Program FAULT: ${why}. Control returns to the firmware.`, 'rover'),
+      programHalted: (unit) => this.queueBreakDump(unit, 'program'),
     };
     u.machine = new RoverMachine(u, this.machineHost);
     u.photoFormats = PHOTO_FORMATS_2X; // owner decision: photos at double resolution (PDP11_CPU.md §6.3)
@@ -361,7 +368,6 @@ export class SimulationEngine {
     if (!u.powered) err = `rover is ${u.vm.state}: it cannot receive commands`;
     else if (isDump && u.link.sys.length >= BALANCE.dumpQueueMax) err = `${BALANCE.dumpQueueMax} dumps are already waiting for the downlink`;
     else if (cmd === 'RUN_AGAIN' && !this.hasProgram(u)) err = 'no program in flash';
-    else if (isDump && u.machine) err = 'dumps of the PDP-11 core come with M15 slice 5';
     else if (u.energy <= cost) err = `needs ${(cost / 1000).toFixed(1)}% battery at signal ${this.signalOf(u)}`;
     if (err) {
       this.recordSent({ unitId: u.id, tick: this.tick, kind: cmd, slot: target, cost: 0, rejected: err });
@@ -371,7 +377,10 @@ export class SimulationEngine {
     const prog = slot === 'program';
     const vm = prog ? u.prog : u.vm;
     if (cmd === 'DUMP') this.queueRegisterDump(u, slot);
-    else if (cmd === 'DUMP_STACKS') {
+    else if (cmd === 'DUMP_STACKS' && u.machine) {
+      const s = u.machine.stackWords(slot, STACK11_WORDS);
+      u.link.sys.push({ bytes: encodeStack11Dump(s.sp, s.words, prog), taken: this.tick });
+    } else if (cmd === 'DUMP_STACKS') {
       u.link.sys.push({ bytes: encodeStackDump(vm.dataStack, vm.callStack, prog ? DumpKind.PROG_STACKS : DumpKind.STACKS), taken: this.tick });
     } else if (cmd === 'RUN_AGAIN') this.restartProgram(u);
     else if (!prog) vm.resume();
@@ -389,9 +398,19 @@ export class SimulationEngine {
   /** Queue a register dump of one slot, taken now (uplinked DUMP, or BRK: SPEC §3.8.4). */
   private queueRegisterDump(u: Unit, slot: Slot): void {
     const prog = slot === 'program';
+    if (u.machine) {
+      const { r, psw } = u.machine.registers(slot);
+      u.link.sys.push({ bytes: encodeCpu11Dump({ state: prog ? u.progState : u.vm.state, psw, r }, prog), taken: this.tick });
+      return;
+    }
     const vm = prog ? u.prog : u.vm;
     const d = { ip: vm.nextIp, status: vm.status, state: prog ? u.progState : vm.state, regs: vm.regs, dsDepth: vm.dataStack.length, csDepth: vm.callStack.length };
     u.link.sys.push({ bytes: encodeCpuDump(d, prog ? DumpKind.PROG_CPU : DumpKind.CPU), taken: this.tick });
+  }
+
+  /** A stop at a breakpoint sends a register dump unasked (dropped if the dump queue is full). */
+  private queueBreakDump(u: Unit, slot: Slot): void {
+    if (u.link.sys.length < BALANCE.dumpQueueMax) this.queueRegisterDump(u, slot);
   }
 
   private recordSent(r: SentRecord): void {

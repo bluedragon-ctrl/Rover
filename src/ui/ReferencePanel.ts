@@ -556,7 +556,7 @@ weight:   64      16      4       1</pre>
 
 /** Generated language reference: always in sync with the compiler, port, tool and tile tables. */
 export function renderReference(el: HTMLElement, registry: WorldRegistry): void {
-  const panes: Record<string, string> = {
+  mountReference(el, SECTIONS, {
     basics: `<h3>Basics</h3>${basicsHtml()}<h3>CPU</h3>${cpuHtml()}<h3>Memory map</h3>${memoryMapHtml()}`,
     instr: instructionsHtml(),
     ports: portsHtml(),
@@ -566,7 +566,12 @@ export function renderReference(el: HTMLElement, registry: WorldRegistry): void 
     radio: radioHtml(),
     image: imageHtml(),
     rom: romHtml(),
-  };
+  });
+}
+
+/** The Reference shell: section tabs, panes and the filter box (M15: shared by both cores). */
+export function mountReference(el: HTMLElement, sections: readonly (readonly [string, string])[], panes: Record<string, string>): void {
+  const SECTIONS = sections;
   el.innerHTML = `
     <div class="ref-head">
       <div class="ref-tabs">${SECTIONS.map(([id, label], i) => `<button class="ref-tab${i === 0 ? ' active' : ''}" data-ref="${id}">${label}</button>`).join('')}</div>

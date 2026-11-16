@@ -2,8 +2,9 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { linter, lintGutter, type Diagnostic } from '@codemirror/lint';
 import { EditorState, StateEffect, StateField, RangeSetBuilder } from '@codemirror/state';
 import { Decoration, EditorView, highlightActiveLine, keymap, lineNumbers, type DecorationSet } from '@codemirror/view';
-import type { CompileResult } from '../core/vm/Compiler';
+import type { Extension } from '@codemirror/state';
 import { roverAsm, roverAsmHighlight } from './roverAsmLanguage';
+import type { Diag } from './toolchain';
 
 const setExecLine = StateEffect.define<number>();
 
@@ -26,31 +27,40 @@ const execLineField = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 });
 
-export interface EditorPanelOptions {
+/** What the linter needs from a build: errors, and warnings (M15: the MACRO-11 assembler's). */
+export interface Lintable {
+  errors: readonly Diag[];
+  warnings?: readonly Diag[];
+}
+
+export interface EditorPanelOptions<R extends Lintable = Lintable> {
   parent: HTMLElement;
   initial: string;
-  compile: (src: string) => CompileResult;
+  compile: (src: string) => R;
   onUpload: () => void;
-  onChange: (src: string, result: CompileResult) => void;
+  onChange: (src: string, result: R) => void;
+  /** Syntax highlighting (default Rover-ASM; M15: MACRO-11). */
+  language?: Extension[];
   /** The cursor moved to another line (1-based): the listing follows it. */
   onCursor?: (line: number) => void;
 }
 
-export class EditorPanel {
+export class EditorPanel<R extends Lintable = Lintable> {
   readonly view: EditorView;
   private execLine = 0;
   private cursorLine = 1;
 
-  constructor(opts: EditorPanelOptions) {
+  constructor(opts: EditorPanelOptions<R>) {
     const lint = linter(
       (view) => {
         const src = view.state.doc.toString();
         const res = opts.compile(src);
         opts.onChange(src, res);
-        return res.errors.map((e): Diagnostic => {
+        const diag = (e: Diag, severity: 'error' | 'warning'): Diagnostic => {
           const line = view.state.doc.line(Math.min(Math.max(1, e.line), view.state.doc.lines));
-          return { from: line.from, to: line.to, severity: 'error', message: e.message };
-        });
+          return { from: line.from, to: line.to, severity, message: e.message };
+        };
+        return [...res.errors.map((e) => diag(e, 'error')), ...(res.warnings ?? []).map((e) => diag(e, 'warning'))];
       },
       { delay: 250 },
     );
@@ -63,8 +73,7 @@ export class EditorPanel {
           lineNumbers(),
           history(),
           highlightActiveLine(),
-          roverAsm,
-          roverAsmHighlight,
+          ...(opts.language ?? [roverAsm, roverAsmHighlight]),
           lint,
           lintGutter(),
           execLineField,

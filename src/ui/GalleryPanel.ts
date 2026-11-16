@@ -1,13 +1,13 @@
-import { headerLevel, hex, isPhoto, Level, LEVEL_NAMES, PRODUCT_NAMES, productFrameBytes, ProductType, type ReceivedProduct } from '../core/downlink';
+import { headerLevel, hex, isPhoto, Level, LEVEL_NAMES, PRODUCT_NAMES, ProductType, type ReceivedProduct } from '../core/downlink';
 
 const LEVEL_TIPS: Record<number, string> = {
   [Level.RAW]: 'raw: sent as the camera took it',
   [Level.EDITED]: 'edited: changed with STB after the SNAP',
   [Level.DRAWN]: 'drawn: no camera picture behind it (no credits)',
 };
-import { bandNm, productFrame, SPECTRUM_BANDS } from '../core/imaging';
+import { bandNm, productFrame, productSize, SPECTRUM_BANDS } from '../core/imaging';
 import { BALANCE } from '../core/balance';
-import { decodePhoto, PHOTO_FORMATS } from '../core/photos';
+import { decodePhoto, PHOTO_FORMATS, PHOTO_FORMATS_2X } from '../core/photos';
 import type { SimulationEngine } from '../core/SimulationEngine';
 
 /** Bar colour for a wavelength: visible bands roughly in their colour, near-IR grey. */
@@ -38,6 +38,8 @@ export function spectrumSvg(payload: number[], received: number): string {
 }
 
 const PHOTO_PX = 128;
+
+const formatsOf = (g: Pick<ReceivedProduct, 'x2'>) => (g.x2 ? PHOTO_FORMATS_2X : PHOTO_FORMATS);
 
 const productId = (g: ReceivedProduct): string => `${g.unitId}:${g.tick}:${g.seq}`;
 
@@ -70,8 +72,8 @@ const FLAG_TEXT = {
 } as const;
 
 /** A (possibly partial) photo as a data URL: crisp pixels scaled up, missing rows hatched. */
-export function photoDataUrl(type: number, payload: number[]): string {
-  const ph = decodePhoto(type, payload);
+export function photoDataUrl(type: number, payload: number[], x2 = false): string {
+  const ph = decodePhoto(type, payload, x2 ? PHOTO_FORMATS_2X : PHOTO_FORMATS);
   if (!ph) return '';
   const small = document.createElement('canvas');
   small.width = ph.w;
@@ -114,16 +116,23 @@ export class GalleryPanel {
   private openHex = new Set<string>();
 
   private dumpOf(g: ReceivedProduct): string {
-    return hexDump(productFrame(this.engine.seed, g).slice(0, g.received), productFrameBytes(g.type));
+    return hexDump(productFrame(this.engine.seed, g).slice(0, g.received), productSize(g));
   }
 
   /** Called after a flag attempt (main.ts logs the outcome). */
   onFlag?: (g: ReceivedProduct, err: string | null) => void;
 
   constructor(el: HTMLElement, private engine: SimulationEngine) {
+    const note11 = `<p class="small dim">The spectrometer (<code>JSR PC, ACT</code> with <code>F.T2</code> in <code>R1</code>, a cargo slot in <code>R0</code>) records a 16-band spectrum and the mast camera
+      (<code>JSR PC, SNAP</code>) takes a 64×64 photo (128×128 in mode 4) into image memory; <code>JSR PC, SNDIMG</code> frames it as
+      <code>T.IMG</code> messages in the recorder, changed by your program or not (<code>MOVB</code> into image memory at <code>100000</code>).
+      The downlink sends the recorder after the real-time messages; mission control puts the chunks back together and pays
+      when the last one arrives (lit photos 1, +5 for the first of a subject type; dark photos and drawn pictures nothing). Rare
+      cliff walls and samples hide an <b>anomaly</b> that only a photo shows: <i>Flag anomaly</i> on the complete, lit photo
+      (+${BALANCE.anomalyFlagCredits} for a new one, −${BALANCE.anomalyWrongFlag} for a wrong flag; one flag per photo).</p>`;
     el.innerHTML = `<div class="toolbar small"><span class="dim" id="gallery-status"></span></div>
       <div id="gallery-list"></div>
-      <p class="small dim">The spectrometer (<code>ACT TOOL_2 slot</code>) records a 16-band spectrum (18 B) and the mast camera
+      ${engine.pdp11 ? note11 : ''}<p class="small dim"${engine.pdp11 ? ' hidden' : ''}>The spectrometer (<code>ACT TOOL_2 slot</code>) records a 16-band spectrum (18 B) and the mast camera
       (<code>SNAP dir [mode]</code>) takes a 32×32 photo into image memory; <code>SEND</code> records it (258 B) in the science
       recorder, changed by your program or not (<code>LDB</code> / <code>STB</code>). The downlink sends them after the log FIFO is
       empty; photos fill in row by row, and credits are paid when the last byte arrives (lit photos 1, +5 for the first of a
@@ -158,7 +167,7 @@ export class GalleryPanel {
   }
 
   private card(g: ReceivedProduct): string {
-    const size = productFrameBytes(g.type);
+    const size = productSize(g);
     const frame = productFrame(this.engine.seed, g).slice(0, g.received);
     const done = g.received >= size;
     const multi = this.engine.units.length > 1 ? ` · ${this.engine.getUnit(g.unitId)?.name ?? `#${g.unitId}`}` : '';
@@ -170,7 +179,7 @@ export class GalleryPanel {
       const key = `${g.unitId}:${g.tick}:${g.seq}:${g.received}`;
       let url = this.photoCache.get(key);
       if (!url) {
-        url = photoDataUrl(g.type, frame.slice(2));
+        url = photoDataUrl(g.type, frame.slice(2), !!g.x2);
         this.photoCache.set(key, url);
         if (this.photoCache.size > 160) this.photoCache.delete(this.photoCache.keys().next().value!);
       }
@@ -180,8 +189,8 @@ export class GalleryPanel {
       const subject = g.horizon ? 'landscape' : (this.engine.registry.get(g.subject)?.name ?? `tile ${g.subject}`);
       what =
         level === Level.DRAWN
-          ? ` · drawn picture · ${PHOTO_FORMATS[g.type]?.label ?? ''}`
-          : ` · ${subject}${g.lit ? '' : ' · <span class="warn">dark</span>'} · ${PHOTO_FORMATS[g.type]?.label ?? ''}`;
+          ? ` · drawn picture · ${formatsOf(g)[g.type]?.label ?? ''}`
+          : ` · ${subject}${g.lit ? '' : ' · <span class="warn">dark</span>'} · ${formatsOf(g)[g.type]?.label ?? ''}`;
       if (frame.length) chip = ` <i class="lvl lvl-${LEVEL_NAMES[level]}" title="${LEVEL_TIPS[level] ?? ''}">${LEVEL_NAMES[level] ?? '?'}</i>`;
       if (g.flag) body += `<div class="small">${FLAG_TEXT[g.flag]}</div>`;
       else if (done && g.lit && level !== Level.DRAWN) body += `<div class="small"><button data-flag="${productId(g)}" title="Mark this photo as showing an anomaly">⚑ Flag anomaly</button></div>`;

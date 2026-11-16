@@ -35,7 +35,9 @@ import {
   TX_VECTOR,
   Why,
   type DevKey,
+  IO_REGISTERS,
   type IoHost,
+  type IoRegister,
   type IoState,
 } from './iopage';
 import { ROM_BYTES, ROM_ENTRY } from './rom';
@@ -90,6 +92,8 @@ export interface MachineHost {
   halt(u: Unit, fault: string | null): void;
   /** The program came back with a fault (already recorded in `PRGER`). */
   programFault(u: Unit, why: string): void;
+  /** The program stopped at a `BPT` (or the trace bit): it reports itself with a dump. */
+  programHalted?(u: Unit): void;
 }
 
 /** Saved machine state (SaveManager). */
@@ -206,6 +210,16 @@ export class RoverMachine implements Bus {
   }
 
   // ---------------------------------------------------------------- bus
+
+  /** Core, image memory, ROM and cargo words (no side effects); BUS_ERROR elsewhere. */
+  private readMemory(addr: number): number {
+    if (addr < this.core.length) return this.core[addr] | (this.core[addr + 1] << 8);
+    const img = this.u.imageMemory();
+    if (addr >= PDP11.imageBase && addr < PDP11.imageBase + img.length) return img[addr - PDP11.imageBase] | (img[addr - PDP11.imageBase + 1] << 8);
+    if (addr >= PDP11.romBase && addr < PDP11.romBase + ROM_BYTES.length) return ROM_BYTES[addr - PDP11.romBase] | ((ROM_BYTES[addr - PDP11.romBase + 1] ?? 0) << 8);
+    if (addr >= CARGO_BASE && addr < CARGO_BASE + CARGO_BYTES) return ((this.u.cargo[addr - CARGO_BASE] ?? 0) & 0xff) | (((this.u.cargo[addr - CARGO_BASE + 1] ?? 0) & 0xff) << 8);
+    return BUS_ERROR;
+  }
 
   read(addr: number, byte: boolean): number {
     if (addr < this.core.length) return byte ? this.core[addr] : this.core[addr] | (this.core[addr + 1] << 8);
@@ -550,6 +564,7 @@ export class RoverMachine implements Bus {
         this.stopped = null;
         this.exit(s.state, s.why);
         if (s.state === ProgState.PROG_FAULT) this.mh.programFault(u, s.text);
+        else if (s.state === ProgState.PROG_HALTED) this.mh.programHalted?.(u);
       } else if (r.reason === 'halt') {
         if (this.bank === 'prog' && u.slice >= 0) {
           cpu.halted = false;
@@ -584,6 +599,42 @@ export class RoverMachine implements Bus {
     }
     if (this.u.slice < 0 || !this.fw) return live;
     return { r: [...this.fw.r], psw: this.fw.psw };
+  }
+
+  /**
+   * A context's stack for a dump: SP and up to `max` words from SP towards the stack's base
+   * (the firmware's at the program base, the program's at the top of core). Read from core
+   * without bus side effects; an SP outside core gives no words.
+   */
+  stackWords(slot: MachineSlot, max: number): { sp: number; words: number[] } {
+    const sp = this.registers(slot).r[6] & 0xfffe;
+    const base = slot === 'program' ? this.coreBytes : PDP11.programBase;
+    const words: number[] = [];
+    const end = Math.min(base, this.coreBytes);
+    for (let a = sp; a + 2 <= end && words.length < max; a += 2) words.push(this.core[a] | (this.core[a + 1] << 8));
+    return { sp, words };
+  }
+
+  /**
+   * Debugger read of memory (core, image memory, ROM, cargo): no bus side effects, null for
+   * the I/O page and addresses with nothing there.
+   */
+  peek(addr: number): number | null {
+    addr &= 0xfffe;
+    if (addr >= PDP11.ioBase) return null;
+    const v = this.readMemory(addr);
+    return v === BUS_ERROR ? null : v;
+  }
+
+  /**
+   * Debugger view of the I/O page: every named register's value as a read would give it,
+   * computed on a copy of the device state so that reads with side effects (`TICKL` latches
+   * `TICKH`) change nothing. Write-only registers read 0.
+   */
+  ioSnapshot(): Array<{ reg: IoRegister; value: number }> {
+    const none = () => {};
+    const host: IoHost = { u: this.u, ctx: this.mh.ctx, io: structuredClone(this.io), program: this.bank === 'prog', fwStackLimit: this.host.fwStackLimit, gate: none, reboot: none, raise: none, started: none };
+    return IO_REGISTERS.filter((r) => !r.alias).map((reg) => ({ reg, value: reg.access === 'WO' || !reg.read ? 0 : reg.read(host) & 0xffff }));
   }
 
   /** Who runs now: firmware, a firmware handler in the program's time, or the program. */
